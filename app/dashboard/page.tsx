@@ -61,6 +61,12 @@ export default async function DashboardPage() {
 
                 {/* Main Content */}
                 <main className="px-4 sm:px-6 lg:px-8 py-6 space-y-6">
+                    {/* AI Insight - Top */}
+                    <AIInsightCard
+                        title="Ringkasan Harian"
+                        prompt="Berikan ringkasan performa bisnis hari ini dalam 3-4 kalimat. Sebutkan: jumlah booking, pendapatan, okupansi, dan satu rekomendasi singkat."
+                    />
+
                     {/* KPI Cards Section */}
                     <section>
                         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 lg:gap-6">
@@ -113,14 +119,6 @@ export default async function DashboardPage() {
                         <CheckinHariIni items={checkinsData} />
                         <CheckoutHariIni items={checkoutsData} />
                         <StatusUnit statusCounts={unitStatusData} />
-                    </section>
-
-                    {/* AI Insight Section */}
-                    <section>
-                        <AIInsightCard
-                            title="Ringkasan Harian"
-                            prompt="Berikan ringkasan performa bisnis hari ini dalam 3-4 kalimat. Sebutkan: jumlah booking, pendapatan, okupansi, dan satu rekomendasi singkat. Gunakan format teks biasa tanpa markdown."
-                        />
                     </section>
                 </main>
             </div>

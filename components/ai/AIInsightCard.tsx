@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Brain, RefreshCw, Sparkles } from 'lucide-react';
+import { RefreshCw, Sparkles } from 'lucide-react';
 
 interface AIInsightCardProps {
     prompt: string;
@@ -12,12 +12,54 @@ interface AIInsightCardProps {
 const STORAGE_KEY = 'kr-ai-config';
 
 /**
- * AIInsightCard - Displays an automatic AI-generated insight
- * 
- * Fetches an AI insight based on the provided prompt.
- * Shows loading state, error state, and the AI response.
- * Only fetches if AI is configured (API key exists).
+ * Renders AI text with basic rich formatting:
+ * - Lines starting with numbers become list items
+ * - Text between *text* becomes italic
+ * - Newlines preserved
  */
+function RichText({ text }: { text: string }) {
+    // Simple rich text: bold (**text** or __text__), bullet points, numbered lists
+    const lines = text.split('\n');
+
+    return (
+        <div className="text-sm text-gray-700 leading-relaxed space-y-1.5">
+            {lines.map((line, i) => {
+                if (!line.trim()) return <div key={i} className="h-1" />;
+
+                // Format inline: **bold** → <strong>
+                let formatted = line
+                    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+                    .replace(/__(.+?)__/g, '<strong>$1</strong>')
+                    .replace(/\*(.+?)\*/g, '<em>$1</em>')
+                    .replace(/_(.+?)_/g, '<em>$1</em>');
+
+                // Numbered list
+                const numMatch = line.match(/^(\d+)[.)]\s+(.+)/);
+                if (numMatch) {
+                    return (
+                        <div key={i} className="flex gap-2 pl-1">
+                            <span className="text-purple-600 font-semibold flex-shrink-0">{numMatch[1]}.</span>
+                            <span dangerouslySetInnerHTML={{ __html: formatted.replace(/^\d+[.)]\s+/, '') }} />
+                        </div>
+                    );
+                }
+
+                // Bullet list
+                if (line.match(/^[-•]\s+/)) {
+                    return (
+                        <div key={i} className="flex gap-2 pl-1">
+                            <span className="text-purple-400 flex-shrink-0">•</span>
+                            <span dangerouslySetInnerHTML={{ __html: formatted.replace(/^[-•]\s+/, '') }} />
+                        </div>
+                    );
+                }
+
+                return <p key={i} dangerouslySetInnerHTML={{ __html: formatted }} />;
+            })}
+        </div>
+    );
+}
+
 export default function AIInsightCard({ prompt, title = 'AI Insight', className = '' }: AIInsightCardProps) {
     const [insight, setInsight] = useState<string | null>(null);
     const [loading, setLoading] = useState(false);
@@ -32,20 +74,16 @@ export default function AIInsightCard({ prompt, title = 'AI Insight', className 
                 if (config.apiKey) return config;
             }
         } catch { }
-        return null;
+        // Return empty to let server use env vars
+        return { provider: '', apiKey: '', model: '', baseUrl: '' };
     };
 
     const fetchInsight = async () => {
-        const config = getConfig();
-        if (!config) {
-            setHasConfig(false);
-            return;
-        }
-        setHasConfig(true);
         setLoading(true);
         setError(null);
 
         try {
+            const config = getConfig();
             const res = await fetch('/api/ai/chat', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -63,35 +101,35 @@ export default function AIInsightCard({ prompt, title = 'AI Insight', className 
             if (res.ok) {
                 const data = await res.json();
                 setInsight(data.message);
+                setHasConfig(true);
             } else {
                 const data = await res.json();
-                setError(data.error || 'Gagal mendapatkan insight');
+                if (res.status === 400 && data.error?.includes('API key')) {
+                    setHasConfig(false);
+                } else {
+                    setError(data.error || 'Gagal mendapatkan insight');
+                    setHasConfig(true);
+                }
             }
         } catch (err: any) {
             setError(err.message);
+            setHasConfig(true);
         } finally {
             setLoading(false);
         }
     };
 
     useEffect(() => {
-        // Check if config exists on mount
-        const config = getConfig();
-        setHasConfig(!!config);
-
-        // Auto-fetch insight if configured
-        if (config) {
-            fetchInsight();
-        }
+        fetchInsight();
     }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-    if (!hasConfig) {
-        return null; // Don't show if AI not configured
+    if (!hasConfig && !loading) {
+        return null;
     }
 
     return (
         <div className={`bg-gradient-to-r from-purple-50 to-blue-50 rounded-lg border border-purple-200 p-4 shadow-sm ${className}`}>
-            <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center justify-between mb-3">
                 <div className="flex items-center gap-2">
                     <Sparkles className="w-4 h-4 text-purple-600" />
                     <h3 className="text-sm font-semibold text-purple-900">{title}</h3>
@@ -107,21 +145,21 @@ export default function AIInsightCard({ prompt, title = 'AI Insight', className 
             </div>
 
             {loading && (
-                <div className="flex items-center gap-2 text-sm text-purple-600">
-                    <div className="w-2 h-2 bg-purple-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></div>
-                    <div className="w-2 h-2 bg-purple-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></div>
-                    <div className="w-2 h-2 bg-purple-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></div>
-                    <span className="ml-1">Menganalisis data...</span>
+                <div className="flex items-center gap-2 text-sm text-purple-600 py-2">
+                    <div className="flex gap-1">
+                        <div className="w-1.5 h-1.5 bg-purple-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></div>
+                        <div className="w-1.5 h-1.5 bg-purple-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></div>
+                        <div className="w-1.5 h-1.5 bg-purple-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></div>
+                    </div>
+                    <span>Menganalisis data...</span>
                 </div>
             )}
 
-            {error && (
+            {error && !loading && (
                 <p className="text-xs text-red-600">{error}</p>
             )}
 
-            {insight && !loading && (
-                <p className="text-sm text-gray-700 leading-relaxed whitespace-pre-wrap">{insight}</p>
-            )}
+            {insight && !loading && <RichText text={insight} />}
         </div>
     );
 }

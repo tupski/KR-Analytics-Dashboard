@@ -135,12 +135,20 @@ export default function AIChatFloat() {
                                 className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
                             >
                                 <div
-                                    className={`max-w-[85%] px-3 py-2 rounded-xl text-sm whitespace-pre-wrap ${msg.role === 'user'
-                                        ? 'bg-blue-600 text-white rounded-br-sm'
+                                    className={`max-w-[85%] px-3 py-2 rounded-xl text-sm ${msg.role === 'user'
+                                        ? 'bg-blue-600 text-white rounded-br-sm whitespace-pre-wrap'
                                         : 'bg-gray-100 text-gray-800 rounded-bl-sm'
                                         }`}
                                 >
-                                    {msg.content}
+                                    {msg.role === 'assistant' ? (
+                                        <div dangerouslySetInnerHTML={{
+                                            __html: msg.content
+                                                .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+                                                .replace(/__(.+?)__/g, '<strong>$1</strong>')
+                                                .replace(/\*(.+?)\*/g, '<em>$1</em>')
+                                                .replace(/\n/g, '<br/>')
+                                        }} />
+                                    ) : msg.content}
                                 </div>
                             </div>
                         ))}

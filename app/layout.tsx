@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import { Inter } from 'next/font/google';
 import Sidebar from '@/components/layout/Sidebar';
 import MobileBottomNav from '@/components/layout/MobileBottomNav';
+import NavigationProgress from '@/components/layout/NavigationProgress';
 import AIChatFloat from '@/components/ai/AIChatFloat';
 import ErrorBoundary from '@/components/ErrorBoundary';
 import './globals.css';
@@ -35,6 +36,7 @@ export default function RootLayout({
     return (
         <html lang="id">
             <body className={inter.className}>
+                <NavigationProgress />
                 <ErrorBoundary>
                     <div className="flex h-screen overflow-hidden">
                         {/* Desktop Sidebar */}

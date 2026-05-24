@@ -5,17 +5,6 @@ import UnitGrid from '@/components/unit/UnitGrid';
 import UnitLocationFilter from '@/components/unit/UnitLocationFilter';
 import AIInsightCard from '@/components/ai/AIInsightCard';
 
-/**
- * Unit Page - Server Component
- * 
- * Displays all apartment units with:
- * - Overview stats (total, occupied, available)
- * - Per-location summary cards with occupancy rates
- * - Grid view of all rooms with status indicators
- * - Filter by location
- * 
- * READ ONLY - no data modification
- */
 export default async function UnitPage({
     searchParams,
 }: {
@@ -31,7 +20,6 @@ export default async function UnitPage({
 
     return (
         <div className="min-h-screen bg-gray-50">
-            {/* Header */}
             <div className="bg-white border-b border-gray-200 px-4 sm:px-6 lg:px-8 py-4 sm:py-6">
                 <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Unit</h1>
                 <p className="mt-1 text-sm text-gray-500">
@@ -40,30 +28,26 @@ export default async function UnitPage({
             </div>
 
             <main className="px-4 sm:px-6 lg:px-8 py-6 space-y-6">
-                {/* Overview Stats */}
+                {/* AI Insight - Top */}
+                <AIInsightCard
+                    title="Insight Okupansi"
+                    prompt="Analisis okupansi unit: sebutkan lokasi dengan okupansi tertinggi dan terendah, serta rekomendasi untuk meningkatkan okupansi. Maksimal 3 kalimat."
+                />
+
                 <UnitOverview
                     totalUnits={unitData.totalUnits}
                     occupiedToday={unitData.occupiedToday}
                     availableToday={unitData.availableToday}
                 />
 
-                {/* Location Summary Cards */}
                 <UnitLocationCards summaries={unitData.locationSummaries} />
 
-                {/* Filter */}
                 <UnitLocationFilter
                     locations={locations}
                     currentLocation={locationFilter}
                 />
 
-                {/* Unit Grid */}
                 <UnitGrid units={unitData.units} />
-
-                {/* AI Insight */}
-                <AIInsightCard
-                    title="Insight Okupansi"
-                    prompt="Analisis okupansi unit: sebutkan lokasi dengan okupansi tertinggi dan terendah, serta rekomendasi untuk meningkatkan okupansi lokasi yang rendah. Maksimal 3 kalimat, format teks biasa."
-                />
             </main>
         </div>
     );

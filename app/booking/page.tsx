@@ -44,6 +44,12 @@ export default async function BookingPage({
             </div>
 
             <main className="px-4 sm:px-6 lg:px-8 py-6 space-y-6">
+                {/* AI Insight - Top */}
+                <AIInsightCard
+                    title="Insight Booking"
+                    prompt="Analisis tren booking: bandingkan jumlah booking hari ini vs rata-rata harian bulan ini. Sebutkan lokasi paling aktif dan jam check-in tersibuk. Maksimal 3 kalimat."
+                />
+
                 {/* Stats Cards */}
                 <BookingStatsCards stats={stats} />
 
@@ -63,12 +69,6 @@ export default async function BookingPage({
                     page={bookingResult.page}
                     pageSize={bookingResult.pageSize}
                     totalPages={bookingResult.totalPages}
-                />
-
-                {/* AI Insight */}
-                <AIInsightCard
-                    title="Insight Booking"
-                    prompt="Analisis tren booking: bandingkan jumlah booking hari ini vs rata-rata harian bulan ini. Sebutkan lokasi paling aktif dan jam check-in tersibuk. Maksimal 3 kalimat, format teks biasa."
                 />
             </main>
         </div>
