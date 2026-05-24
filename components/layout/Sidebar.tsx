@@ -38,8 +38,7 @@ export default function Sidebar() {
         { label: 'Kalender', href: '/kalender', icon: CalendarDays },
         { label: 'Unit', href: '/unit', icon: Building },
         { label: 'Customer', href: '/customer', icon: Users },
-        { label: 'Keuangan', href: '/laporan', icon: Wallet },
-        { label: 'Laporan', href: '/laporan', icon: FileText },
+        { label: 'Laporan', href: '/laporan', icon: Wallet },
         { label: 'Analytics AI', href: '/analytics-ai', icon: Brain },
         { label: 'Pengaturan', href: '/pengaturan', icon: Settings },
     ];
