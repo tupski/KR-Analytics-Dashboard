@@ -62,8 +62,6 @@ export async function fetchUnitStatus(): Promise<UnitStatusCounts> {
         const statusCounts: UnitStatusCounts = {
             tersedia: Math.max(0, totalRooms - occupiedRooms),
             ditempati: occupiedRooms,
-            cleaning: 0,
-            maintenance: 0
         };
 
         return statusCounts;
@@ -73,8 +71,6 @@ export async function fetchUnitStatus(): Promise<UnitStatusCounts> {
         return {
             tersedia: 0,
             ditempati: 0,
-            cleaning: 0,
-            maintenance: 0
         };
     }
 }
@@ -293,13 +289,13 @@ function aggregateRevenueData(
 
     switch (filter) {
         case 'daily':
-            // Return daily data as-is with formatted labels
+            // Return daily data sorted from oldest to newest
             return data.map((item) => ({
                 date: item.transaction_date,
                 revenue: item.total_revenue || 0,
                 transactionCount: item.transaction_count || 0,
                 label: format(new Date(item.transaction_date), 'dd MMM', { locale: idLocale }),
-            }));
+            })).sort((a, b) => a.date.localeCompare(b.date));
 
         case 'weekly': {
             // Group by week

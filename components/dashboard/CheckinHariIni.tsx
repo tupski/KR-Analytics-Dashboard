@@ -134,6 +134,10 @@ export default function CheckinHariIni({ items, isLoading = false }: CheckinHari
                     </Link>
                 </div>
             )}
+
+            <p className="mt-3 text-xs text-gray-400 text-center">
+                Data: transaksi dengan checkin_at = hari ini (WIB)
+            </p>
         </div>
     );
 }

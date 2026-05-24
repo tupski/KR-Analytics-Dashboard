@@ -7,6 +7,7 @@ import CheckinHariIni from '@/components/dashboard/CheckinHariIni';
 import CheckoutHariIni from '@/components/dashboard/CheckoutHariIni';
 import StatusUnit from '@/components/dashboard/StatusUnit';
 import AutoRefreshWrapper from '@/components/dashboard/AutoRefreshWrapper';
+import AIInsightCard from '@/components/ai/AIInsightCard';
 import {
     fetchKPIData,
     fetchRevenueData,
@@ -112,6 +113,14 @@ export default async function DashboardPage() {
                         <CheckinHariIni items={checkinsData} />
                         <CheckoutHariIni items={checkoutsData} />
                         <StatusUnit statusCounts={unitStatusData} />
+                    </section>
+
+                    {/* AI Insight Section */}
+                    <section>
+                        <AIInsightCard
+                            title="Ringkasan Harian"
+                            prompt="Berikan ringkasan performa bisnis hari ini dalam 3-4 kalimat. Sebutkan: jumlah booking, pendapatan, okupansi, dan satu rekomendasi singkat. Gunakan format teks biasa tanpa markdown."
+                        />
                     </section>
                 </main>
             </div>

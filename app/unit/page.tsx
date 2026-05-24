@@ -3,6 +3,7 @@ import UnitOverview from '@/components/unit/UnitOverview';
 import UnitLocationCards from '@/components/unit/UnitLocationCards';
 import UnitGrid from '@/components/unit/UnitGrid';
 import UnitLocationFilter from '@/components/unit/UnitLocationFilter';
+import AIInsightCard from '@/components/ai/AIInsightCard';
 
 /**
  * Unit Page - Server Component
@@ -57,6 +58,12 @@ export default async function UnitPage({
 
                 {/* Unit Grid */}
                 <UnitGrid units={unitData.units} />
+
+                {/* AI Insight */}
+                <AIInsightCard
+                    title="Insight Okupansi"
+                    prompt="Analisis okupansi unit: sebutkan lokasi dengan okupansi tertinggi dan terendah, serta rekomendasi untuk meningkatkan okupansi lokasi yang rendah. Maksimal 3 kalimat, format teks biasa."
+                />
             </main>
         </div>
     );

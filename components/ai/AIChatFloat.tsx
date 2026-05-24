@@ -32,19 +32,19 @@ export default function AIChatFloat() {
     const getConfig = () => {
         try {
             const stored = localStorage.getItem(STORAGE_KEY);
-            if (stored) return JSON.parse(stored);
+            if (stored) {
+                const config = JSON.parse(stored);
+                if (config.apiKey) return config;
+            }
         } catch { }
-        return null;
+        // If no localStorage config, send empty config - server will use env vars
+        return { provider: '', apiKey: '', model: '', baseUrl: '' };
     };
 
     const handleSend = async () => {
         if (!input.trim() || loading) return;
 
         const config = getConfig();
-        if (!config || !config.apiKey) {
-            setError('Belum ada konfigurasi AI. Buka halaman Analytics AI untuk setup.');
-            return;
-        }
 
         const userMessage: Message = { role: 'user', content: input.trim() };
         const newMessages = [...messages, userMessage];

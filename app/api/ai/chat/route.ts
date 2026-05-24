@@ -127,9 +127,17 @@ export async function POST(request: NextRequest) {
         const body = await request.json();
         const { messages, config } = body as { messages: any[]; config: AIConfig };
 
-        if (!config?.apiKey) {
+        // Resolve API key: client config > env variable
+        const resolvedConfig: AIConfig = {
+            provider: config?.provider || process.env.AI_PROVIDER || 'openai',
+            apiKey: config?.apiKey || process.env.AI_API_KEY || '',
+            model: config?.model || process.env.AI_MODEL || 'gpt-4o-mini',
+            baseUrl: config?.baseUrl || process.env.AI_BASE_URL || undefined,
+        };
+
+        if (!resolvedConfig.apiKey) {
             return NextResponse.json(
-                { error: 'API key belum dikonfigurasi. Silakan atur di halaman Analytics AI.' },
+                { error: 'API key belum dikonfigurasi. Atur di halaman Analytics AI atau set AI_API_KEY di environment.' },
                 { status: 400 }
             );
         }
@@ -142,7 +150,7 @@ export async function POST(request: NextRequest) {
             role: 'system',
             content: `Kamu adalah asisten AI analitik untuk Kakarama Room, sebuah bisnis penyewaan apartemen/kamar harian.
 Tugasmu adalah membantu menganalisis data bisnis, memberikan insight, dan menjawab pertanyaan tentang performa bisnis.
-Jawab dalam Bahasa Indonesia. Berikan analisis yang actionable dan berbasis data.
+Jawab dalam Bahasa Indonesia. Gunakan format teks biasa (JANGAN gunakan markdown seperti ** atau ##). Berikan analisis yang ringkas, actionable, dan berbasis data.
 
 ${dashboardContext}`
         };
@@ -152,15 +160,15 @@ ${dashboardContext}`
         let headers: Record<string, string>;
         let requestBody: any;
 
-        switch (config.provider) {
+        switch (resolvedConfig.provider) {
             case 'openai':
-                apiUrl = config.baseUrl || 'https://api.openai.com/v1/chat/completions';
+                apiUrl = resolvedConfig.baseUrl || 'https://api.openai.com/v1/chat/completions';
                 headers = {
                     'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${config.apiKey}`,
+                    'Authorization': `Bearer ${resolvedConfig.apiKey}`,
                 };
                 requestBody = {
-                    model: config.model || 'gpt-4o-mini',
+                    model: resolvedConfig.model || 'gpt-4o-mini',
                     messages: [systemMessage, ...messages],
                     temperature: 0.7,
                     max_tokens: 2000,
@@ -168,14 +176,14 @@ ${dashboardContext}`
                 break;
 
             case 'anthropic':
-                apiUrl = config.baseUrl || 'https://api.anthropic.com/v1/messages';
+                apiUrl = resolvedConfig.baseUrl || 'https://api.anthropic.com/v1/messages';
                 headers = {
                     'Content-Type': 'application/json',
-                    'x-api-key': config.apiKey,
+                    'x-api-key': resolvedConfig.apiKey,
                     'anthropic-version': '2023-06-01',
                 };
                 requestBody = {
-                    model: config.model || 'claude-sonnet-4-20250514',
+                    model: resolvedConfig.model || 'claude-sonnet-4-20250514',
                     max_tokens: 2000,
                     system: systemMessage.content,
                     messages: messages.map((m: any) => ({
@@ -186,13 +194,13 @@ ${dashboardContext}`
                 break;
 
             case 'deepseek':
-                apiUrl = config.baseUrl || 'https://api.deepseek.com/v1/chat/completions';
+                apiUrl = resolvedConfig.baseUrl || 'https://api.deepseek.com/v1/chat/completions';
                 headers = {
                     'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${config.apiKey}`,
+                    'Authorization': `Bearer ${resolvedConfig.apiKey}`,
                 };
                 requestBody = {
-                    model: config.model || 'deepseek-chat',
+                    model: resolvedConfig.model || 'deepseek-chat',
                     messages: [systemMessage, ...messages],
                     temperature: 0.7,
                     max_tokens: 2000,
@@ -200,13 +208,13 @@ ${dashboardContext}`
                 break;
 
             case 'openai-compatible':
-                apiUrl = config.baseUrl || 'https://api.openai.com/v1/chat/completions';
+                apiUrl = resolvedConfig.baseUrl || 'https://api.openai.com/v1/chat/completions';
                 headers = {
                     'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${config.apiKey}`,
+                    'Authorization': `Bearer ${resolvedConfig.apiKey}`,
                 };
                 requestBody = {
-                    model: config.model || 'gpt-4o-mini',
+                    model: resolvedConfig.model || 'gpt-4o-mini',
                     messages: [systemMessage, ...messages],
                     temperature: 0.7,
                     max_tokens: 2000,
@@ -240,7 +248,7 @@ ${dashboardContext}`
         // Extract response based on provider
         let assistantMessage: string;
 
-        if (config.provider === 'anthropic') {
+        if (resolvedConfig.provider === 'anthropic') {
             assistantMessage = data.content?.[0]?.text || 'Tidak ada respons.';
         } else {
             assistantMessage = data.choices?.[0]?.message?.content || 'Tidak ada respons.';

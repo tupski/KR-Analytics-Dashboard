@@ -2,6 +2,7 @@ import { fetchBookings, fetchLocations, fetchBookingStats } from './actions';
 import BookingTable from '@/components/booking/BookingTable';
 import BookingStatsCards from '@/components/booking/BookingStatsCards';
 import BookingFilters from '@/components/booking/BookingFilters';
+import AIInsightCard from '@/components/ai/AIInsightCard';
 
 /**
  * Booking Page - Server Component
@@ -62,6 +63,12 @@ export default async function BookingPage({
                     page={bookingResult.page}
                     pageSize={bookingResult.pageSize}
                     totalPages={bookingResult.totalPages}
+                />
+
+                {/* AI Insight */}
+                <AIInsightCard
+                    title="Insight Booking"
+                    prompt="Analisis tren booking: bandingkan jumlah booking hari ini vs rata-rata harian bulan ini. Sebutkan lokasi paling aktif dan jam check-in tersibuk. Maksimal 3 kalimat, format teks biasa."
                 />
             </main>
         </div>

@@ -53,8 +53,6 @@ export interface CheckoutItem {
 export interface UnitStatusCounts {
   tersedia: number;
   ditempati: number;
-  cleaning: number;
-  maintenance: number;
 }
 
-export type UnitStatus = 'tersedia' | 'ditempati' | 'cleaning' | 'maintenance';
+export type UnitStatus = 'tersedia' | 'ditempati';
