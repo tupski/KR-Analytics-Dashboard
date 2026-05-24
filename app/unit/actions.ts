@@ -58,20 +58,21 @@ export async function fetchUnits(locationFilter?: string): Promise<UnitPageData>
             throw new Error('Failed to fetch rooms');
         }
 
-        // Fetch today's transactions to determine which rooms are occupied
-        const { data: todayTransactions, error: txError } = await supabase
+        // Fetch currently active transactions (checkin <= now AND checkout >= now)
+        const now = new Date().toISOString();
+        const { data: activeTransactions, error: txError } = await supabase
             .from('transactions')
             .select('room_number, apartment_location, customer_name')
-            .gte('checkin_at', `${today}T00:00:00`)
-            .lt('checkin_at', `${today}T23:59:59`);
+            .lte('checkin_at', now)
+            .gte('checkout_at', now);
 
         if (txError) {
-            console.error('Error fetching today transactions:', txError);
+            console.error('Error fetching active transactions:', txError);
         }
 
         // Create a map of occupied rooms (location-room -> customer)
         const occupiedMap = new Map<string, string>();
-        todayTransactions?.forEach((tx: any) => {
+        activeTransactions?.forEach((tx: any) => {
             const key = `${tx.apartment_location}-${tx.room_number}`;
             occupiedMap.set(key, tx.customer_name);
         });

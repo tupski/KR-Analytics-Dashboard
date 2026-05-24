@@ -41,12 +41,13 @@ export async function fetchUnitStatus(): Promise<UnitStatusCounts> {
 
         const totalRooms = totalRoomCount || 0;
 
-        // Get distinct rooms occupied today (checkin today or still staying)
+        // Get distinct rooms currently occupied (checkin <= now AND checkout >= now)
+        const now = new Date().toISOString();
         const { data: occupiedData, error: occError } = await supabase
             .from('transactions')
             .select('room_number, apartment_location')
-            .gte('checkin_at', `${today}T00:00:00`)
-            .lt('checkin_at', `${today}T23:59:59`);
+            .lte('checkin_at', now)
+            .gte('checkout_at', now);
 
         if (occError) {
             console.error('Error fetching occupied rooms:', occError);
@@ -230,54 +231,40 @@ export async function fetchKPIData(): Promise<KPIData> {
             0
         ) || 0;
 
-        // Okupansi Rata-rata - calculate from nomor_kamar count and today's transactions
+        // Okupansi Rata-rata - calculate from nomor_kamar count and currently active transactions
         let avgOccupancy = 0;
+        const nowIso = new Date().toISOString();
+        let currentlyOccupiedCount = 0;
+        let totalRoomsCount = 0;
+
         try {
             const { count: totalRooms, error: roomErr } = await supabase
                 .from('nomor_kamar')
                 .select('id', { count: 'exact', head: true });
 
-            if (totalRooms && totalRooms > 0) {
-                // Count distinct rooms occupied today
+            totalRoomsCount = totalRooms || 0;
+
+            if (totalRoomsCount > 0) {
+                // Count distinct rooms currently occupied (checkin <= now AND checkout >= now)
                 const { data: occData, error: occErr } = await supabase
                     .from('transactions')
                     .select('room_number, apartment_location')
-                    .gte('checkin_at', `${today}T00:00:00`)
-                    .lt('checkin_at', `${today}T23:59:59`);
+                    .lte('checkin_at', nowIso)
+                    .gte('checkout_at', nowIso);
 
                 if (!occErr && occData) {
-                    const uniqueRooms = new Set(
+                    currentlyOccupiedCount = new Set(
                         occData.map((t: any) => `${t.apartment_location}-${t.room_number}`)
                     ).size;
-                    avgOccupancy = Math.round((uniqueRooms / totalRooms) * 10000) / 100;
+                    avgOccupancy = Math.round((currentlyOccupiedCount / totalRoomsCount) * 10000) / 100;
                 }
             }
         } catch (occError) {
             console.error('Error calculating occupancy:', occError);
         }
 
-        // Unit Tersedia - derive from nomor_kamar count minus occupied today
-        let availableUnits = 0;
-        try {
-            const { count: allTotalRooms, error: allRoomErr } = await supabase
-                .from('nomor_kamar')
-                .select('id', { count: 'exact', head: true });
-
-            // Get rooms occupied today
-            const { data: occupiedToday, error: occupiedErr } = await supabase
-                .from('transactions')
-                .select('room_number, apartment_location')
-                .gte('checkin_at', `${today}T00:00:00`)
-                .lt('checkin_at', `${today}T23:59:59`);
-
-            const occupiedCount = new Set(
-                occupiedToday?.map((t: any) => `${t.apartment_location}-${t.room_number}`) || []
-            ).size;
-
-            availableUnits = Math.max(0, (allTotalRooms || 0) - occupiedCount);
-        } catch (unitErr) {
-            console.error('Error calculating available units:', unitErr);
-        }
+        // Unit Tersedia - total rooms minus currently occupied
+        const availableUnits = Math.max(0, totalRoomsCount - currentlyOccupiedCount);
 
         return {
             bookingToday: bookingCount || 0,
