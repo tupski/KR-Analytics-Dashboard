@@ -1,0 +1,62 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* Primary Blue */
+    --color-primary: 37 99 235; /* #2563EB */
+    --color-primary-hover: 29 78 216; /* #1D4ED8 */
+    
+    /* Sky Blue */
+    --color-sky: 14 165 233; /* #0EA5E9 */
+    
+    /* Soft Background */
+    --color-bg-soft: 248 251 255; /* #F8FBFF */
+    
+    /* Border */
+    --color-border: 226 232 240; /* #E2E8F0 */
+    
+    /* Text */
+    --color-text-dark: 15 23 42; /* #0F172A */
+    --color-text-muted: 100 116 139; /* #64748B */
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  
+  body {
+    @apply bg-gray-50 text-gray-900;
+    font-feature-settings: "rlig" 1, "calt" 1;
+  }
+}
+
+@layer utilities {
+  /* Custom scrollbar */
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  
+  .scrollbar-thin::-webkit-scrollbar-track {
+    @apply bg-gray-100;
+  }
+  
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    @apply bg-gray-300 rounded-full;
+  }
+  
+  .scrollbar-thin::-webkit-scrollbar-thumb:hover {
+    @apply bg-gray-400;
+  }
+}
+
+/* Safe area insets for iOS devices */
+@supports (padding: max(0px)) {
+  .safe-bottom {
+    padding-bottom: max(1rem, env(safe-area-inset-bottom));
+  }
+}
