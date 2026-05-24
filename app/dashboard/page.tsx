@@ -67,6 +67,7 @@ export default async function DashboardPage() {
                                 title="Booking Hari Ini"
                                 value={kpiData.bookingToday}
                                 icon={<Calendar className="w-6 h-6" />}
+                                href="/booking"
                             />
                             <KartuRingkasan
                                 title="Pendapatan Hari Ini"
@@ -77,16 +78,19 @@ export default async function DashboardPage() {
                                     maximumFractionDigits: 0,
                                 }).format(kpiData.revenueToday)}
                                 icon={<DollarSign className="w-6 h-6" />}
+                                href="/booking"
                             />
                             <KartuRingkasan
                                 title="Okupansi Rata-rata"
                                 value={`${kpiData.avgOccupancy.toFixed(2)}%`}
                                 icon={<TrendingUp className="w-6 h-6" />}
+                                href="/unit"
                             />
                             <KartuRingkasan
                                 title="Unit Tersedia"
                                 value={kpiData.availableUnits}
                                 icon={<Home className="w-6 h-6" />}
+                                href="/unit"
                             />
                         </div>
                     </section>

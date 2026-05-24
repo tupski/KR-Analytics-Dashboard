@@ -1,6 +1,7 @@
 'use client';
 
 import React from 'react';
+import Link from 'next/link';
 
 /**
  * KartuRingkasan (KPI Card) Component
@@ -20,6 +21,7 @@ interface KartuRingkasanProps {
     title: string;
     value: string | number;
     icon: React.ReactNode;
+    href?: string;
     trend?: TrendData;
     isLoading?: boolean;
     error?: string;
@@ -112,13 +114,14 @@ export default function KartuRingkasan({
     title,
     value,
     icon,
+    href,
     trend,
     isLoading = false,
     error,
     onRetry,
 }: KartuRingkasanProps) {
-    return (
-        <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 hover:shadow-lg transition-shadow duration-200">
+    const cardContent = (
+        <div className={`bg-white rounded-lg shadow-md p-6 border border-gray-200 hover:shadow-lg transition-shadow duration-200 ${href ? 'cursor-pointer' : ''}`}>
             {/* Icon Section */}
             <div className="flex items-start justify-between mb-4">
                 <div className="flex-shrink-0 w-12 h-12 bg-blue-600 rounded-lg flex items-center justify-center text-white">
@@ -146,6 +149,12 @@ export default function KartuRingkasan({
             </div>
         </div>
     );
+
+    if (href) {
+        return <Link href={href}>{cardContent}</Link>;
+    }
+
+    return cardContent;
 }
 
 // Export helper functions for use in parent components

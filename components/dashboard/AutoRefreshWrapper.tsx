@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { RefreshCw } from 'lucide-react';
+import RealTimeClock from './RealTimeClock';
 
 interface AutoRefreshWrapperProps {
     children: React.ReactNode;
@@ -164,12 +165,15 @@ export default function AutoRefreshWrapper({
                     </div>
                 )}
 
-                {isRefreshing && (
+                {isRefreshing && !error && (
                     <div className="flex items-center gap-2 text-blue-600">
                         <div className="w-2 h-2 bg-blue-600 rounded-full animate-pulse"></div>
                         <span className="text-sm">Memperbarui data...</span>
                     </div>
                 )}
+
+                {/* Digital Clock - float right */}
+                <RealTimeClock />
             </div>
 
             {/* Main content */}

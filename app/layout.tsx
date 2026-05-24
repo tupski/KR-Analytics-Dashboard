@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import { Inter } from 'next/font/google';
 import Sidebar from '@/components/layout/Sidebar';
 import MobileBottomNav from '@/components/layout/MobileBottomNav';
+import AIChatFloat from '@/components/ai/AIChatFloat';
 import ErrorBoundary from '@/components/ErrorBoundary';
 import './globals.css';
 
@@ -50,6 +51,9 @@ export default function RootLayout({
                             <MobileBottomNav />
                         </div>
                     </div>
+
+                    {/* AI Chat Floating Button */}
+                    <AIChatFloat />
                 </ErrorBoundary>
             </body>
         </html>

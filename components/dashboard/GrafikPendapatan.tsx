@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useTransition } from 'react';
-import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 import type { RevenueDataPoint, RevenueFilter } from '@/types/dashboard';
 
 interface GrafikPendapatanProps {
@@ -107,8 +107,8 @@ export default function GrafikPendapatan({ initialData, initialFilter }: GrafikP
                                 onClick={() => handleFilterChange(f.value)}
                                 disabled={isPending}
                                 className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${filter === f.value
-                                        ? 'bg-blue-600 text-white'
-                                        : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                                    ? 'bg-blue-600 text-white'
+                                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
                                     } disabled:opacity-50 disabled:cursor-not-allowed`}
                             >
                                 {f.label}
@@ -149,8 +149,8 @@ export default function GrafikPendapatan({ initialData, initialFilter }: GrafikP
                             onClick={() => handleFilterChange(f.value)}
                             disabled={isPending}
                             className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${filter === f.value
-                                    ? 'bg-blue-600 text-white'
-                                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                                ? 'bg-blue-600 text-white'
+                                : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
                                 } disabled:opacity-50 disabled:cursor-not-allowed`}
                         >
                             {f.label}
@@ -167,66 +167,33 @@ export default function GrafikPendapatan({ initialData, initialFilter }: GrafikP
 
             <div className="relative">
                 <ResponsiveContainer width="100%" height={320}>
-                    {filter === 'daily' || filter === 'weekly' ? (
-                        <LineChart data={data} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
-                            <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-                            <XAxis
-                                dataKey="label"
-                                stroke="#6b7280"
-                                style={{ fontSize: '12px' }}
-                                angle={-45}
-                                textAnchor="end"
-                                height={80}
-                            />
-                            <YAxis
-                                stroke="#6b7280"
-                                style={{ fontSize: '12px' }}
-                                tickFormatter={formatCurrency}
-                            />
-                            <Tooltip content={<CustomTooltip />} />
-                            <Legend
-                                wrapperStyle={{ fontSize: '14px' }}
-                                formatter={() => 'Pendapatan'}
-                            />
-                            <Line
-                                type="monotone"
-                                dataKey="revenue"
-                                stroke="#2563eb"
-                                strokeWidth={2}
-                                dot={{ fill: '#2563eb', r: 4 }}
-                                activeDot={{ r: 6 }}
-                                name="Pendapatan"
-                            />
-                        </LineChart>
-                    ) : (
-                        <BarChart data={data} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
-                            <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-                            <XAxis
-                                dataKey="label"
-                                stroke="#6b7280"
-                                style={{ fontSize: '12px' }}
-                                angle={-45}
-                                textAnchor="end"
-                                height={80}
-                            />
-                            <YAxis
-                                stroke="#6b7280"
-                                style={{ fontSize: '12px' }}
-                                tickFormatter={formatCurrency}
-                            />
-                            <Tooltip content={<CustomTooltip />} />
-                            <Legend
-                                wrapperStyle={{ fontSize: '14px' }}
-                                formatter={() => 'Pendapatan'}
-                            />
-                            <Bar
-                                dataKey="revenue"
-                                fill="#2563eb"
-                                radius={[8, 8, 0, 0]}
-                                name="Pendapatan"
-                            />
-                        </BarChart>
-                    )}
+                    <BarChart data={data} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                        <XAxis
+                            dataKey="label"
+                            stroke="#6b7280"
+                            style={{ fontSize: '12px' }}
+                            angle={-45}
+                            textAnchor="end"
+                            height={80}
+                        />
+                        <YAxis
+                            stroke="#6b7280"
+                            style={{ fontSize: '12px' }}
+                            tickFormatter={formatCurrency}
+                        />
+                        <Tooltip content={<CustomTooltip />} />
+                        <Legend
+                            wrapperStyle={{ fontSize: '14px' }}
+                            formatter={() => 'Pendapatan'}
+                        />
+                        <Bar
+                            dataKey="revenue"
+                            fill="#2563eb"
+                            radius={[4, 4, 0, 0]}
+                            name="Pendapatan"
+                        />
+                    </BarChart>
                 </ResponsiveContainer>
             </div>
         </div>
