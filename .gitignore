@@ -1,0 +1,73 @@
+# dependencies
+/node_modules
+/.pnp
+.pnp.js
+.yarn/install-state.gz
+
+# testing
+/coverage
+
+# next.js
+/.next/
+/out/
+
+# production
+/build
+
+# misc
+.DS_Store
+*.pem
+
+# debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# env files (contain secrets - NEVER commit)
+.env
+.env*.local
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# vercel
+.vercel
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts
+
+# IDE / Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Kiro (IDE workspace config)
+.kiro/
+
+# Supabase local/temp files (contains project ref, pooler url, etc.)
+# Actual schema migrations are in supabase-schema/
+/supabase/
+
+# Documentation & notes generated during development (not needed in repo)
+docs/
+SETUP_INSTRUCTIONS.md
+SUPABASE_SETUP.md
+
+# Task completion summaries & implementation notes (dev artifacts)
+**/TASK_*_COMPLETION_SUMMARY.md
+**/IMPLEMENTATION_NOTES.md
+**/COMPONENT_STRUCTURE.md
+**/CHECKIN_COMPONENT_SUMMARY.md
+**/CHECKOUT_COMPONENT_SUMMARY.md
+
+# Example/demo files (not production code)
+**/*.example.tsx
+lib/supabase/examples.tsx
