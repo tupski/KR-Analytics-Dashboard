@@ -1,4 +1,4 @@
-import { fetchLaporanData, fetchHighOccupancyUnits } from './actions';
+import { fetchLaporanData, fetchHighOccupancyLocations } from './actions';
 import type { DateFilter } from './actions';
 import AIInsightCard from '@/components/ai/AIInsightCard';
 import LaporanClient from '@/components/laporan/LaporanClient';
@@ -13,7 +13,7 @@ export default async function LaporanPage({
 
     const [data, highOccupancy] = await Promise.all([
         fetchLaporanData(filter),
-        fetchHighOccupancyUnits(30),
+        fetchHighOccupancyLocations(30),
     ]);
 
     return (

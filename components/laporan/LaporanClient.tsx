@@ -7,7 +7,7 @@ import type { LaporanData, LocationReport, RoomReport, RoomDetail, DateFilter } 
 
 interface LaporanClientProps {
     data: LaporanData;
-    highOccupancy: { location: string; roomNumber: string; daysUsed: number; totalDays: number; occupancyRate: number }[];
+    highOccupancy: { location: string; totalRooms: number; usedRoomDays: number; totalPossibleRoomDays: number; occupancyRate: number }[];
 }
 
 const fmt = (v: number) => `Rp ${v.toLocaleString('id-ID')}`;
@@ -64,8 +64,8 @@ export default function LaporanClient({ data, highOccupancy }: LaporanClientProp
                         key={f.value}
                         onClick={() => handleFilterChange(f.value)}
                         className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${data.filter === f.value
-                                ? 'bg-blue-600 text-white'
-                                : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-50'
+                            ? 'bg-blue-600 text-white'
+                            : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-50'
                             }`}
                     >
                         {f.label}
@@ -196,6 +196,20 @@ export default function LaporanClient({ data, highOccupancy }: LaporanClientProp
                                 Transaksi: <strong>{loc.transactions}</strong> · Pendapatan: <strong className="text-green-700">{fmt(loc.revenue)}</strong>
                             </div>
 
+                            {/* Expenses per location */}
+                            {data.expensesPerLocation[loc.name] && data.expensesPerLocation[loc.name].length > 0 && (
+                                <div className="bg-red-50/50 rounded-lg px-4 py-3 mb-4">
+                                    <p className="text-xs font-semibold text-red-700 uppercase mb-2">Pengeluaran Lokasi Ini</p>
+                                    <div className="flex flex-wrap gap-3">
+                                        {data.expensesPerLocation[loc.name].map(exp => (
+                                            <span key={exp.category} className="text-xs text-gray-700">
+                                                {exp.category}: <strong className="text-red-700">{fmt(exp.total)}</strong> ({exp.count}x)
+                                            </span>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+
                             {/* Room cards */}
                             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                                 {loc.rooms.map(room => (
@@ -215,20 +229,21 @@ export default function LaporanClient({ data, highOccupancy }: LaporanClientProp
                 </div>
             </div>
 
-            {/* High Occupancy Alert */}
+            {/* High Occupancy Location Alert */}
             {highOccupancy.length > 0 && (
                 <div className="bg-orange-50 rounded-xl border border-orange-200 p-5">
                     <div className="flex items-center gap-2 mb-3">
                         <AlertTriangle className="w-5 h-5 text-orange-600" />
-                        <h3 className="font-semibold text-orange-900">Unit Okupansi Tinggi (&ge;90%) — 30 Hari Terakhir</h3>
+                        <h3 className="font-semibold text-orange-900">Lokasi Okupansi Tinggi (&ge;90%) — 30 Hari Terakhir</h3>
                     </div>
-                    <p className="text-sm text-orange-700 mb-3">Unit-unit ini hampir selalu penuh. Pertimbangkan untuk membuka unit baru di lokasi yang sama.</p>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                    <p className="text-sm text-orange-700 mb-3">Lokasi-lokasi ini secara keseluruhan memiliki okupansi sangat tinggi. Pertimbangkan untuk menambah unit baru di lokasi ini.</p>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                         {highOccupancy.map(u => (
-                            <div key={`${u.location}-${u.roomNumber}`} className="bg-white rounded-lg border border-orange-200 p-3">
-                                <p className="font-semibold text-gray-900">{u.roomNumber}</p>
-                                <p className="text-xs text-gray-600">{u.location}</p>
-                                <p className="text-sm font-bold text-orange-700">{u.occupancyRate}% ({u.daysUsed}/{u.totalDays} hari)</p>
+                            <div key={u.location} className="bg-white rounded-lg border border-orange-200 p-4">
+                                <p className="font-bold text-gray-900">{u.location}</p>
+                                <p className="text-sm text-gray-600">{u.totalRooms} kamar</p>
+                                <p className="text-lg font-bold text-orange-700 mt-1">{u.occupancyRate}% okupansi</p>
+                                <p className="text-xs text-gray-500">{u.usedRoomDays} / {u.totalPossibleRoomDays} room-days terpakai</p>
                             </div>
                         ))}
                     </div>

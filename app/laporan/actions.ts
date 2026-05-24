@@ -113,6 +113,7 @@ export interface LaporanData {
     // Expenses
     expenses: ExpenseReport[];
     totalExpenses: number;
+    expensesPerLocation: Record<string, { category: string; total: number; count: number }[]>;
     // Tagihan
     tagihan: TagihanReport;
     // Fee Marketing
@@ -185,16 +186,27 @@ export async function fetchLaporanData(filter: DateFilter = 'today'): Promise<La
     // Expenses in range
     const { data: expenseData } = await supabase
         .from('pengeluaran')
-        .select('category, jumlah')
+        .select('category, jumlah, apartment_location, room_number')
         .gte('tanggal', start.split('T')[0])
         .lte('tanggal', end.split('T')[0]);
 
     const expMap: Record<string, { total: number; count: number }> = {};
+    const expPerLocation: Record<string, { category: string; total: number; count: number }[]> = {};
+
     expenseData?.forEach((e: any) => {
         const cat = e.category || 'Lainnya';
         if (!expMap[cat]) expMap[cat] = { total: 0, count: 0 };
         expMap[cat].total += e.jumlah || 0;
         expMap[cat].count++;
+
+        // Group by location if available
+        const loc = e.apartment_location;
+        if (loc) {
+            if (!expPerLocation[loc]) expPerLocation[loc] = [];
+            const existing = expPerLocation[loc].find(x => x.category === cat);
+            if (existing) { existing.total += e.jumlah || 0; existing.count++; }
+            else expPerLocation[loc].push({ category: cat, total: e.jumlah || 0, count: 1 });
+        }
     });
 
     const expenses = Object.entries(expMap)
@@ -262,6 +274,7 @@ export async function fetchLaporanData(filter: DateFilter = 'today'): Promise<La
         locations,
         expenses,
         totalExpenses,
+        expensesPerLocation: expPerLocation,
         tagihan,
         feeMarketing,
         comparison,
@@ -297,8 +310,8 @@ export async function fetchRoomDetails(location: string, roomNumber: string, fil
     }));
 }
 
-/** Schema/query for detecting units with >90% occupancy */
-export async function fetchHighOccupancyUnits(days: number = 30) {
+/** Detect LOCATIONS where overall occupancy is ≥90% (all units combined) */
+export async function fetchHighOccupancyLocations(days: number = 30) {
     const supabase = createServerClient();
     const startDate = format(subDays(new Date(), days), 'yyyy-MM-dd');
     const endDate = format(new Date(), 'yyyy-MM-dd');
@@ -310,20 +323,32 @@ export async function fetchHighOccupancyUnits(days: number = 30) {
         .gte('checkin_at', `${startDate}T00:00:00`)
         .lte('checkin_at', `${endDate}T23:59:59`);
 
-    // Count unique days each room was used
-    const roomUsage: Record<string, Set<string>> = {};
-    transactions?.forEach((t: any) => {
-        const key = `${t.apartment_location}|${t.room_number}`;
-        if (!roomUsage[key]) roomUsage[key] = new Set();
-        roomUsage[key].add(format(new Date(t.checkin_at), 'yyyy-MM-dd'));
+    // Count rooms per location
+    const roomsPerLocation: Record<string, number> = {};
+    allRooms?.forEach((r: any) => {
+        roomsPerLocation[r.lokasi] = (roomsPerLocation[r.lokasi] || 0) + 1;
     });
 
-    const results = (allRooms || []).map((r: any) => {
-        const key = `${r.lokasi}|${r.name}`;
-        const daysUsed = roomUsage[key]?.size || 0;
-        const occupancyRate = Math.round((daysUsed / days) * 100);
-        return { location: r.lokasi, roomNumber: r.name, daysUsed, totalDays: days, occupancyRate };
-    }).filter(r => r.occupancyRate >= 90)
+    // Count unique room-days used per location
+    // (how many room-days were occupied out of total possible room-days)
+    const locationUsage: Record<string, Set<string>> = {};
+    transactions?.forEach((t: any) => {
+        const loc = t.apartment_location;
+        if (!locationUsage[loc]) locationUsage[loc] = new Set();
+        // Each unique room+date combination counts as 1 room-day
+        const dayKey = `${t.room_number}|${format(new Date(t.checkin_at), 'yyyy-MM-dd')}`;
+        locationUsage[loc].add(dayKey);
+    });
+
+    // Calculate occupancy rate per location
+    const results = Object.entries(roomsPerLocation)
+        .map(([location, totalRooms]) => {
+            const totalPossibleRoomDays = totalRooms * days;
+            const usedRoomDays = locationUsage[location]?.size || 0;
+            const occupancyRate = Math.round((usedRoomDays / totalPossibleRoomDays) * 100);
+            return { location, totalRooms, usedRoomDays, totalPossibleRoomDays, occupancyRate };
+        })
+        .filter(r => r.occupancyRate >= 90)
         .sort((a, b) => b.occupancyRate - a.occupancyRate);
 
     return results;
