@@ -1,6 +1,6 @@
 export default function LaporanLoading() {
     return (
-        <div className="min-h-screen bg-gray-50">
+        <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50/30">
             <div className="bg-white border-b border-gray-200 px-4 sm:px-6 lg:px-8 py-4 sm:py-6 animate-pulse">
                 <div className="h-8 w-32 bg-gray-200 rounded"></div>
                 <div className="h-4 w-64 bg-gray-200 rounded mt-2"></div>

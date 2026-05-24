@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect } from 'react';
+import Link from 'next/link';
 import { AlertTriangle, RefreshCw, Home } from 'lucide-react';
 
 /**
@@ -24,7 +25,7 @@ export default function DashboardError({
     }, [error]);
 
     return (
-        <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
+        <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50/30 flex items-center justify-center p-4">
             <div className="bg-white rounded-lg shadow-lg p-8 max-w-lg w-full">
                 <div className="text-center">
                     <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
@@ -61,13 +62,13 @@ export default function DashboardError({
                             Coba Lagi
                         </button>
 
-                        <a
-                            href="/"
+                        <Link
+                            href="/dashboard"
                             className="inline-flex items-center justify-center gap-2 px-6 py-3 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors"
                         >
                             <Home className="w-4 h-4" />
                             Kembali ke Beranda
-                        </a>
+                        </Link>
                     </div>
                 </div>
             </div>

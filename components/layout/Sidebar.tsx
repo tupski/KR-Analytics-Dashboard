@@ -49,7 +49,7 @@ export default function Sidebar() {
     };
 
     return (
-        <aside className="hidden lg:flex lg:flex-col lg:fixed lg:inset-y-0 lg:w-64 lg:border-r lg:border-gray-200 lg:bg-white">
+        <aside className="hidden lg:flex lg:flex-col lg:fixed lg:inset-y-0 lg:w-64 lg:border-r lg:border-blue-100 lg:bg-gradient-to-b lg:from-white lg:to-blue-50/50">
             {/* Logo/Branding */}
             <div className="flex items-center gap-3 px-6 py-5 border-b border-gray-200">
                 <div className="w-10 h-10 bg-gradient-to-br from-blue-600 to-blue-400 rounded-lg flex items-center justify-center">
@@ -73,8 +73,8 @@ export default function Sidebar() {
                                 <Link
                                     href={item.href}
                                     className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${active
-                                            ? 'bg-blue-50 text-blue-600'
-                                            : 'text-gray-700 hover:bg-gray-100 hover:text-gray-900'
+                                        ? 'bg-blue-50 text-blue-600'
+                                        : 'text-gray-700 hover:bg-gray-100 hover:text-gray-900'
                                         }`}
                                 >
                                     <Icon className={`w-5 h-5 ${active ? 'text-blue-600' : 'text-gray-500'}`} />
