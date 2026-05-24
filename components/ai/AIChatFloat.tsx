@@ -1,34 +1,37 @@
 'use client';
 
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { X, Send, Bot } from 'lucide-react';
 
 interface Message {
     role: 'user' | 'assistant';
     content: string;
-    isTyping?: boolean;
+    typed?: boolean; // true = already displayed, skip typing animation
 }
 
 const STORAGE_KEY = 'kr-ai-config';
 
-function TypingMessage({ content }: { content: string }) {
+function TypingMessage({ content, onDone, scrollRef }: { content: string; onDone: () => void; scrollRef: React.RefObject<HTMLDivElement | null> }) {
     const [displayed, setDisplayed] = useState('');
     const [done, setDone] = useState(false);
 
     useEffect(() => {
         let i = 0;
-        const speed = 15; // ms per character
+        const speed = 12;
         const timer = setInterval(() => {
             if (i < content.length) {
                 setDisplayed(content.slice(0, i + 1));
                 i++;
+                // Auto-scroll every few characters
+                if (i % 5 === 0) scrollRef.current?.scrollIntoView({ behavior: 'smooth' });
             } else {
                 setDone(true);
                 clearInterval(timer);
+                onDone();
             }
         }, speed);
         return () => clearInterval(timer);
-    }, [content]);
+    }, [content, onDone, scrollRef]);
 
     const html = displayed
         .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
@@ -42,6 +45,15 @@ function TypingMessage({ content }: { content: string }) {
             {!done && <span className="typing-cursor"></span>}
         </div>
     );
+}
+
+function StaticMessage({ content }: { content: string }) {
+    const html = content
+        .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+        .replace(/__(.+?)__/g, '<strong>$1</strong>')
+        .replace(/\*(.+?)\*/g, '<em>$1</em>')
+        .replace(/\n/g, '<br/>');
+    return <div dangerouslySetInnerHTML={{ __html: html }} />;
 }
 
 export default function AIChatFloat() {
@@ -74,11 +86,21 @@ export default function AIChatFloat() {
         return { provider: '', apiKey: '', model: '', baseUrl: '' };
     };
 
+    const markLastMessageTyped = useCallback(() => {
+        setMessages(prev => {
+            const updated = [...prev];
+            if (updated.length > 0) {
+                updated[updated.length - 1] = { ...updated[updated.length - 1], typed: true };
+            }
+            return updated;
+        });
+    }, []);
+
     const handleSend = async (text?: string) => {
         const msg = text || input.trim();
         if (!msg || loading) return;
 
-        const userMessage: Message = { role: 'user', content: msg };
+        const userMessage: Message = { role: 'user', content: msg, typed: true };
         const newMessages = [...messages, userMessage];
         setMessages(newMessages);
         setInput('');
@@ -103,7 +125,8 @@ export default function AIChatFloat() {
 
             if (res.ok) {
                 const data = await res.json();
-                setMessages([...newMessages, { role: 'assistant', content: data.message, isTyping: true }]);
+                // typed: false means it will animate typing
+                setMessages([...newMessages, { role: 'assistant', content: data.message, typed: false }]);
             } else {
                 const err = await res.json();
                 setError(err.error || 'Gagal mendapatkan response dari AI');
@@ -176,24 +199,22 @@ export default function AIChatFloat() {
                                 )}
                                 <div
                                     className={`max-w-[80%] px-3 py-2 rounded-xl text-sm ${msg.role === 'user'
-                                        ? 'bg-blue-600 text-white rounded-br-sm'
+                                        ? 'bg-blue-600 text-white rounded-br-sm whitespace-pre-wrap'
                                         : 'bg-white text-gray-800 rounded-bl-sm border border-gray-200 shadow-sm'
                                         }`}
                                 >
                                     {msg.role === 'assistant' ? (
-                                        msg.isTyping ? (
-                                            <TypingMessage content={msg.content} />
+                                        msg.typed ? (
+                                            <StaticMessage content={msg.content} />
                                         ) : (
-                                            <div dangerouslySetInnerHTML={{
-                                                __html: msg.content
-                                                    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-                                                    .replace(/__(.+?)__/g, '<strong>$1</strong>')
-                                                    .replace(/\*(.+?)\*/g, '<em>$1</em>')
-                                                    .replace(/\n/g, '<br/>')
-                                            }} />
+                                            <TypingMessage
+                                                content={msg.content}
+                                                onDone={markLastMessageTyped}
+                                                scrollRef={messagesEndRef}
+                                            />
                                         )
                                     ) : (
-                                        <span className="whitespace-pre-wrap">{msg.content}</span>
+                                        <span>{msg.content}</span>
                                     )}
                                 </div>
                             </div>
@@ -244,7 +265,7 @@ export default function AIChatFloat() {
                 </div>
             )}
 
-            {/* Floating Button - positioned above mobile nav */}
+            {/* Floating Button */}
             <button
                 onClick={() => setIsOpen(!isOpen)}
                 className={`fixed bottom-20 lg:bottom-6 right-4 sm:right-6 w-14 h-14 bg-blue-600 text-white rounded-full shadow-lg hover:shadow-xl transition-all hover:scale-110 flex items-center justify-center z-50 ${!isOpen ? 'pulse-glow' : ''}`}
