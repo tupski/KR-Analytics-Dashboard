@@ -2,58 +2,60 @@
 
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { X, Send, Bot } from 'lucide-react';
+import MarkdownRenderer from './MarkdownRenderer';
 
 interface Message {
     role: 'user' | 'assistant';
     content: string;
-    typed?: boolean; // true = already displayed, skip typing animation
+    typed?: boolean; // true = already fully displayed
 }
 
 const STORAGE_KEY = 'kr-ai-config';
 
-function TypingMessage({ content, onDone, scrollRef }: { content: string; onDone: () => void; scrollRef: React.RefObject<HTMLDivElement | null> }) {
+function TypingMessage({
+    content,
+    onDone,
+    scrollRef,
+}: {
+    content: string;
+    onDone: () => void;
+    scrollRef: React.RefObject<HTMLDivElement | null>;
+}) {
     const [displayed, setDisplayed] = useState('');
     const [done, setDone] = useState(false);
+    const iRef = useRef(0);
+    const doneRef = useRef(false);
 
     useEffect(() => {
-        let i = 0;
-        const speed = 12;
+        iRef.current = 0;
+        doneRef.current = false;
+        setDisplayed('');
+        setDone(false);
+
+        const speed = 10; // ms per character
         const timer = setInterval(() => {
-            if (i < content.length) {
-                setDisplayed(content.slice(0, i + 1));
-                i++;
-                // Auto-scroll every few characters
-                if (i % 5 === 0) scrollRef.current?.scrollIntoView({ behavior: 'smooth' });
+            if (doneRef.current) return;
+            iRef.current++;
+            if (iRef.current <= content.length) {
+                setDisplayed(content.slice(0, iRef.current));
+                if (iRef.current % 8 === 0) {
+                    scrollRef.current?.scrollIntoView({ behavior: 'smooth' });
+                }
             } else {
+                doneRef.current = true;
                 setDone(true);
                 clearInterval(timer);
                 onDone();
             }
         }, speed);
-        return () => clearInterval(timer);
-    }, [content, onDone, scrollRef]);
 
-    const html = displayed
-        .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-        .replace(/__(.+?)__/g, '<strong>$1</strong>')
-        .replace(/\*(.+?)\*/g, '<em>$1</em>')
-        .replace(/\n/g, '<br/>');
+        return () => {
+            clearInterval(timer);
+        };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [content]);
 
-    return (
-        <div className="relative">
-            <div dangerouslySetInnerHTML={{ __html: html }} />
-            {!done && <span className="typing-cursor"></span>}
-        </div>
-    );
-}
-
-function StaticMessage({ content }: { content: string }) {
-    const html = content
-        .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-        .replace(/__(.+?)__/g, '<strong>$1</strong>')
-        .replace(/\*(.+?)\*/g, '<em>$1</em>')
-        .replace(/\n/g, '<br/>');
-    return <div dangerouslySetInnerHTML={{ __html: html }} />;
+    return <MarkdownRenderer content={displayed} partial={!done} />;
 }
 
 export default function AIChatFloat() {
@@ -127,7 +129,6 @@ export default function AIChatFloat() {
 
             if (res.ok) {
                 const data = await res.json();
-                // typed: false means it will animate typing
                 setMessages([...newMessages, { role: 'assistant', content: data.message, typed: false }]);
             } else {
                 const err = await res.json();
@@ -151,7 +152,7 @@ export default function AIChatFloat() {
         <>
             {/* Chat Window */}
             {isOpen && (
-                <div className="fixed bottom-[5.5rem] lg:bottom-24 right-4 sm:right-6 w-[360px] sm:w-[400px] h-[480px] max-h-[calc(100vh-8rem)] bg-white rounded-2xl shadow-2xl border border-blue-200 flex flex-col z-50 overflow-hidden">
+                <div className="fixed bottom-[5.5rem] lg:bottom-24 right-4 sm:right-6 w-[360px] sm:w-[420px] h-[520px] max-h-[calc(100vh-8rem)] bg-white rounded-2xl shadow-2xl border border-blue-200 flex flex-col z-50 overflow-hidden">
                     {/* Header */}
                     <div className="flex items-center justify-between px-4 py-3 bg-gradient-to-r from-blue-600 to-blue-500 text-white">
                         <div className="flex items-center gap-2">
@@ -161,8 +162,13 @@ export default function AIChatFloat() {
                         <div className="flex items-center gap-1">
                             <button
                                 onClick={() => setIncludeHistory(v => !v)}
-                                className={`px-2 py-1 rounded text-[10px] font-semibold uppercase tracking-wide transition-colors ${includeHistory ? 'bg-white text-blue-700' : 'bg-blue-700/40 text-white hover:bg-blue-700/60'}`}
-                                title={includeHistory ? 'AI bisa baca data periode sebelumnya' : 'AI hanya baca data terbaru'}
+                                className={`px-2 py-1 rounded text-[10px] font-semibold uppercase tracking-wide transition-colors ${includeHistory
+                                    ? 'bg-white text-blue-700'
+                                    : 'bg-blue-700/40 text-white hover:bg-blue-700/60'
+                                    }`}
+                                title={includeHistory
+                                    ? 'AI menyertakan data historis dalam konteks'
+                                    : 'AI hanya pakai konteks minimal'}
                             >
                                 {includeHistory ? 'History On' : 'History Off'}
                             </button>
@@ -176,20 +182,20 @@ export default function AIChatFloat() {
                     </div>
 
                     {/* Messages */}
-                    <div className="flex-1 overflow-y-auto p-4 space-y-3 scrollbar-thin bg-slate-50">
+                    <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-slate-50">
                         {messages.length === 0 && (
                             <div className="text-center text-gray-500 text-sm py-6">
-                                <div className="robot-bounce inline-block mb-3">
-                                    <Bot className="w-12 h-12 text-blue-400" />
-                                </div>
-                                <p className="font-medium text-gray-700">Halo! Saya Krai, Asisten AI Kakarama Room.</p>
-                                <p className="mt-1 text-gray-500">Tanyakan apa saja tentang laporan bisnis Kakarama Room.</p>
+                                <Bot className="w-12 h-12 text-blue-400 mx-auto mb-3" />
+                                <p className="font-medium text-gray-700">Halo! Saya AI Assistant Kakarama.</p>
+                                <p className="mt-1 text-gray-500 text-xs">
+                                    Tanyakan apa saja tentang data bisnis — saya punya akses langsung ke database.
+                                </p>
                                 <div className="mt-4 space-y-2">
                                     {[
-                                        'Berapa okupansi saat ini?',
-                                        'Bagaimana pendapatan hari ini vs kemarin?',
+                                        'Berapa pendapatan hari ini vs kemarin?',
                                         'Bandingkan minggu ini dengan minggu lalu',
                                         'Lokasi mana yang paling ramai 30 hari terakhir?',
+                                        'Tampilkan top 5 tamu repeat bulan ini',
                                     ].map((q) => (
                                         <button
                                             key={q}
@@ -214,14 +220,14 @@ export default function AIChatFloat() {
                                     </div>
                                 )}
                                 <div
-                                    className={`max-w-[80%] px-3 py-2 rounded-xl text-sm ${msg.role === 'user'
+                                    className={`max-w-[85%] px-3 py-2.5 rounded-xl text-sm ${msg.role === 'user'
                                         ? 'bg-blue-600 text-white rounded-br-sm whitespace-pre-wrap'
                                         : 'bg-white text-gray-800 rounded-bl-sm border border-gray-200 shadow-sm'
                                         }`}
                                 >
                                     {msg.role === 'assistant' ? (
                                         msg.typed ? (
-                                            <StaticMessage content={msg.content} />
+                                            <MarkdownRenderer content={msg.content} />
                                         ) : (
                                             <TypingMessage
                                                 content={msg.content}
@@ -239,10 +245,13 @@ export default function AIChatFloat() {
                         {loading && (
                             <div className="flex justify-start">
                                 <div className="w-6 h-6 rounded-full bg-blue-100 flex items-center justify-center mr-2 flex-shrink-0">
-                                    <Bot className="w-3.5 h-3.5 text-blue-600 robot-bounce" />
+                                    <Bot className="w-3.5 h-3.5 text-blue-600" />
                                 </div>
-                                <div className="bg-white px-4 py-2.5 rounded-xl rounded-bl-sm border border-gray-200 shadow-sm">
-                                    <span className="typing-cursor text-sm text-gray-500">Mengetik</span>
+                                <div className="bg-white px-4 py-2.5 rounded-xl rounded-bl-sm border border-gray-200 shadow-sm flex items-center gap-1.5">
+                                    <div className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                                    <div className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                                    <div className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                                    <span className="text-xs text-gray-500 ml-1">Mengambil data...</span>
                                 </div>
                             </div>
                         )}
@@ -285,12 +294,12 @@ export default function AIChatFloat() {
             <button
                 onClick={() => setIsOpen(!isOpen)}
                 className={`fixed bottom-20 lg:bottom-6 right-4 sm:right-6 w-14 h-14 bg-blue-600 text-white rounded-full shadow-lg hover:shadow-xl transition-all hover:scale-110 flex items-center justify-center z-50 ${!isOpen ? 'pulse-glow' : ''}`}
-                title="KR AI Assistant"
+                title="AI Assistant"
             >
                 {isOpen ? (
                     <X className="w-6 h-6" />
                 ) : (
-                    <Bot className="w-7 h-7 robot-bounce" />
+                    <Bot className="w-7 h-7" />
                 )}
             </button>
         </>

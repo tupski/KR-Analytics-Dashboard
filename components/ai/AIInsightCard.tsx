@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { RefreshCw, Sparkles, ChevronDown, ChevronUp, Lightbulb, GitCompareArrows } from 'lucide-react';
+import MarkdownRenderer from './MarkdownRenderer';
 
 interface AIInsightCardProps {
     prompt: string;
@@ -13,40 +14,6 @@ interface AIInsightCardProps {
 const STORAGE_KEY = 'kr-ai-config';
 const CACHE_PREFIX = 'kr-ai-insight-cache-';
 const CACHE_TTL = 10 * 60 * 1000; // 10 minutes
-
-function RichText({ text }: { text: string }) {
-    const lines = text.split('\n');
-    return (
-        <div className="text-sm text-gray-700 leading-relaxed space-y-1.5">
-            {lines.map((line, i) => {
-                if (!line.trim()) return <div key={i} className="h-1" />;
-                let formatted = line
-                    .replace(/\*\*(.+?)\*\*/g, '<strong class="text-gray-900">$1</strong>')
-                    .replace(/__(.+?)__/g, '<strong class="text-gray-900">$1</strong>')
-                    .replace(/\*(.+?)\*/g, '<em>$1</em>');
-
-                const numMatch = line.match(/^(\d+)[.)]\s+(.+)/);
-                if (numMatch) {
-                    return (
-                        <div key={i} className="flex gap-2 pl-1">
-                            <span className="text-blue-600 font-semibold flex-shrink-0">{numMatch[1]}.</span>
-                            <span dangerouslySetInnerHTML={{ __html: formatted.replace(/^\d+[.)]\s+/, '') }} />
-                        </div>
-                    );
-                }
-                if (line.match(/^[-•]\s+/)) {
-                    return (
-                        <div key={i} className="flex gap-2 pl-1">
-                            <span className="text-blue-400 flex-shrink-0">•</span>
-                            <span dangerouslySetInnerHTML={{ __html: formatted.replace(/^[-•]\s+/, '') }} />
-                        </div>
-                    );
-                }
-                return <p key={i} dangerouslySetInnerHTML={{ __html: formatted }} />;
-            })}
-        </div>
-    );
-}
 
 const COMPARE_PROMPT_SUFFIX = `
 
@@ -230,7 +197,7 @@ export default function AIInsightCard({
 
             {displayText && !loading && (
                 <>
-                    <RichText text={displayText} />
+                    <MarkdownRenderer content={displayText} className="text-sm" />
                     {isLong && (
                         <button
                             onClick={() => setExpanded(!expanded)}
