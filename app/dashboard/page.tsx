@@ -1,4 +1,3 @@
-import { Suspense } from 'react';
 import HeaderDashboard from '@/components/dashboard/HeaderDashboard';
 import KartuRingkasan from '@/components/dashboard/KartuRingkasan';
 import GrafikPendapatan from '@/components/dashboard/GrafikPendapatan';
@@ -7,6 +6,7 @@ import CheckinHariIni from '@/components/dashboard/CheckinHariIni';
 import CheckoutHariIni from '@/components/dashboard/CheckoutHariIni';
 import StatusUnit from '@/components/dashboard/StatusUnit';
 import AutoRefreshWrapper from '@/components/dashboard/AutoRefreshWrapper';
+import CompareSwitcher from '@/components/dashboard/CompareSwitcher';
 import AIInsightCard from '@/components/ai/AIInsightCard';
 import {
     fetchKPIData,
@@ -16,26 +16,27 @@ import {
     fetchTodayCheckouts,
     fetchUnitStatus,
 } from './actions';
+import type { KPICompareMode } from '@/types/dashboard';
 import { Calendar, DollarSign, TrendingUp, Home } from 'lucide-react';
+
+const VALID_COMPARE: KPICompareMode[] = ['yesterday', 'lastweek', 'lastmonth', 'lastyear'];
 
 /**
  * DashboardPage - Main Dashboard Server Component
- * 
+ *
  * Orchestrates data fetching and component rendering for the analytics dashboard.
- * Fetches all dashboard data in parallel using Promise.all for optimal performance.
- * 
- * Features:
- * - Server-side data fetching
- * - Parallel data loading
- * - KPI cards section
- * - Interactive charts
- * - Operational metrics
- * - Auto-refresh functionality
- * - Responsive grid layout
- * 
- * Requirements: 1.1, 2.1, 3.1, 4.1, 5.1, 7.1, 7.7, 9.4, 9.5, 15.1
  */
-export default async function DashboardPage() {
+export default async function DashboardPage({
+    searchParams,
+}: {
+    searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
+}) {
+    const params = await searchParams;
+    const rawCompare = typeof params.compare === 'string' ? params.compare : '';
+    const compareMode = (VALID_COMPARE.includes(rawCompare as KPICompareMode)
+        ? rawCompare
+        : null) as KPICompareMode | null;
+
     // Fetch all dashboard data in parallel
     const [
         kpiData,
@@ -45,13 +46,24 @@ export default async function DashboardPage() {
         checkoutsData,
         unitStatusData,
     ] = await Promise.all([
-        fetchKPIData(),
+        fetchKPIData(compareMode || undefined),
         fetchRevenueData('daily'),
         fetchOccupancyData(30),
         fetchTodayCheckins(),
         fetchTodayCheckouts(),
         fetchUnitStatus(),
     ]);
+
+    const formatRupiah = new Intl.NumberFormat('id-ID', {
+        style: 'currency',
+        currency: 'IDR',
+        minimumFractionDigits: 0,
+        maximumFractionDigits: 0,
+    }).format;
+
+    const change = kpiData.change;
+    const trendFor = (pct: number | null | undefined) =>
+        pct == null ? undefined : { value: Math.abs(pct), isPositive: pct >= 0 };
 
     return (
         <AutoRefreshWrapper>
@@ -61,6 +73,21 @@ export default async function DashboardPage() {
 
                 {/* Main Content */}
                 <main className="px-4 sm:px-6 lg:px-8 py-6 space-y-6">
+                    {/* Top toolbar with compare switcher */}
+                    <div className="flex flex-wrap items-center justify-between gap-3 bg-white rounded-lg border border-gray-200 px-4 py-3 shadow-sm">
+                        <div className="flex items-center gap-2 text-xs text-gray-600">
+                            {kpiData.prev ? (
+                                <>
+                                    <span className="font-semibold text-blue-700">Mode Bandingkan:</span>
+                                    <span>Hari Ini vs {kpiData.prev.label}</span>
+                                </>
+                            ) : (
+                                <span>Tampilkan KPI hari ini. Pilih mode bandingkan untuk melihat perubahan.</span>
+                            )}
+                        </div>
+                        <CompareSwitcher current={compareMode} />
+                    </div>
+
                     {/* AI Insight - Top */}
                     <AIInsightCard
                         title="Ringkasan Harian"
@@ -75,31 +102,39 @@ export default async function DashboardPage() {
                                 value={kpiData.bookingToday}
                                 icon={<Calendar className="w-6 h-6" />}
                                 href="/booking"
+                                trend={trendFor(change?.bookingChangePct)}
                             />
                             <KartuRingkasan
                                 title="Pendapatan Hari Ini"
-                                value={new Intl.NumberFormat('id-ID', {
-                                    style: 'currency',
-                                    currency: 'IDR',
-                                    minimumFractionDigits: 0,
-                                    maximumFractionDigits: 0,
-                                }).format(kpiData.revenueToday)}
+                                value={formatRupiah(kpiData.revenueToday)}
                                 icon={<DollarSign className="w-6 h-6" />}
                                 href="/booking"
+                                trend={trendFor(change?.revenueChangePct)}
                             />
                             <KartuRingkasan
                                 title="Okupansi Rata-rata"
                                 value={`${kpiData.avgOccupancy.toFixed(2)}%`}
                                 icon={<TrendingUp className="w-6 h-6" />}
                                 href="/unit"
+                                trend={trendFor(change?.occupancyChangePct)}
                             />
                             <KartuRingkasan
                                 title="Unit Tersedia"
                                 value={kpiData.availableUnits}
                                 icon={<Home className="w-6 h-6" />}
                                 href="/unit"
+                                trend={trendFor(change?.availableChangePct)}
                             />
                         </div>
+
+                        {kpiData.prev && (
+                            <p className="mt-2 text-[11px] text-gray-500">
+                                Pembanding: {kpiData.prev.label} — Booking: {kpiData.prev.booking} ·{' '}
+                                Pendapatan: {formatRupiah(kpiData.prev.revenue)} ·{' '}
+                                Okupansi: {kpiData.prev.avgOccupancy.toFixed(2)}% ·{' '}
+                                Unit Tersedia: {kpiData.prev.availableUnits}
+                            </p>
+                        )}
                     </section>
 
                     {/* Charts Section */}
@@ -125,5 +160,3 @@ export default async function DashboardPage() {
         </AutoRefreshWrapper>
     );
 }
-
-

@@ -1,25 +1,37 @@
+import Link from 'next/link';
 import { createServerClient } from '@/lib/supabase/server';
 import AIInsightCard from '@/components/ai/AIInsightCard';
-import { Users, Search } from 'lucide-react';
+import { Users, Search, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from 'lucide-react';
 
-async function fetchCustomers(search?: string, page = 1) {
+const PAGE_SIZE_OPTIONS = [10, 25, 50, 100];
+const DEFAULT_PAGE_SIZE = 10;
+
+async function fetchCustomers(search: string | undefined, page: number, pageSize: number) {
     const supabase = createServerClient();
-    const pageSize = 20;
     const offset = (page - 1) * pageSize;
 
     let query = supabase
         .from('transactions')
-        .select('customer_name, apartment_location, room_number, checkin_at, checkout_at, cash_amount, transfer_amount', { count: 'exact' });
+        .select('id, customer_name, apartment_location, room_number, checkin_at, checkout_at, cash_amount, transfer_amount', { count: 'exact' });
 
     if (search) {
         query = query.ilike('customer_name', `%${search}%`);
     }
 
-    const { data, count, error } = await query
+    const { data, count } = await query
         .order('checkin_at', { ascending: false })
         .range(offset, offset + pageSize - 1);
 
-    return { data: data || [], count: count || 0, page, pageSize };
+    return { data: data || [], count: count || 0 };
+}
+
+function buildHref(base: { search: string; pageSize: number }, page: number) {
+    const params = new URLSearchParams();
+    if (base.search) params.set('search', base.search);
+    if (page > 1) params.set('page', String(page));
+    if (base.pageSize !== DEFAULT_PAGE_SIZE) params.set('pageSize', String(base.pageSize));
+    const qs = params.toString();
+    return qs ? `/customer?${qs}` : '/customer';
 }
 
 export default async function CustomerPage({
@@ -29,12 +41,30 @@ export default async function CustomerPage({
 }) {
     const params = await searchParams;
     const search = typeof params.search === 'string' ? params.search : '';
-    const page = typeof params.page === 'string' ? parseInt(params.page) : 1;
+    const page = Math.max(1, typeof params.page === 'string' ? parseInt(params.page) || 1 : 1);
+    const rawPageSize = typeof params.pageSize === 'string' ? parseInt(params.pageSize) : DEFAULT_PAGE_SIZE;
+    const pageSize = PAGE_SIZE_OPTIONS.includes(rawPageSize) ? rawPageSize : DEFAULT_PAGE_SIZE;
 
-    const { data: customers, count } = await fetchCustomers(search || undefined, page);
+    const { data: customers, count } = await fetchCustomers(search || undefined, page, pageSize);
 
     const formatCurrency = (val: number) => `Rp ${val.toLocaleString('id-ID')}`;
-    const formatDate = (d: string) => d ? new Date(d).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' }) : '-';
+    const formatDateTime = (d: string | null) => {
+        if (!d) return '-';
+        try {
+            const date = new Date(d);
+            const datePart = date.toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Asia/Jakarta' });
+            const timePart = date.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Jakarta' });
+            return `${datePart} ${timePart}`;
+        } catch {
+            return '-';
+        }
+    };
+
+    const totalPages = Math.max(1, Math.ceil(count / pageSize));
+    const startIdx = count === 0 ? 0 : (page - 1) * pageSize + 1;
+    const endIdx = Math.min(page * pageSize, count);
+
+    const baseLink = { search, pageSize };
 
     return (
         <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50/30">
@@ -62,16 +92,39 @@ export default async function CustomerPage({
                                 className="w-full pl-10 pr-4 py-2.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
                             />
                         </div>
+                        {/* Preserve pageSize when searching */}
+                        {pageSize !== DEFAULT_PAGE_SIZE && (
+                            <input type="hidden" name="pageSize" value={pageSize} />
+                        )}
                         <button type="submit" className="px-5 py-2.5 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700">
                             Cari
                         </button>
                     </div>
                 </form>
 
-                {/* Stats */}
-                <div className="flex items-center gap-2 text-sm text-gray-600">
-                    <Users className="w-4 h-4" />
-                    <span>{count.toLocaleString('id-ID')} total record</span>
+                {/* Stats + page size */}
+                <div className="flex flex-wrap items-center justify-between gap-3 text-sm text-gray-600">
+                    <div className="flex items-center gap-2">
+                        <Users className="w-4 h-4" />
+                        <span>{count.toLocaleString('id-ID')} total record</span>
+                        {count > 0 && (
+                            <span className="text-gray-400">· menampilkan {startIdx.toLocaleString('id-ID')}–{endIdx.toLocaleString('id-ID')}</span>
+                        )}
+                    </div>
+                    <form action="/customer" className="flex items-center gap-2 text-xs text-gray-600">
+                        {search && <input type="hidden" name="search" value={search} />}
+                        <label htmlFor="pageSize">Per halaman:</label>
+                        <select
+                            id="pageSize"
+                            name="pageSize"
+                            defaultValue={pageSize}
+                            className="border border-gray-300 rounded px-2 py-1 text-xs"
+                        // form submits on change
+                        >
+                            {PAGE_SIZE_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
+                        </select>
+                        <button type="submit" className="text-xs text-blue-600 hover:underline">Terapkan</button>
+                    </form>
                 </div>
 
                 {/* Table */}
@@ -88,20 +141,81 @@ export default async function CustomerPage({
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-100">
-                            {customers.map((c: any, i: number) => (
-                                <tr key={i} className="hover:bg-gray-50">
-                                    <td className="px-4 py-3 font-medium text-gray-900">{c.customer_name}</td>
-                                    <td className="px-4 py-3 text-gray-700">{c.apartment_location}</td>
-                                    <td className="px-4 py-3"><span className="text-xs font-semibold text-blue-600 bg-blue-50 px-2 py-0.5 rounded">{c.room_number}</span></td>
-                                    <td className="px-4 py-3 text-gray-700 whitespace-nowrap">{formatDate(c.checkin_at)}</td>
-                                    <td className="px-4 py-3 text-gray-700 whitespace-nowrap">{formatDate(c.checkout_at)}</td>
-                                    <td className="px-4 py-3 text-right font-medium text-gray-900">{formatCurrency((c.cash_amount || 0) + (c.transfer_amount || 0))}</td>
+                            {customers.length === 0 ? (
+                                <tr>
+                                    <td colSpan={6} className="px-4 py-12 text-center text-gray-500">
+                                        Tidak ada data tamu yang cocok.
+                                    </td>
                                 </tr>
-                            ))}
+                            ) : (
+                                customers.map((c: any) => (
+                                    <tr key={c.id} className="hover:bg-gray-50">
+                                        <td className="px-4 py-3 font-medium text-gray-900">{c.customer_name}</td>
+                                        <td className="px-4 py-3 text-gray-700">{c.apartment_location}</td>
+                                        <td className="px-4 py-3"><span className="text-xs font-semibold text-blue-600 bg-blue-50 px-2 py-0.5 rounded">{c.room_number}</span></td>
+                                        <td className="px-4 py-3 text-gray-700 whitespace-nowrap">{formatDateTime(c.checkin_at)}</td>
+                                        <td className="px-4 py-3 text-gray-700 whitespace-nowrap">{formatDateTime(c.checkout_at)}</td>
+                                        <td className="px-4 py-3 text-right font-medium text-gray-900">{formatCurrency((c.cash_amount || 0) + (c.transfer_amount || 0))}</td>
+                                    </tr>
+                                ))
+                            )}
                         </tbody>
                     </table>
                 </div>
+
+                {/* Pagination */}
+                {count > pageSize && (
+                    <div className="flex flex-wrap items-center justify-between gap-3 bg-white rounded-lg border border-gray-200 p-3">
+                        <p className="text-xs text-gray-600">
+                            Halaman <strong>{page}</strong> dari <strong>{totalPages}</strong>
+                        </p>
+                        <div className="flex items-center gap-1">
+                            <PageLink href={buildHref(baseLink, 1)} disabled={page <= 1} aria-label="Halaman pertama">
+                                <ChevronsLeft className="w-4 h-4" />
+                            </PageLink>
+                            <PageLink href={buildHref(baseLink, page - 1)} disabled={page <= 1} aria-label="Halaman sebelumnya">
+                                <ChevronLeft className="w-4 h-4" />
+                            </PageLink>
+                            <span className="px-3 py-1.5 text-xs text-gray-700 border border-gray-200 rounded bg-gray-50">{page}</span>
+                            <PageLink href={buildHref(baseLink, page + 1)} disabled={page >= totalPages} aria-label="Halaman berikutnya">
+                                <ChevronRight className="w-4 h-4" />
+                            </PageLink>
+                            <PageLink href={buildHref(baseLink, totalPages)} disabled={page >= totalPages} aria-label="Halaman terakhir">
+                                <ChevronsRight className="w-4 h-4" />
+                            </PageLink>
+                        </div>
+                    </div>
+                )}
             </main>
         </div>
+    );
+}
+
+function PageLink({
+    href,
+    disabled,
+    children,
+    'aria-label': ariaLabel,
+}: {
+    href: string;
+    disabled: boolean;
+    children: React.ReactNode;
+    'aria-label': string;
+}) {
+    if (disabled) {
+        return (
+            <span aria-label={ariaLabel} className="p-1.5 rounded border border-gray-200 text-gray-300 cursor-not-allowed">
+                {children}
+            </span>
+        );
+    }
+    return (
+        <Link
+            href={href}
+            aria-label={ariaLabel}
+            className="p-1.5 rounded border border-gray-200 text-gray-700 hover:bg-gray-50"
+        >
+            {children}
+        </Link>
     );
 }

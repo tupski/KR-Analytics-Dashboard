@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Brain, Key, Server, Check, AlertCircle } from 'lucide-react';
+import { Brain, Key, Server, Check, AlertCircle, DollarSign } from 'lucide-react';
 
 interface AIProviderConfig {
     provider: string;
@@ -10,49 +10,94 @@ interface AIProviderConfig {
     baseUrl?: string;
 }
 
-const PROVIDERS = [
+interface ModelInfo {
+    id: string;
+    label: string;
+    /** USD per 1M input tokens (indicative; actual provider pricing may change) */
+    inputPrice: number;
+    /** USD per 1M output tokens */
+    outputPrice: number;
+    notes?: string;
+}
+
+interface ProviderInfo {
+    id: string;
+    name: string;
+    description: string;
+    models: ModelInfo[];
+    placeholder: string;
+    hasBaseUrl?: boolean;
+}
+
+/**
+ * Pricing indicator. Sorted cheap → expensive within each provider.
+ * Prices are USD per 1 million tokens (approximate, indicative only).
+ */
+const PROVIDERS: ProviderInfo[] = [
+    {
+        id: 'deepseek',
+        name: 'DeepSeek',
+        description: 'Model paling murah, performa baik untuk analitik',
+        placeholder: 'sk-...',
+        models: [
+            { id: 'deepseek-chat', label: 'DeepSeek Chat (V3)', inputPrice: 0.27, outputPrice: 1.10 },
+            { id: 'deepseek-coder', label: 'DeepSeek Coder', inputPrice: 0.27, outputPrice: 1.10 },
+            { id: 'deepseek-reasoner', label: 'DeepSeek Reasoner (R1)', inputPrice: 0.55, outputPrice: 2.19, notes: 'Reasoning step-by-step' },
+        ],
+    },
     {
         id: 'openai',
         name: 'OpenAI',
-        description: 'GPT-4o, GPT-4o-mini, GPT-3.5',
-        models: ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo', 'gpt-3.5-turbo'],
-        defaultModel: 'gpt-4o-mini',
+        description: 'GPT-4o, o1, GPT-3.5 series',
         placeholder: 'sk-...',
+        models: [
+            { id: 'gpt-4o-mini', label: 'GPT-4o mini', inputPrice: 0.15, outputPrice: 0.60 },
+            { id: 'gpt-3.5-turbo', label: 'GPT-3.5 Turbo', inputPrice: 0.50, outputPrice: 1.50 },
+            { id: 'o1-mini', label: 'o1-mini', inputPrice: 1.10, outputPrice: 4.40, notes: 'Reasoning' },
+            { id: 'gpt-4o', label: 'GPT-4o', inputPrice: 2.50, outputPrice: 10.00 },
+            { id: 'gpt-4-turbo', label: 'GPT-4 Turbo', inputPrice: 10.00, outputPrice: 30.00 },
+            { id: 'o1', label: 'o1', inputPrice: 15.00, outputPrice: 60.00, notes: 'Reasoning lanjutan' },
+        ],
     },
     {
         id: 'anthropic',
         name: 'Anthropic (Claude)',
-        description: 'Claude Sonnet, Claude Haiku, Claude Opus',
-        models: ['claude-sonnet-4-20250514', 'claude-haiku-4-20250514', 'claude-3-5-sonnet-20241022'],
-        defaultModel: 'claude-sonnet-4-20250514',
+        description: 'Claude Haiku / Sonnet / Opus',
         placeholder: 'sk-ant-...',
-    },
-    {
-        id: 'deepseek',
-        name: 'DeepSeek',
-        description: 'DeepSeek Chat, DeepSeek Coder',
-        models: ['deepseek-chat', 'deepseek-coder', 'deepseek-reasoner'],
-        defaultModel: 'deepseek-chat',
-        placeholder: 'sk-...',
+        models: [
+            { id: 'claude-haiku-4-20250514', label: 'Claude Haiku 4', inputPrice: 0.25, outputPrice: 1.25 },
+            { id: 'claude-3-5-haiku-20241022', label: 'Claude 3.5 Haiku', inputPrice: 0.80, outputPrice: 4.00 },
+            { id: 'claude-3-5-sonnet-20241022', label: 'Claude 3.5 Sonnet', inputPrice: 3.00, outputPrice: 15.00 },
+            { id: 'claude-sonnet-4-20250514', label: 'Claude Sonnet 4', inputPrice: 3.00, outputPrice: 15.00 },
+            { id: 'claude-opus-4-20250514', label: 'Claude Opus 4', inputPrice: 15.00, outputPrice: 75.00 },
+        ],
     },
     {
         id: 'openai-compatible',
         name: 'OpenAI Compatible',
-        description: 'Groq, Together, Fireworks, Ollama, dll',
-        models: [],
-        defaultModel: '',
+        description: 'Groq, Together, Fireworks, Ollama, OpenRouter, dll',
         placeholder: 'API key...',
+        models: [],
         hasBaseUrl: true,
     },
 ];
 
 const STORAGE_KEY = 'kr-ai-config';
 
+const priceTier = (input: number) => {
+    if (input < 0.50) return { label: 'Murah', cls: 'bg-emerald-100 text-emerald-700 border-emerald-200' };
+    if (input < 2) return { label: 'Hemat', cls: 'bg-blue-100 text-blue-700 border-blue-200' };
+    if (input < 10) return { label: 'Standar', cls: 'bg-amber-100 text-amber-700 border-amber-200' };
+    return { label: 'Premium', cls: 'bg-rose-100 text-rose-700 border-rose-200' };
+};
+
+const fmtPrice = (v: number) => `$${v.toFixed(2)}`;
+
 export default function AISettingsPage() {
     const [config, setConfig] = useState<AIProviderConfig>({
-        provider: 'openai',
+        provider: 'deepseek',
         apiKey: '',
-        model: 'gpt-4o-mini',
+        model: 'deepseek-chat',
         baseUrl: '',
     });
     const [saved, setSaved] = useState(false);
@@ -70,13 +115,15 @@ export default function AISettingsPage() {
     }, []);
 
     const selectedProvider = PROVIDERS.find(p => p.id === config.provider);
+    const selectedModel = selectedProvider?.models.find(m => m.id === config.model);
 
     const handleProviderChange = (providerId: string) => {
         const provider = PROVIDERS.find(p => p.id === providerId);
+        const defaultModel = provider?.models[0]?.id || '';
         setConfig({
             ...config,
             provider: providerId,
-            model: provider?.defaultModel || '',
+            model: defaultModel,
             baseUrl: '',
         });
         setTestResult(null);
@@ -98,7 +145,10 @@ export default function AISettingsPage() {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     messages: [{ role: 'user', content: 'Berikan ringkasan singkat performa bisnis hari ini dalam 2 kalimat.' }],
-                    config,
+                    config: {
+                        ...config,
+                        provider: config.provider === 'custom' ? 'openai-compatible' : config.provider,
+                    },
                 }),
             });
 
@@ -171,17 +221,41 @@ export default function AISettingsPage() {
                     <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">
                             Model
+                            <span className="ml-2 text-xs text-gray-500 font-normal">(diurutkan dari paling murah)</span>
                         </label>
-                        {selectedProvider?.models && selectedProvider.models.length > 0 ? (
-                            <select
-                                value={config.model}
-                                onChange={(e) => setConfig({ ...config, model: e.target.value })}
-                                className="w-full px-4 py-2.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none bg-white"
-                            >
-                                {selectedProvider.models.map((model) => (
-                                    <option key={model} value={model}>{model}</option>
-                                ))}
-                            </select>
+                        {selectedProvider && selectedProvider.models.length > 0 ? (
+                            <>
+                                <select
+                                    value={config.model}
+                                    onChange={(e) => setConfig({ ...config, model: e.target.value })}
+                                    className="w-full px-4 py-2.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none bg-white"
+                                >
+                                    {selectedProvider.models.map((m) => (
+                                        <option key={m.id} value={m.id}>
+                                            {m.label} — {fmtPrice(m.inputPrice)} in / {fmtPrice(m.outputPrice)} out per 1M tokens
+                                        </option>
+                                    ))}
+                                </select>
+
+                                {/* Selected model details */}
+                                {selectedModel && (
+                                    <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+                                        {(() => {
+                                            const tier = priceTier(selectedModel.inputPrice);
+                                            return (
+                                                <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border ${tier.cls}`}>
+                                                    <DollarSign className="w-3 h-3" />
+                                                    {tier.label}
+                                                </span>
+                                            );
+                                        })()}
+                                        <span className="text-gray-500">
+                                            Input {fmtPrice(selectedModel.inputPrice)}/1M · Output {fmtPrice(selectedModel.outputPrice)}/1M
+                                        </span>
+                                        {selectedModel.notes && <span className="text-gray-400">· {selectedModel.notes}</span>}
+                                    </div>
+                                )}
+                            </>
                         ) : (
                             <input
                                 type="text"
@@ -194,7 +268,7 @@ export default function AISettingsPage() {
                     </div>
 
                     {/* Base URL (for OpenAI Compatible) */}
-                    {(selectedProvider as any)?.hasBaseUrl && (
+                    {selectedProvider?.hasBaseUrl && (
                         <div>
                             <label className="block text-sm font-medium text-gray-700 mb-1">
                                 <Server className="w-4 h-4 inline mr-1" />
@@ -258,6 +332,48 @@ export default function AISettingsPage() {
                 )}
             </div>
 
+            {/* Pricing reference table — full sorted */}
+            <div className="bg-white rounded-lg border border-gray-200 p-6 shadow-sm">
+                <h2 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
+                    <DollarSign className="w-5 h-5 text-blue-600" />
+                    Harga Indikatif (Cheap → Expensive)
+                </h2>
+                <p className="text-xs text-gray-500 mb-3">USD per 1 juta token. Harga berubah-ubah, cek website provider untuk angka resmi.</p>
+                <div className="overflow-x-auto">
+                    <table className="w-full text-xs">
+                        <thead className="bg-gray-50">
+                            <tr>
+                                <th className="px-3 py-2 text-left font-semibold text-gray-700">Provider</th>
+                                <th className="px-3 py-2 text-left font-semibold text-gray-700">Model</th>
+                                <th className="px-3 py-2 text-right font-semibold text-gray-700">Input/1M</th>
+                                <th className="px-3 py-2 text-right font-semibold text-gray-700">Output/1M</th>
+                                <th className="px-3 py-2 text-left font-semibold text-gray-700">Tier</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {PROVIDERS.flatMap(p =>
+                                p.models.map(m => ({ ...m, providerName: p.name, providerId: p.id }))
+                            ).sort((a, b) => a.inputPrice - b.inputPrice).map(m => {
+                                const tier = priceTier(m.inputPrice);
+                                return (
+                                    <tr key={`${m.providerId}-${m.id}`} className="border-t border-gray-100">
+                                        <td className="px-3 py-2 text-gray-700">{m.providerName}</td>
+                                        <td className="px-3 py-2 text-gray-900">{m.label}{m.notes && <span className="text-gray-400 ml-1">· {m.notes}</span>}</td>
+                                        <td className="px-3 py-2 text-right text-gray-900">{fmtPrice(m.inputPrice)}</td>
+                                        <td className="px-3 py-2 text-right text-gray-700">{fmtPrice(m.outputPrice)}</td>
+                                        <td className="px-3 py-2">
+                                            <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border ${tier.cls}`}>
+                                                {tier.label}
+                                            </span>
+                                        </td>
+                                    </tr>
+                                );
+                            })}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
             {/* Info */}
             <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
                 <h3 className="text-sm font-medium text-blue-900 mb-2">Cara Menggunakan</h3>
@@ -265,7 +381,8 @@ export default function AISettingsPage() {
                     <li>Pilih AI provider yang ingin digunakan</li>
                     <li>Masukkan API key dari provider tersebut</li>
                     <li>Klik &ldquo;Simpan&rdquo; lalu &ldquo;Test Koneksi&rdquo;</li>
-                    <li>Gunakan tombol chat AI (💬) di kanan bawah untuk bertanya tentang data bisnis</li>
+                    <li>Gunakan tombol chat AI di kanan bawah untuk bertanya tentang data bisnis</li>
+                    <li>AI sekarang bisa membandingkan periode — gunakan tombol &ldquo;Bandingkan vs Periode Sebelumnya&rdquo; di card insight atau chat</li>
                 </ol>
             </div>
         </div>

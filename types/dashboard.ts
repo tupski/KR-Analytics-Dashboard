@@ -4,11 +4,30 @@
  */
 
 // KPI Data
+export type KPICompareMode = 'yesterday' | 'lastweek' | 'lastmonth' | 'lastyear';
+
+export interface KPIChange {
+  bookingChangePct: number | null;
+  revenueChangePct: number | null;
+  occupancyChangePct: number | null;
+  availableChangePct: number | null;
+}
+
 export interface KPIData {
   bookingToday: number;
   revenueToday: number;
   avgOccupancy: number;
   availableUnits: number;
+  // Optional comparison snapshot
+  prev?: {
+    booking: number;
+    revenue: number;
+    avgOccupancy: number;
+    availableUnits: number;
+    label: string;
+    mode: KPICompareMode;
+  };
+  change?: KPIChange;
 }
 
 // Revenue Data

@@ -9,6 +9,7 @@ import type {
     CheckinItem,
     CheckoutItem,
     KPIData,
+    KPICompareMode,
     RevenueDataPoint,
     RevenueFilter,
     OccupancyDataPoint
@@ -184,90 +185,163 @@ export async function fetchTodayCheckouts(): Promise<CheckoutItem[]> {
 }
 
 /**
+ * Compute KPI snapshot for a specific Asia/Jakarta calendar day (yyyy-MM-dd).
+ * - bookingCount: # transactions with checkin on that day
+ * - revenue: sum of cash + transfer for those transactions
+ * - distinctRoomsOccupied: # unique rooms used that day (proxy for end-of-day occupancy)
+ */
+async function fetchDailyKPISnapshot(
+    supabase: ReturnType<typeof createServerClient>,
+    targetDay: string,
+    totalRoomsCount: number,
+): Promise<{ bookingCount: number; revenue: number; distinctRoomsOccupied: number; avgOccupancy: number; availableUnits: number }> {
+    const dayStart = `${targetDay}T00:00:00`;
+    const dayEnd = `${targetDay}T23:59:59`;
+
+    const [{ count: bookingCount }, { data: txData }] = await Promise.all([
+        supabase
+            .from('transactions')
+            .select('*', { count: 'exact', head: true })
+            .gte('checkin_at', dayStart)
+            .lt('checkin_at', dayEnd),
+        supabase
+            .from('transactions')
+            .select('cash_amount, transfer_amount, room_number, apartment_location')
+            .gte('checkin_at', dayStart)
+            .lt('checkin_at', dayEnd),
+    ]);
+
+    const revenue = txData?.reduce(
+        (sum: number, t: any) => sum + (t.cash_amount || 0) + (t.transfer_amount || 0),
+        0,
+    ) || 0;
+
+    const distinctRoomsOccupied = new Set(
+        (txData || []).map((t: any) => `${t.apartment_location}-${t.room_number}`),
+    ).size;
+
+    const avgOccupancy = totalRoomsCount > 0
+        ? Math.round((distinctRoomsOccupied / totalRoomsCount) * 10000) / 100
+        : 0;
+
+    return {
+        bookingCount: bookingCount || 0,
+        revenue,
+        distinctRoomsOccupied,
+        avgOccupancy,
+        availableUnits: Math.max(0, totalRoomsCount - distinctRoomsOccupied),
+    };
+}
+
+function getCompareDay(todayStr: string, mode: KPICompareMode): { day: string; label: string } {
+    const today = new Date(todayStr + 'T00:00:00');
+    switch (mode) {
+        case 'yesterday':
+            return { day: format(subDays(today, 1), 'yyyy-MM-dd'), label: 'Kemarin' };
+        case 'lastweek':
+            return { day: format(subDays(today, 7), 'yyyy-MM-dd'), label: 'Minggu Lalu (hari sama)' };
+        case 'lastmonth':
+            return { day: format(subDays(today, 30), 'yyyy-MM-dd'), label: 'Bulan Lalu (hari sama)' };
+        case 'lastyear':
+            return { day: format(subYears(today, 1), 'yyyy-MM-dd'), label: 'Tahun Lalu (hari sama)' };
+    }
+}
+
+function pctChange(curr: number, prev: number): number | null {
+    if (prev === 0) return curr === 0 ? 0 : null;
+    return Math.round(((curr - prev) / prev) * 10000) / 100;
+}
+
+/**
  * Fetch KPI data for dashboard cards
  * 
  * Fetches: booking count today, revenue today, average occupancy, available units.
  * Uses Asia/Jakarta timezone for "today" date calculations.
- * 
- * @returns Promise<KPIData> Object containing all KPI metrics
- * @throws Error if data fetching fails
- * 
+ *
+ * If compareMode provided, also fetches the same metrics for the comparison day
+ * and includes percentage change.
+ *
  * Requirements: 1.2, 1.3, 1.4, 1.5, 7.1, 7.2, 14.1, 14.2, 14.6
  */
-export async function fetchKPIData(): Promise<KPIData> {
+export async function fetchKPIData(compareMode?: KPICompareMode): Promise<KPIData> {
     const supabase = createServerClient();
     const timezone = 'Asia/Jakarta';
     const today = format(toZonedTime(new Date(), timezone), 'yyyy-MM-dd');
 
     try {
-        // Booking Hari Ini - count of bookings with check-in today
-        const { count: bookingCount, error: bookingError } = await supabase
+        // Total rooms (used for occupancy denominator across snapshots)
+        const { count: totalRooms } = await supabase
+            .from('nomor_kamar')
+            .select('id', { count: 'exact', head: true });
+        const totalRoomsCount = totalRooms || 0;
+
+        // Today's snapshot — use point-in-time for "currently occupied" and day-window for booking/revenue
+        const dayStart = `${today}T00:00:00`;
+        const dayEnd = `${today}T23:59:59`;
+
+        const { count: bookingCount } = await supabase
             .from('transactions')
             .select('*', { count: 'exact', head: true })
-            .gte('checkin_at', `${today}T00:00:00`)
-            .lt('checkin_at', `${today}T23:59:59`);
+            .gte('checkin_at', dayStart)
+            .lt('checkin_at', dayEnd);
 
-        if (bookingError) {
-            console.error('Error fetching booking count:', bookingError);
-        }
-
-        // Pendapatan Hari Ini - sum of gross revenue today
-        const { data: revenueData, error: revenueError } = await supabase
+        const { data: revenueData } = await supabase
             .from('transactions')
             .select('cash_amount, transfer_amount')
-            .gte('checkin_at', `${today}T00:00:00`)
-            .lt('checkin_at', `${today}T23:59:59`);
-
-        if (revenueError) {
-            console.error('Error fetching revenue:', revenueError);
-        }
+            .gte('checkin_at', dayStart)
+            .lt('checkin_at', dayEnd);
 
         const todayRevenue = revenueData?.reduce(
             (sum: number, t: any) => sum + (t.cash_amount || 0) + (t.transfer_amount || 0),
-            0
+            0,
         ) || 0;
 
-        // Okupansi Rata-rata - calculate from nomor_kamar count and currently active transactions
-        let avgOccupancy = 0;
+        // Occupancy & available — point-in-time (currently active)
         const nowIso = new Date().toISOString();
         let currentlyOccupiedCount = 0;
-        let totalRoomsCount = 0;
-
-        try {
-            const { count: totalRooms, error: roomErr } = await supabase
-                .from('nomor_kamar')
-                .select('id', { count: 'exact', head: true });
-
-            totalRoomsCount = totalRooms || 0;
-
-            if (totalRoomsCount > 0) {
-                // Count distinct rooms currently occupied (checkin <= now AND checkout >= now)
-                const { data: occData, error: occErr } = await supabase
-                    .from('transactions')
-                    .select('room_number, apartment_location')
-                    .lte('checkin_at', nowIso)
-                    .gte('checkout_at', nowIso);
-
-                if (!occErr && occData) {
-                    currentlyOccupiedCount = new Set(
-                        occData.map((t: any) => `${t.apartment_location}-${t.room_number}`)
-                    ).size;
-                    avgOccupancy = Math.round((currentlyOccupiedCount / totalRoomsCount) * 10000) / 100;
-                }
-            }
-        } catch (occError) {
-            console.error('Error calculating occupancy:', occError);
+        let avgOccupancy = 0;
+        if (totalRoomsCount > 0) {
+            const { data: occData } = await supabase
+                .from('transactions')
+                .select('room_number, apartment_location')
+                .lte('checkin_at', nowIso)
+                .gte('checkout_at', nowIso);
+            currentlyOccupiedCount = new Set(
+                (occData || []).map((t: any) => `${t.apartment_location}-${t.room_number}`),
+            ).size;
+            avgOccupancy = Math.round((currentlyOccupiedCount / totalRoomsCount) * 10000) / 100;
         }
-
-        // Unit Tersedia - total rooms minus currently occupied
         const availableUnits = Math.max(0, totalRoomsCount - currentlyOccupiedCount);
 
-        return {
+        const result: KPIData = {
             bookingToday: bookingCount || 0,
             revenueToday: todayRevenue,
-            avgOccupancy: avgOccupancy,
-            availableUnits: availableUnits,
+            avgOccupancy,
+            availableUnits,
         };
+
+        // Comparison snapshot
+        if (compareMode) {
+            const { day: prevDay, label: prevLabel } = getCompareDay(today, compareMode);
+            const prevSnap = await fetchDailyKPISnapshot(supabase, prevDay, totalRoomsCount);
+
+            result.prev = {
+                booking: prevSnap.bookingCount,
+                revenue: prevSnap.revenue,
+                avgOccupancy: prevSnap.avgOccupancy,
+                availableUnits: prevSnap.availableUnits,
+                label: prevLabel,
+                mode: compareMode,
+            };
+            result.change = {
+                bookingChangePct: pctChange(result.bookingToday, prevSnap.bookingCount),
+                revenueChangePct: pctChange(result.revenueToday, prevSnap.revenue),
+                occupancyChangePct: pctChange(result.avgOccupancy, prevSnap.avgOccupancy),
+                availableChangePct: pctChange(result.availableUnits, prevSnap.availableUnits),
+            };
+        }
+
+        return result;
     } catch (error) {
         console.error('Error in fetchKPIData:', error);
         throw new Error('Failed to fetch KPI data');

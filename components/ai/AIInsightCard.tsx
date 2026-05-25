@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { RefreshCw, Sparkles, ChevronDown, ChevronUp, Lightbulb } from 'lucide-react';
+import { RefreshCw, Sparkles, ChevronDown, ChevronUp, Lightbulb, GitCompareArrows } from 'lucide-react';
 
 interface AIInsightCardProps {
     prompt: string;
@@ -48,9 +48,13 @@ function RichText({ text }: { text: string }) {
     );
 }
 
+const COMPARE_PROMPT_SUFFIX = `
+
+PERMINTAAN TAMBAHAN: Berikan analisis komparatif dengan periode sebelumnya yang relevan (kemarin, minggu lalu, bulan lalu, atau tahun lalu) berdasarkan data historis yang tersedia. Sebutkan persentase perubahan, identifikasi trend positif/negatif, dan beri 1-2 rekomendasi spesifik berbasis perubahan tersebut.`;
+
 export default function AIInsightCard({
     prompt,
-    title = 'AI Insight',
+    title = 'KR-AI Insight',
     className = '',
     alternativeQuestions,
 }: AIInsightCardProps) {
@@ -60,14 +64,16 @@ export default function AIInsightCard({
     const [hasConfig, setHasConfig] = useState(false);
     const [expanded, setExpanded] = useState(false);
     const [currentPrompt, setCurrentPrompt] = useState(prompt);
+    const [compareMode, setCompareMode] = useState(false);
 
     const defaultAlternatives = alternativeQuestions || [
         'Apa yang perlu diperhatikan hari ini?',
         'Berikan rekomendasi untuk meningkatkan pendapatan.',
-        'Bandingkan performa minggu ini vs minggu lalu.',
+        'Performa minggu ini vs minggu lalu.',
     ];
 
-    const getCacheKey = (p: string) => CACHE_PREFIX + btoa(encodeURIComponent(p)).slice(0, 32);
+    const getCacheKey = (p: string, withCompare: boolean) =>
+        CACHE_PREFIX + btoa(encodeURIComponent(p + (withCompare ? '|cmp' : ''))).slice(0, 32);
 
     const getConfig = () => {
         try {
@@ -80,9 +86,9 @@ export default function AIInsightCard({
         return { provider: '', apiKey: '', model: '', baseUrl: '' };
     };
 
-    const getCachedInsight = (p: string): string | null => {
+    const getCachedInsight = (p: string, withCompare: boolean): string | null => {
         try {
-            const cached = sessionStorage.getItem(getCacheKey(p));
+            const cached = sessionStorage.getItem(getCacheKey(p, withCompare));
             if (cached) {
                 const { text, timestamp } = JSON.parse(cached);
                 if (Date.now() - timestamp < CACHE_TTL) return text;
@@ -91,16 +97,16 @@ export default function AIInsightCard({
         return null;
     };
 
-    const setCachedInsight = (p: string, text: string) => {
+    const setCachedInsight = (p: string, withCompare: boolean, text: string) => {
         try {
-            sessionStorage.setItem(getCacheKey(p), JSON.stringify({ text, timestamp: Date.now() }));
+            sessionStorage.setItem(getCacheKey(p, withCompare), JSON.stringify({ text, timestamp: Date.now() }));
         } catch { }
     };
 
-    const fetchInsight = async (p: string, forceRefresh = false) => {
+    const fetchInsight = async (p: string, withCompare: boolean, forceRefresh = false) => {
         // Check cache first
         if (!forceRefresh) {
-            const cached = getCachedInsight(p);
+            const cached = getCachedInsight(p, withCompare);
             if (cached) {
                 setInsight(cached);
                 setHasConfig(true);
@@ -113,24 +119,26 @@ export default function AIInsightCard({
 
         try {
             const config = getConfig();
+            const finalPrompt = withCompare ? p + COMPARE_PROMPT_SUFFIX : p;
             const res = await fetch('/api/ai/chat', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    messages: [{ role: 'user', content: p }],
+                    messages: [{ role: 'user', content: finalPrompt }],
                     config: {
                         provider: config.provider === 'custom' ? 'openai-compatible' : config.provider,
                         apiKey: config.apiKey,
                         model: config.model,
                         baseUrl: config.baseUrl || undefined,
                     },
+                    contextOptions: { includeHistory: withCompare },
                 }),
             });
 
             if (res.ok) {
                 const data = await res.json();
                 setInsight(data.message);
-                setCachedInsight(p, data.message);
+                setCachedInsight(p, withCompare, data.message);
                 setHasConfig(true);
             } else {
                 const data = await res.json();
@@ -150,13 +158,20 @@ export default function AIInsightCard({
     };
 
     useEffect(() => {
-        fetchInsight(currentPrompt);
-    }, []); // eslint-disable-line react-hooks/exhaustive-deps
+        fetchInsight(currentPrompt, compareMode);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
 
     const handleAlternativeClick = (q: string) => {
         setCurrentPrompt(q);
         setExpanded(false);
-        fetchInsight(q);
+        fetchInsight(q, compareMode);
+    };
+
+    const handleToggleCompare = () => {
+        const next = !compareMode;
+        setCompareMode(next);
+        fetchInsight(currentPrompt, next);
     };
 
     if (!hasConfig && !loading) return null;
@@ -166,19 +181,38 @@ export default function AIInsightCard({
 
     return (
         <div className={`bg-gradient-to-r from-blue-50 to-indigo-50 rounded-xl border border-blue-200 p-4 shadow-sm ${className}`}>
-            <div className="flex items-center justify-between mb-3">
-                <div className="flex items-center gap-2">
-                    <Sparkles className="w-4 h-4 text-blue-600" />
-                    <h3 className="text-sm font-semibold text-blue-900">{title}</h3>
+            <div className="flex items-center justify-between mb-3 gap-2">
+                <div className="flex items-center gap-2 min-w-0">
+                    <Sparkles className="w-4 h-4 text-blue-600 shrink-0" />
+                    <h3 className="text-sm font-semibold text-blue-900 truncate">{title}</h3>
+                    {compareMode && (
+                        <span className="text-[10px] uppercase font-bold bg-blue-600 text-white px-1.5 py-0.5 rounded">
+                            +Compare
+                        </span>
+                    )}
                 </div>
-                <button
-                    onClick={() => fetchInsight(currentPrompt, true)}
-                    disabled={loading}
-                    className="p-1.5 text-blue-600 hover:bg-blue-100 rounded-md transition-colors disabled:opacity-50"
-                    title="Refresh insight"
-                >
-                    <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
-                </button>
+                <div className="flex items-center gap-1">
+                    <button
+                        onClick={handleToggleCompare}
+                        disabled={loading}
+                        className={`flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium transition-colors disabled:opacity-50 ${compareMode
+                            ? 'bg-blue-600 text-white hover:bg-blue-700'
+                            : 'bg-white text-blue-700 border border-blue-200 hover:bg-blue-100'
+                            }`}
+                        title="Bandingkan dengan periode sebelumnya"
+                    >
+                        <GitCompareArrows className="w-3 h-3" />
+                        <span className="hidden sm:inline">{compareMode ? 'Compare On' : 'vs Sebelumnya'}</span>
+                    </button>
+                    <button
+                        onClick={() => fetchInsight(currentPrompt, compareMode, true)}
+                        disabled={loading}
+                        className="p-1.5 text-blue-600 hover:bg-blue-100 rounded-md transition-colors disabled:opacity-50"
+                        title="Refresh insight"
+                    >
+                        <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
+                    </button>
+                </div>
             </div>
 
             {loading && (
@@ -188,7 +222,7 @@ export default function AIInsightCard({
                         <div className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></div>
                         <div className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></div>
                     </div>
-                    <span>Menganalisis data...</span>
+                    <span>Menganalisis data{compareMode ? ' + periode sebelumnya' : ''}...</span>
                 </div>
             )}
 

@@ -62,6 +62,7 @@ export default function AIChatFloat() {
     const [input, setInput] = useState('');
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [includeHistory, setIncludeHistory] = useState(true);
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const inputRef = useRef<HTMLInputElement>(null);
 
@@ -120,6 +121,7 @@ export default function AIChatFloat() {
                         model: config.model,
                         baseUrl: config.baseUrl || undefined,
                     },
+                    contextOptions: { includeHistory },
                 }),
             });
 
@@ -156,12 +158,21 @@ export default function AIChatFloat() {
                             <Bot className="w-5 h-5" />
                             <span className="font-semibold text-sm">AI Assistant</span>
                         </div>
-                        <button
-                            onClick={() => setIsOpen(false)}
-                            className="p-1 hover:bg-white/20 rounded-lg transition-colors"
-                        >
-                            <X className="w-4 h-4" />
-                        </button>
+                        <div className="flex items-center gap-1">
+                            <button
+                                onClick={() => setIncludeHistory(v => !v)}
+                                className={`px-2 py-1 rounded text-[10px] font-semibold uppercase tracking-wide transition-colors ${includeHistory ? 'bg-white text-blue-700' : 'bg-blue-700/40 text-white hover:bg-blue-700/60'}`}
+                                title={includeHistory ? 'AI bisa baca data periode sebelumnya' : 'AI hanya baca data terbaru'}
+                            >
+                                {includeHistory ? 'History On' : 'History Off'}
+                            </button>
+                            <button
+                                onClick={() => setIsOpen(false)}
+                                className="p-1 hover:bg-white/20 rounded-lg transition-colors"
+                            >
+                                <X className="w-4 h-4" />
+                            </button>
+                        </div>
                     </div>
 
                     {/* Messages */}
@@ -171,10 +182,15 @@ export default function AIChatFloat() {
                                 <div className="robot-bounce inline-block mb-3">
                                     <Bot className="w-12 h-12 text-blue-400" />
                                 </div>
-                                <p className="font-medium text-gray-700">Halo! Saya AI Assistant Kakarama.</p>
-                                <p className="mt-1 text-gray-500">Tanyakan apa saja tentang data bisnis.</p>
+                                <p className="font-medium text-gray-700">Halo! Saya Krai, Asisten AI Kakarama Room.</p>
+                                <p className="mt-1 text-gray-500">Tanyakan apa saja tentang laporan bisnis Kakarama Room.</p>
                                 <div className="mt-4 space-y-2">
-                                    {['Berapa okupansi saat ini?', 'Bagaimana pendapatan hari ini?', 'Lokasi mana yang paling ramai?'].map((q) => (
+                                    {[
+                                        'Berapa okupansi saat ini?',
+                                        'Bagaimana pendapatan hari ini vs kemarin?',
+                                        'Bandingkan minggu ini dengan minggu lalu',
+                                        'Lokasi mana yang paling ramai 30 hari terakhir?',
+                                    ].map((q) => (
                                         <button
                                             key={q}
                                             onClick={() => handleSend(q)}
@@ -269,7 +285,7 @@ export default function AIChatFloat() {
             <button
                 onClick={() => setIsOpen(!isOpen)}
                 className={`fixed bottom-20 lg:bottom-6 right-4 sm:right-6 w-14 h-14 bg-blue-600 text-white rounded-full shadow-lg hover:shadow-xl transition-all hover:scale-110 flex items-center justify-center z-50 ${!isOpen ? 'pulse-glow' : ''}`}
-                title="AI Assistant"
+                title="KR AI Assistant"
             >
                 {isOpen ? (
                     <X className="w-6 h-6" />

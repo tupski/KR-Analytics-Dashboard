@@ -1,9 +1,12 @@
 import { fetchUnits, fetchUnitLocations } from './actions';
+import type { UnitDateFilter } from './actions';
 import UnitOverview from '@/components/unit/UnitOverview';
 import UnitLocationCards from '@/components/unit/UnitLocationCards';
 import UnitGrid from '@/components/unit/UnitGrid';
-import UnitLocationFilter from '@/components/unit/UnitLocationFilter';
+import UnitStickyHeader from '@/components/unit/UnitStickyHeader';
 import AIInsightCard from '@/components/ai/AIInsightCard';
+
+const VALID_FILTERS: UnitDateFilter[] = ['today', 'yesterday', '7days', 'month', 'year'];
 
 export default async function UnitPage({
     searchParams,
@@ -12,9 +15,11 @@ export default async function UnitPage({
 }) {
     const params = await searchParams;
     const locationFilter = typeof params.location === 'string' ? params.location : '';
+    const rawFilter = typeof params.filter === 'string' ? params.filter : 'today';
+    const dateFilter = (VALID_FILTERS.includes(rawFilter as UnitDateFilter) ? rawFilter : 'today') as UnitDateFilter;
 
     const [unitData, locations] = await Promise.all([
-        fetchUnits(locationFilter || undefined),
+        fetchUnits(locationFilter || undefined, dateFilter),
         fetchUnitLocations(),
     ]);
 
@@ -28,6 +33,14 @@ export default async function UnitPage({
             </div>
 
             <main className="px-4 sm:px-6 lg:px-8 py-6 space-y-6">
+                {/* Sticky filter header — visible on all device sizes */}
+                <UnitStickyHeader
+                    locations={locations}
+                    currentLocation={locationFilter}
+                    currentFilter={dateFilter}
+                    dateLabel={unitData.dateLabel}
+                />
+
                 {/* AI Insight - Top */}
                 <AIInsightCard
                     title="Insight Okupansi"
@@ -42,12 +55,7 @@ export default async function UnitPage({
 
                 <UnitLocationCards summaries={unitData.locationSummaries} />
 
-                <UnitLocationFilter
-                    locations={locations}
-                    currentLocation={locationFilter}
-                />
-
-                <UnitGrid units={unitData.units} />
+                <UnitGrid units={unitData.units} dateFilter={dateFilter} />
             </main>
         </div>
     );

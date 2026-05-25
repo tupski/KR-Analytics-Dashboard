@@ -1,7 +1,7 @@
 'use server';
 
 import { createServerClient } from '@/lib/supabase/server';
-import { format, subDays, startOfDay } from 'date-fns';
+import { format, subDays } from 'date-fns';
 import { toZonedTime } from 'date-fns-tz';
 
 export type DateFilter = 'today' | 'yesterday' | '7days' | 'month' | 'year';
@@ -45,6 +45,62 @@ function getDateRange(filter: DateFilter) {
             const start = `${yearStart}T00:00:00`;
             const end = `${format(new Date(hotelDayStart.getTime() + 86400000), 'yyyy-MM-dd')}T11:59:59`;
             return { start, end, label: 'Tahun Ini' };
+        }
+    }
+}
+
+function getPreviousDateRange(filter: DateFilter) {
+    const timezone = 'Asia/Jakarta';
+    const now = toZonedTime(new Date(), timezone);
+    const hotelDayStart = new Date(now);
+    hotelDayStart.setHours(12, 0, 0, 0);
+    if (now < hotelDayStart) hotelDayStart.setDate(hotelDayStart.getDate() - 1);
+
+    switch (filter) {
+        case 'today': {
+            // Compare to yesterday
+            const r = getDateRange('yesterday');
+            return { ...r, label: 'Kemarin' };
+        }
+        case 'yesterday': {
+            // Compare to day before yesterday
+            const dayBefore = new Date(hotelDayStart.getTime() - 2 * 86400000);
+            const yesterday = new Date(hotelDayStart.getTime() - 86400000);
+            return {
+                start: `${format(dayBefore, 'yyyy-MM-dd')}T12:00:00`,
+                end: `${format(yesterday, 'yyyy-MM-dd')}T11:59:59`,
+                label: 'H-2',
+            };
+        }
+        case '7days': {
+            // Previous 7 days (8-14 days ago)
+            const start14 = new Date(hotelDayStart.getTime() - 14 * 86400000);
+            const end7 = new Date(hotelDayStart.getTime() - 7 * 86400000);
+            return {
+                start: `${format(start14, 'yyyy-MM-dd')}T12:00:00`,
+                end: `${format(end7, 'yyyy-MM-dd')}T11:59:59`,
+                label: '7 Hari Sebelumnya',
+            };
+        }
+        case 'month': {
+            // Previous month: from 1st last month to last day last month
+            const firstThisMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+            const firstLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+            return {
+                start: `${format(firstLastMonth, 'yyyy-MM-dd')}T00:00:00`,
+                end: `${format(firstThisMonth, 'yyyy-MM-dd')}T11:59:59`,
+                label: 'Bulan Lalu',
+            };
+        }
+        case 'year': {
+            // Previous year
+            const firstThisYear = new Date(now.getFullYear(), 0, 1);
+            const firstLastYear = new Date(now.getFullYear() - 1, 0, 1);
+            return {
+                start: `${format(firstLastYear, 'yyyy-MM-dd')}T00:00:00`,
+                end: `${format(firstThisYear, 'yyyy-MM-dd')}T11:59:59`,
+                label: 'Tahun Lalu',
+            };
         }
     }
 }
@@ -119,7 +175,12 @@ export interface LaporanData {
     // Fee Marketing
     feeMarketing: FeeMarketingReport;
     // Comparison
-    comparison?: { prevRevenue: number; prevTransactions: number; prevLabel: string };
+    comparison?: {
+        prevRevenue: number;
+        prevTransactions: number;
+        prevExpenses: number;
+        prevLabel: string;
+    };
 }
 
 export async function fetchLaporanData(filter: DateFilter = 'today'): Promise<LaporanData> {
@@ -247,22 +308,27 @@ export async function fetchLaporanData(filter: DateFilter = 'today'): Promise<La
         unpaidCount: 0,
     };
 
-    // Comparison with previous period
-    let comparison: LaporanData['comparison'];
-    if (filter === 'today' || filter === 'yesterday') {
-        const prevFilter = filter === 'today' ? 'yesterday' : 'today';
-        const prev = getDateRange(filter === 'today' ? 'yesterday' : 'today');
-        const { data: prevTx } = await supabase
+    // Comparison with previous period (always available, all filters)
+    const prev = getPreviousDateRange(filter);
+    const [prevTxResult, prevExpResult] = await Promise.all([
+        supabase
             .from('transactions')
             .select('cash_amount, transfer_amount')
             .gte('checkin_at', prev.start)
-            .lte('checkin_at', prev.end);
-        comparison = {
-            prevRevenue: prevTx?.reduce((s, t: any) => s + (t.cash_amount || 0) + (t.transfer_amount || 0), 0) || 0,
-            prevTransactions: prevTx?.length || 0,
-            prevLabel: prev.label,
-        };
-    }
+            .lte('checkin_at', prev.end),
+        supabase
+            .from('pengeluaran')
+            .select('jumlah')
+            .gte('tanggal', prev.start.split('T')[0])
+            .lte('tanggal', prev.end.split('T')[0]),
+    ]);
+
+    const comparison: LaporanData['comparison'] = {
+        prevRevenue: prevTxResult.data?.reduce((s, t: any) => s + (t.cash_amount || 0) + (t.transfer_amount || 0), 0) || 0,
+        prevTransactions: prevTxResult.data?.length || 0,
+        prevExpenses: prevExpResult.data?.reduce((s, e: any) => s + (e.jumlah || 0), 0) || 0,
+        prevLabel: prev.label,
+    };
 
     return {
         filter,
@@ -352,4 +418,88 @@ export async function fetchHighOccupancyLocations(days: number = 30) {
         .sort((a, b) => b.occupancyRate - a.occupancyRate);
 
     return results;
+}
+
+
+// =====================================================
+// Expense detail per category (paginated + sortable)
+// =====================================================
+
+export interface ExpenseDetail {
+    id: number;
+    namaPengeluaran: string;
+    jumlah: number;
+    tanggal: string;
+    keterangan: string | null;
+    apartmentLocation: string | null;
+    roomNumber: string | null;
+}
+
+export type ExpenseSortKey = 'tanggal' | 'jumlah' | 'nama_pengeluaran' | 'apartment_location';
+export type SortDirection = 'asc' | 'desc';
+
+export interface ExpenseDetailsResponse {
+    rows: ExpenseDetail[];
+    total: number;
+    page: number;
+    pageSize: number;
+    category: string;
+}
+
+/**
+ * Fetch expense rows for a given category in the current laporan filter range.
+ * Server-side pagination + sorting.
+ */
+export async function fetchExpenseDetailsByCategory(
+    category: string,
+    filter: DateFilter = 'today',
+    page: number = 1,
+    pageSize: number = 10,
+    sortKey: ExpenseSortKey = 'tanggal',
+    sortDir: SortDirection = 'desc',
+): Promise<ExpenseDetailsResponse> {
+    const supabase = createServerClient();
+    const { start, end } = getDateRange(filter);
+
+    const safePage = Math.max(1, page);
+    const safeSize = Math.max(1, Math.min(100, pageSize));
+    const from = (safePage - 1) * safeSize;
+    const to = from + safeSize - 1;
+
+    let query = supabase
+        .from('pengeluaran')
+        .select('id, nama_pengeluaran, jumlah, tanggal, keterangan, apartment_location, room_number', { count: 'exact' })
+        .gte('tanggal', start.split('T')[0])
+        .lte('tanggal', end.split('T')[0]);
+
+    // Filter category — null/empty/whitespace becomes "Lainnya"
+    if (category === 'Lainnya') {
+        query = query.or('category.is.null,category.eq.');
+    } else {
+        query = query.eq('category', category);
+    }
+
+    query = query.order(sortKey, { ascending: sortDir === 'asc', nullsFirst: false }).range(from, to);
+
+    const { data, count, error } = await query;
+    if (error) {
+        console.error('Error fetching expense details:', error);
+        return { rows: [], total: 0, page: safePage, pageSize: safeSize, category };
+    }
+
+    return {
+        rows: (data || []).map((e: any) => ({
+            id: e.id,
+            namaPengeluaran: e.nama_pengeluaran,
+            jumlah: e.jumlah || 0,
+            tanggal: e.tanggal,
+            keterangan: e.keterangan,
+            apartmentLocation: e.apartment_location,
+            roomNumber: e.room_number,
+        })),
+        total: count || 0,
+        page: safePage,
+        pageSize: safeSize,
+        category,
+    };
 }

@@ -2,8 +2,22 @@
 
 import { useState, useRef } from 'react';
 import { useRouter } from 'next/navigation';
-import { Wallet, TrendingUp, TrendingDown, Receipt, Users, AlertTriangle, ChevronDown, X, Clock, User, Building } from 'lucide-react';
-import type { LaporanData, LocationReport, RoomReport, RoomDetail, DateFilter } from '@/app/laporan/actions';
+import {
+    Wallet,
+    TrendingUp,
+    TrendingDown,
+    Receipt,
+    AlertTriangle,
+    X,
+    Clock,
+    User,
+    ChevronUp,
+    ChevronDown,
+    ChevronLeft,
+    ChevronRight,
+} from 'lucide-react';
+import type { LaporanData, RoomDetail, DateFilter } from '@/app/laporan/actions';
+import ExpenseCategoryModal from './ExpenseCategoryModal';
 
 interface LaporanClientProps {
     data: LaporanData;
@@ -25,6 +39,7 @@ export default function LaporanClient({ data, highOccupancy }: LaporanClientProp
     const [selectedRoom, setSelectedRoom] = useState<{ location: string; room: string } | null>(null);
     const [roomDetails, setRoomDetails] = useState<RoomDetail[]>([]);
     const [loadingDetails, setLoadingDetails] = useState(false);
+    const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
     const locationRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
     const handleFilterChange = (filter: DateFilter) => {
@@ -42,17 +57,22 @@ export default function LaporanClient({ data, highOccupancy }: LaporanClientProp
             const { fetchRoomDetails } = await import('@/app/laporan/actions');
             const details = await fetchRoomDetails(location, room, data.filter);
             setRoomDetails(details);
-        } catch (err) {
+        } catch {
             setRoomDetails([]);
         } finally {
             setLoadingDetails(false);
         }
     };
 
-    const growth = data.comparison
-        ? data.comparison.prevRevenue > 0
-            ? ((data.totalRevenue - data.comparison.prevRevenue) / data.comparison.prevRevenue * 100).toFixed(1)
-            : '0'
+    // Comparison metrics
+    const revenueDelta = data.comparison ? data.totalRevenue - data.comparison.prevRevenue : 0;
+    const revenueGrowthPct = data.comparison && data.comparison.prevRevenue > 0
+        ? ((revenueDelta) / data.comparison.prevRevenue * 100)
+        : null;
+
+    const expenseDelta = data.comparison ? data.totalExpenses - data.comparison.prevExpenses : 0;
+    const expenseGrowthPct = data.comparison && data.comparison.prevExpenses > 0
+        ? ((expenseDelta) / data.comparison.prevExpenses * 100)
         : null;
 
     return (
@@ -73,9 +93,9 @@ export default function LaporanClient({ data, highOccupancy }: LaporanClientProp
                 ))}
             </div>
 
-            {/* Summary Cards */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
+            {/* Summary Cards — equal height */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 auto-rows-fr">
+                <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm flex flex-col">
                     <div className="flex items-center gap-3">
                         <div className="p-2.5 rounded-lg bg-green-50"><Wallet className="w-5 h-5 text-green-600" /></div>
                         <div>
@@ -85,12 +105,14 @@ export default function LaporanClient({ data, highOccupancy }: LaporanClientProp
                         </div>
                     </div>
                 </div>
-                <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
+
+                <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm flex flex-col">
                     <p className="text-sm text-gray-500 mb-1">Cash / Transfer</p>
                     <p className="text-sm font-bold text-gray-900">{fmt(data.totalCash)}</p>
                     <p className="text-sm font-bold text-blue-600">{fmt(data.totalTransfer)}</p>
                 </div>
-                <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
+
+                <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm flex flex-col">
                     <div className="flex items-center gap-3">
                         <div className="p-2.5 rounded-lg bg-red-50"><Receipt className="w-5 h-5 text-red-600" /></div>
                         <div>
@@ -99,17 +121,54 @@ export default function LaporanClient({ data, highOccupancy }: LaporanClientProp
                         </div>
                     </div>
                 </div>
-                {growth && (
-                    <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
-                        <div className="flex items-center gap-2">
-                            {Number(growth) >= 0 ? <TrendingUp className="w-5 h-5 text-green-600" /> : <TrendingDown className="w-5 h-5 text-red-600" />}
-                            <div>
-                                <p className="text-sm text-gray-500">vs {data.comparison?.prevLabel}</p>
-                                <p className={`text-xl font-bold ${Number(growth) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                                    {Number(growth) >= 0 ? '+' : ''}{growth}%
-                                </p>
-                            </div>
+
+                {data.comparison && (
+                    <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm flex flex-col">
+                        <p className="text-sm text-gray-500 mb-2">vs {data.comparison.prevLabel}</p>
+
+                        {/* Pendapatan delta */}
+                        <div className="flex items-center gap-1.5">
+                            {revenueGrowthPct === null ? (
+                                <span className="text-xs text-gray-500">Pendapatan: –</span>
+                            ) : revenueGrowthPct >= 0 ? (
+                                <>
+                                    <TrendingUp className="w-4 h-4 text-green-600 shrink-0" />
+                                    <span className="text-sm font-bold text-green-600">+{revenueGrowthPct.toFixed(1)}%</span>
+                                    <span className="text-xs text-gray-500 truncate">pendapatan naik</span>
+                                </>
+                            ) : (
+                                <>
+                                    <TrendingDown className="w-4 h-4 text-red-600 shrink-0" />
+                                    <span className="text-sm font-bold text-red-600">{revenueGrowthPct.toFixed(1)}%</span>
+                                    <span className="text-xs text-gray-500 truncate">pendapatan turun</span>
+                                </>
+                            )}
                         </div>
+
+                        {/* Pengeluaran delta — caption "lebih besar/kecil" */}
+                        <div className="flex items-center gap-1.5 mt-1">
+                            {expenseGrowthPct === null ? (
+                                <span className="text-xs text-gray-500">
+                                    Pengeluaran: {data.totalExpenses > 0 ? fmt(data.totalExpenses) : '–'}
+                                </span>
+                            ) : expenseGrowthPct >= 0 ? (
+                                <>
+                                    <TrendingUp className="w-4 h-4 text-red-600 shrink-0" />
+                                    <span className="text-sm font-bold text-red-600">+{expenseGrowthPct.toFixed(1)}%</span>
+                                    <span className="text-xs text-gray-500 truncate">pengeluaran lebih besar</span>
+                                </>
+                            ) : (
+                                <>
+                                    <TrendingDown className="w-4 h-4 text-green-600 shrink-0" />
+                                    <span className="text-sm font-bold text-green-600">{expenseGrowthPct.toFixed(1)}%</span>
+                                    <span className="text-xs text-gray-500 truncate">pengeluaran lebih kecil</span>
+                                </>
+                            )}
+                        </div>
+
+                        <p className="text-[11px] text-gray-400 mt-auto pt-2">
+                            Selisih: {revenueDelta >= 0 ? '+' : ''}{fmt(revenueDelta)} pendapatan, {expenseDelta >= 0 ? '+' : ''}{fmt(expenseDelta)} pengeluaran
+                        </p>
                     </div>
                 )}
             </div>
@@ -147,19 +206,26 @@ export default function LaporanClient({ data, highOccupancy }: LaporanClientProp
                 </div>
             </div>
 
-            {/* Expenses by Category */}
+            {/* Expenses by Category — clickable */}
             {data.expenses.length > 0 && (
                 <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
-                    <h3 className="font-semibold text-gray-900 mb-3">Pengeluaran Per Kategori</h3>
-                    <div className="space-y-2">
+                    <div className="flex items-center justify-between mb-3">
+                        <h3 className="font-semibold text-gray-900">Pengeluaran Per Kategori</h3>
+                        <span className="text-xs text-gray-400">Klik kategori untuk lihat detail</span>
+                    </div>
+                    <div className="space-y-1">
                         {data.expenses.map(e => (
-                            <div key={e.category} className="flex items-center justify-between py-1.5 border-b border-gray-50 last:border-0">
+                            <button
+                                key={e.category}
+                                onClick={() => setSelectedCategory(e.category)}
+                                className="w-full flex items-center justify-between py-2 px-3 -mx-3 rounded-lg hover:bg-blue-50/60 transition-colors text-left border-b border-gray-50 last:border-0"
+                            >
                                 <div className="flex items-center gap-2">
-                                    <span className="text-sm text-gray-700">{e.category}</span>
+                                    <span className="text-sm text-gray-700 group-hover:text-blue-700">{e.category}</span>
                                     <span className="text-xs text-gray-400">({e.count}x)</span>
                                 </div>
                                 <span className="text-sm font-semibold text-gray-900">{fmt(e.total)}</span>
-                            </div>
+                            </button>
                         ))}
                     </div>
                 </div>
@@ -327,6 +393,15 @@ export default function LaporanClient({ data, highOccupancy }: LaporanClientProp
                         </div>
                     </div>
                 </div>
+            )}
+
+            {/* Expense Category Modal — paginated + sortable */}
+            {selectedCategory && (
+                <ExpenseCategoryModal
+                    category={selectedCategory}
+                    filter={data.filter}
+                    onClose={() => setSelectedCategory(null)}
+                />
             )}
         </div>
     );

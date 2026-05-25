@@ -2,14 +2,16 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@/lib/supabase/server';
 import { format, subDays } from 'date-fns';
 import { toZonedTime } from 'date-fns-tz';
+import { OPENAI_TOOLS, ANTHROPIC_TOOLS, executeTool, type ToolCall } from '@/lib/ai/tools';
 
 /**
- * AI Chat API Route
- * 
- * Proxies chat requests to the configured AI provider.
- * Injects real-time dashboard data as context so AI can answer questions about the business.
- * 
- * READ ONLY - only reads data from Supabase, never writes.
+ * AI Chat API Route — TOOL-CALLING enabled.
+ *
+ * Instead of stuffing all data into the system prompt, we expose tools that
+ * let the AI query Supabase aggregates on demand. Loop until the AI returns
+ * a plain text answer (no further tool calls).
+ *
+ * READ ONLY — tools are read-only aggregates.
  */
 
 interface AIConfig {
@@ -19,107 +21,191 @@ interface AIConfig {
     baseUrl?: string;
 }
 
-async function getDashboardContext(): Promise<string> {
+const MAX_TOOL_ITERATIONS = 5;
+
+/** Tiny snapshot to include in the system message so the AI knows what date "today" is. */
+async function getQuickContext(): Promise<string> {
     const supabase = createServerClient();
     const timezone = 'Asia/Jakarta';
-    const today = format(toZonedTime(new Date(), timezone), 'yyyy-MM-dd');
-    const now = new Date().toISOString();
-    const weekAgo = format(subDays(new Date(), 7), 'yyyy-MM-dd');
-    const monthAgo = format(subDays(new Date(), 30), 'yyyy-MM-dd');
+    const todayDate = toZonedTime(new Date(), timezone);
+    const today = format(todayDate, 'yyyy-MM-dd');
+    const yesterday = format(subDays(todayDate, 1), 'yyyy-MM-dd');
+    const lastWeek = format(subDays(todayDate, 7), 'yyyy-MM-dd');
+    const lastMonth = format(subDays(todayDate, 30), 'yyyy-MM-dd');
+    const lastYear = format(subDays(todayDate, 365), 'yyyy-MM-dd');
 
+    let locationDescriptors = '';
+    let totalRooms = 0;
     try {
-        // Current occupancy
-        const { count: totalRooms } = await supabase
-            .from('nomor_kamar')
-            .select('id', { count: 'exact', head: true });
-
-        const { data: activeStays } = await supabase
-            .from('transactions')
-            .select('room_number, apartment_location')
-            .lte('checkin_at', now)
-            .gte('checkout_at', now);
-
-        const occupiedRooms = new Set(
-            activeStays?.map((t: any) => `${t.apartment_location}-${t.room_number}`) || []
-        ).size;
-
-        // Today's stats
-        const { count: todayBookings } = await supabase
-            .from('transactions')
-            .select('id', { count: 'exact', head: true })
-            .gte('checkin_at', `${today}T00:00:00`)
-            .lt('checkin_at', `${today}T23:59:59`);
-
-        const { data: todayRevData } = await supabase
-            .from('transactions')
-            .select('cash_amount, transfer_amount')
-            .gte('checkin_at', `${today}T00:00:00`)
-            .lt('checkin_at', `${today}T23:59:59`);
-
-        const todayRevenue = todayRevData?.reduce(
-            (sum: number, t: any) => sum + (t.cash_amount || 0) + (t.transfer_amount || 0), 0
-        ) || 0;
-
-        // Week stats
-        const { data: weekRevData } = await supabase
-            .from('transactions')
-            .select('cash_amount, transfer_amount')
-            .gte('checkin_at', `${weekAgo}T00:00:00`);
-
-        const weekRevenue = weekRevData?.reduce(
-            (sum: number, t: any) => sum + (t.cash_amount || 0) + (t.transfer_amount || 0), 0
-        ) || 0;
-
-        // Month stats
-        const { data: monthRevData, count: monthBookings } = await supabase
-            .from('transactions')
-            .select('cash_amount, transfer_amount, apartment_location', { count: 'exact' })
-            .gte('checkin_at', `${monthAgo}T00:00:00`);
-
-        const monthRevenue = monthRevData?.reduce(
-            (sum: number, t: any) => sum + (t.cash_amount || 0) + (t.transfer_amount || 0), 0
-        ) || 0;
-
-        // Location breakdown
-        const locationCounts: Record<string, number> = {};
-        monthRevData?.forEach((t: any) => {
-            locationCounts[t.apartment_location] = (locationCounts[t.apartment_location] || 0) + 1;
-        });
-
-        // Locations info
         const { data: locations } = await supabase
             .from('lokasi_apartemen')
-            .select('name');
+            .select('name, total_rooms');
+        locationDescriptors = (locations || [])
+            .map((l: any) => `${l.name} (${l.total_rooms || '?'} kamar)`)
+            .join(', ');
+        const { count } = await supabase
+            .from('nomor_kamar')
+            .select('id', { count: 'exact', head: true });
+        totalRooms = count || 0;
+    } catch { /* swallow */ }
 
-        const locationNames = locations?.map((l: any) => l.name) || [];
+    return `KONTEKS SISTEM:
+- Hari ini: ${today} (Asia/Jakarta)
+- Kemarin: ${yesterday}
+- 7 hari lalu (hari sama): ${lastWeek}
+- 30 hari lalu (hari sama): ${lastMonth}
+- 1 tahun lalu (hari sama): ${lastYear}
+- Total unit: ${totalRooms} kamar
+- Lokasi: ${locationDescriptors}
 
-        return `
-DATA REAL-TIME KAKARAMA ROOM (${today}, waktu Jakarta):
-- Total unit/kamar: ${totalRooms || 0}
-- Kamar terisi saat ini: ${occupiedRooms}
-- Kamar tersedia: ${(totalRooms || 0) - occupiedRooms}
-- Okupansi: ${totalRooms ? ((occupiedRooms / totalRooms) * 100).toFixed(1) : 0}%
+ATURAN:
+- Gunakan TOOLS yang tersedia untuk mengambil data yang kamu butuhkan dari Supabase.
+- Untuk pertanyaan komparatif (vs minggu/bulan/tahun lalu), pakai compare_periods sehingga kamu mendapat delta otomatis.
+- Untuk minggu lalu, pakai rentang (today-13) s/d (today-7) sebagai window pembanding 7 hari.
+- Tanggal SELALU format YYYY-MM-DD.
+- Jawab dalam Bahasa Indonesia, ringkas, format teks biasa (TIDAK pakai markdown ** atau ##).
+- Jangan mengarang angka — kalau tools tidak bisa kasih data, sebutkan terus terang.`;
+}
 
-HARI INI:
-- Booking baru: ${todayBookings || 0}
-- Pendapatan: Rp ${todayRevenue.toLocaleString('id-ID')}
+// =========================================================
+// OpenAI / DeepSeek / OpenAI-compatible loop
+// =========================================================
+async function runOpenAILoop(
+    apiUrl: string,
+    headers: Record<string, string>,
+    model: string,
+    systemContent: string,
+    userMessages: any[],
+): Promise<string> {
+    const conversation: any[] = [
+        { role: 'system', content: systemContent },
+        ...userMessages.map((m: any) => ({ role: m.role, content: m.content })),
+    ];
 
-7 HARI TERAKHIR:
-- Total pendapatan: Rp ${weekRevenue.toLocaleString('id-ID')}
-- Jumlah transaksi: ${weekRevData?.length || 0}
+    for (let iter = 0; iter < MAX_TOOL_ITERATIONS; iter++) {
+        const body = {
+            model,
+            messages: conversation,
+            tools: OPENAI_TOOLS,
+            tool_choice: 'auto',
+            temperature: 0.7,
+            max_tokens: 2000,
+        };
 
-30 HARI TERAKHIR:
-- Total pendapatan: Rp ${monthRevenue.toLocaleString('id-ID')}
-- Jumlah transaksi: ${monthBookings || 0}
-- Rata-rata per hari: Rp ${Math.round(monthRevenue / 30).toLocaleString('id-ID')}
+        const res = await fetch(apiUrl, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify(body),
+        });
 
-LOKASI (${locationNames.length} lokasi):
-${locationNames.map(name => `- ${name}: ${locationCounts[name] || 0} transaksi (30 hari)`).join('\n')}
-`.trim();
-    } catch (error) {
-        console.error('Error getting dashboard context:', error);
-        return 'Data tidak tersedia saat ini.';
+        if (!res.ok) {
+            const errorText = await res.text();
+            throw new Error(`AI API error: ${res.status} - ${errorText.substring(0, 300)}`);
+        }
+
+        const data = await res.json();
+        const choice = data.choices?.[0];
+        const message = choice?.message;
+        if (!message) throw new Error('Respons AI kosong.');
+
+        const toolCalls = message.tool_calls;
+        if (!toolCalls || toolCalls.length === 0) {
+            return message.content || 'Tidak ada respons.';
+        }
+
+        // Append assistant message + tool results, then loop
+        conversation.push({
+            role: 'assistant',
+            content: message.content || '',
+            tool_calls: toolCalls,
+        });
+
+        for (const tc of toolCalls) {
+            let parsedArgs: Record<string, any> = {};
+            try {
+                parsedArgs = JSON.parse(tc.function?.arguments || '{}');
+            } catch {
+                parsedArgs = {};
+            }
+            const call: ToolCall = {
+                name: tc.function?.name || '',
+                arguments: parsedArgs,
+            };
+            const result = await executeTool(call);
+            conversation.push({
+                role: 'tool',
+                tool_call_id: tc.id,
+                name: call.name,
+                content: JSON.stringify(result).slice(0, 12000), // cap payload
+            });
+        }
     }
+
+    return 'Maaf, saya butuh terlalu banyak tool calls untuk menjawab. Coba persempit pertanyaan.';
+}
+
+// =========================================================
+// Anthropic loop
+// =========================================================
+async function runAnthropicLoop(
+    apiUrl: string,
+    headers: Record<string, string>,
+    model: string,
+    systemContent: string,
+    userMessages: any[],
+): Promise<string> {
+    let conversation: any[] = userMessages.map((m: any) => ({
+        role: m.role,
+        content: m.content,
+    }));
+
+    for (let iter = 0; iter < MAX_TOOL_ITERATIONS; iter++) {
+        const body = {
+            model,
+            max_tokens: 2000,
+            system: systemContent,
+            tools: ANTHROPIC_TOOLS,
+            messages: conversation,
+        };
+
+        const res = await fetch(apiUrl, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify(body),
+        });
+
+        if (!res.ok) {
+            const errorText = await res.text();
+            throw new Error(`AI API error: ${res.status} - ${errorText.substring(0, 300)}`);
+        }
+
+        const data = await res.json();
+        const blocks = data.content || [];
+        const stopReason = data.stop_reason;
+
+        const textBlocks = blocks.filter((b: any) => b.type === 'text');
+        const toolUseBlocks = blocks.filter((b: any) => b.type === 'tool_use');
+
+        if (stopReason !== 'tool_use' || toolUseBlocks.length === 0) {
+            return textBlocks.map((b: any) => b.text).join('\n').trim() || 'Tidak ada respons.';
+        }
+
+        conversation.push({ role: 'assistant', content: blocks });
+
+        const toolResults: any[] = [];
+        for (const tu of toolUseBlocks) {
+            const call: ToolCall = { name: tu.name, arguments: tu.input || {} };
+            const result = await executeTool(call);
+            toolResults.push({
+                type: 'tool_result',
+                tool_use_id: tu.id,
+                content: JSON.stringify(result).slice(0, 12000),
+            });
+        }
+        conversation.push({ role: 'user', content: toolResults });
+    }
+
+    return 'Maaf, saya butuh terlalu banyak tool calls untuk menjawab. Coba persempit pertanyaan.';
 }
 
 export async function POST(request: NextRequest) {
@@ -127,131 +213,91 @@ export async function POST(request: NextRequest) {
         const body = await request.json();
         const { messages, config } = body as { messages: any[]; config: AIConfig };
 
-        // Resolve API key: client config > env variable
         const resolvedConfig: AIConfig = {
-            provider: config?.provider || process.env.AI_PROVIDER || 'openai',
+            provider: config?.provider || process.env.AI_PROVIDER || 'deepseek',
             apiKey: config?.apiKey || process.env.AI_API_KEY || '',
-            model: config?.model || process.env.AI_MODEL || 'gpt-4o-mini',
+            model: config?.model || process.env.AI_MODEL || 'deepseek-chat',
             baseUrl: config?.baseUrl || process.env.AI_BASE_URL || undefined,
         };
 
         if (!resolvedConfig.apiKey) {
             return NextResponse.json(
                 { error: 'API key belum dikonfigurasi. Atur di halaman Analytics AI atau set AI_API_KEY di environment.' },
-                { status: 400 }
+                { status: 400 },
             );
         }
 
-        // Get dashboard context
-        const dashboardContext = await getDashboardContext();
+        const quickContext = await getQuickContext();
+        const systemContent = `Kamu adalah asisten AI analitik untuk Kakarama Room (bisnis penyewaan apartemen/kamar harian di Indonesia). Kamu PUNYA AKSES ke database via tools. Selalu pakai tools untuk dapat angka aktual sebelum menjawab.
 
-        // Build system message
-        const systemMessage = {
-            role: 'system',
-            content: `Kamu adalah asisten AI analitik untuk Kakarama Room, sebuah bisnis penyewaan apartemen/kamar harian.
-Tugasmu adalah membantu menganalisis data bisnis, memberikan insight, dan menjawab pertanyaan tentang performa bisnis.
-Jawab dalam Bahasa Indonesia. Gunakan format teks biasa (JANGAN gunakan markdown seperti ** atau ##). Berikan analisis yang ringkas, actionable, dan berbasis data.
+${quickContext}`;
 
-${dashboardContext}`
-        };
-
-        // Determine API endpoint based on provider
-        let apiUrl: string;
-        let headers: Record<string, string>;
-        let requestBody: any;
+        let assistantMessage: string;
 
         switch (resolvedConfig.provider) {
-            case 'openai':
-                apiUrl = resolvedConfig.baseUrl || 'https://api.openai.com/v1/chat/completions';
-                headers = {
+            case 'openai': {
+                const apiUrl = resolvedConfig.baseUrl || 'https://api.openai.com/v1/chat/completions';
+                const headers = {
                     'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${resolvedConfig.apiKey}`,
+                    Authorization: `Bearer ${resolvedConfig.apiKey}`,
                 };
-                requestBody = {
-                    model: resolvedConfig.model || 'gpt-4o-mini',
-                    messages: [systemMessage, ...messages],
-                    temperature: 0.7,
-                    max_tokens: 2000,
-                };
+                assistantMessage = await runOpenAILoop(
+                    apiUrl,
+                    headers,
+                    resolvedConfig.model || 'gpt-4o-mini',
+                    systemContent,
+                    messages,
+                );
                 break;
-
-            case 'anthropic':
-                apiUrl = resolvedConfig.baseUrl || 'https://api.anthropic.com/v1/messages';
-                headers = {
+            }
+            case 'deepseek': {
+                const apiUrl = resolvedConfig.baseUrl || 'https://api.deepseek.com/v1/chat/completions';
+                const headers = {
+                    'Content-Type': 'application/json',
+                    Authorization: `Bearer ${resolvedConfig.apiKey}`,
+                };
+                assistantMessage = await runOpenAILoop(
+                    apiUrl,
+                    headers,
+                    resolvedConfig.model || 'deepseek-chat',
+                    systemContent,
+                    messages,
+                );
+                break;
+            }
+            case 'openai-compatible': {
+                const apiUrl = resolvedConfig.baseUrl || 'https://api.openai.com/v1/chat/completions';
+                const headers = {
+                    'Content-Type': 'application/json',
+                    Authorization: `Bearer ${resolvedConfig.apiKey}`,
+                };
+                assistantMessage = await runOpenAILoop(
+                    apiUrl,
+                    headers,
+                    resolvedConfig.model || 'gpt-4o-mini',
+                    systemContent,
+                    messages,
+                );
+                break;
+            }
+            case 'anthropic': {
+                const apiUrl = resolvedConfig.baseUrl || 'https://api.anthropic.com/v1/messages';
+                const headers = {
                     'Content-Type': 'application/json',
                     'x-api-key': resolvedConfig.apiKey,
                     'anthropic-version': '2023-06-01',
                 };
-                requestBody = {
-                    model: resolvedConfig.model || 'claude-sonnet-4-20250514',
-                    max_tokens: 2000,
-                    system: systemMessage.content,
-                    messages: messages.map((m: any) => ({
-                        role: m.role,
-                        content: m.content,
-                    })),
-                };
-                break;
-
-            case 'deepseek':
-                apiUrl = resolvedConfig.baseUrl || 'https://api.deepseek.com/v1/chat/completions';
-                headers = {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${resolvedConfig.apiKey}`,
-                };
-                requestBody = {
-                    model: resolvedConfig.model || 'deepseek-chat',
-                    messages: [systemMessage, ...messages],
-                    temperature: 0.7,
-                    max_tokens: 2000,
-                };
-                break;
-
-            case 'openai-compatible':
-                apiUrl = resolvedConfig.baseUrl || 'https://api.openai.com/v1/chat/completions';
-                headers = {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${resolvedConfig.apiKey}`,
-                };
-                requestBody = {
-                    model: resolvedConfig.model || 'gpt-4o-mini',
-                    messages: [systemMessage, ...messages],
-                    temperature: 0.7,
-                    max_tokens: 2000,
-                };
-                break;
-
-            default:
-                return NextResponse.json(
-                    { error: 'Provider tidak didukung' },
-                    { status: 400 }
+                assistantMessage = await runAnthropicLoop(
+                    apiUrl,
+                    headers,
+                    resolvedConfig.model || 'claude-haiku-4-20250514',
+                    systemContent,
+                    messages,
                 );
-        }
-
-        const response = await fetch(apiUrl, {
-            method: 'POST',
-            headers,
-            body: JSON.stringify(requestBody),
-        });
-
-        if (!response.ok) {
-            const errorText = await response.text();
-            console.error('AI API error:', response.status, errorText);
-            return NextResponse.json(
-                { error: `AI API error: ${response.status} - ${errorText.substring(0, 200)}` },
-                { status: response.status }
-            );
-        }
-
-        const data = await response.json();
-
-        // Extract response based on provider
-        let assistantMessage: string;
-
-        if (resolvedConfig.provider === 'anthropic') {
-            assistantMessage = data.content?.[0]?.text || 'Tidak ada respons.';
-        } else {
-            assistantMessage = data.choices?.[0]?.message?.content || 'Tidak ada respons.';
+                break;
+            }
+            default:
+                return NextResponse.json({ error: 'Provider tidak didukung' }, { status: 400 });
         }
 
         return NextResponse.json({ message: assistantMessage });
@@ -259,7 +305,7 @@ ${dashboardContext}`
         console.error('AI chat error:', error);
         return NextResponse.json(
             { error: `Gagal menghubungi AI: ${error.message}` },
-            { status: 500 }
+            { status: 500 },
         );
     }
 }
