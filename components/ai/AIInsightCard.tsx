@@ -17,7 +17,13 @@ const CACHE_TTL = 10 * 60 * 1000; // 10 minutes
 
 const COMPARE_PROMPT_SUFFIX = `
 
-PERMINTAAN TAMBAHAN: Berikan analisis komparatif dengan periode sebelumnya yang relevan (kemarin, minggu lalu, bulan lalu, atau tahun lalu) berdasarkan data historis yang tersedia. Sebutkan persentase perubahan, identifikasi trend positif/negatif, dan beri 1-2 rekomendasi spesifik berbasis perubahan tersebut.`;
+PERMINTAAN TAMBAHAN: Lakukan analisis komparatif dengan periode sebelumnya yang relevan (kemarin, minggu lalu, bulan lalu, atau tahun lalu).
+Gunakan tools compare_periods untuk mendapat delta otomatis.
+Dalam jawaban:
+- Sertakan severity label (🚨/⚠️/✅/📈/🏆) berdasarkan besarnya perubahan
+- Jelaskan makna bisnis dari perubahan tersebut, bukan hanya angka
+- Identifikasi penyebab potensial dari tren yang terdeteksi
+- Beri 1-2 rekomendasi actionable spesifik berdasarkan temuan perbandingan ini`;
 
 export default function AIInsightCard({
     prompt,

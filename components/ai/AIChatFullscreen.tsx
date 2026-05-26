@@ -112,7 +112,7 @@ export default function AIChatFullscreen() {
                                 className="flex items-center gap-1.5 px-2.5 py-1.5 text-[11px] text-gray-500 hover:bg-white rounded-lg transition-colors"
                             >
                                 <Settings className="w-3 h-3" />
-                                Pengaturan AI
+                                Pengaturan Krai
                             </Link>
                         </div>
                     </>

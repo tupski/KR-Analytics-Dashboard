@@ -1,9 +1,9 @@
 import type { Metadata } from 'next';
 import { Inter } from 'next/font/google';
-import Sidebar from '@/components/layout/Sidebar';
-import MobileBottomNav from '@/components/layout/MobileBottomNav';
+import MobileNavController from '@/components/layout/MobileNavController';
 import NavigationProgress from '@/components/layout/NavigationProgress';
 import AIChatFloat from '@/components/ai/AIChatFloat';
+import ScrollToTop from '@/components/ScrollToTop';
 import ErrorBoundary from '@/components/ErrorBoundary';
 import './globals.css';
 
@@ -16,16 +16,11 @@ export const metadata: Metadata = {
 
 /**
  * RootLayout - Main Application Layout
- * 
- * Provides the base layout structure with sidebar navigation (desktop)
- * and bottom navigation (mobile).
- * 
- * Features:
- * - Responsive layout with sidebar and mobile navigation
- * - Inter font family
- * - Consistent spacing and structure
- * - Error boundary for graceful error handling
- * 
+ *
+ * Provides the base layout structure with:
+ * - Desktop: fixed sidebar (always visible)
+ * - Mobile: sticky header with hamburger + slide-in sidebar overlay
+ *
  */
 export default function RootLayout({
     children,
@@ -38,24 +33,23 @@ export default function RootLayout({
                 <NavigationProgress />
                 <ErrorBoundary>
                     <div className="flex h-screen overflow-hidden">
-                        {/* Desktop Sidebar */}
-                        <Sidebar />
+                        {/* Sidebar (desktop fixed) + MobileHeader + mobile overlay sidebar */}
+                        <MobileNavController />
 
                         {/* Main Content Area */}
                         <div className="flex-1 flex flex-col overflow-hidden lg:ml-64">
                             {/* Content — overflow-y-auto for normal scrolling pages.
                                 Chat page uses flex-1 + overflow-hidden to fill this container. */}
-                            <div className="flex-1 overflow-y-auto flex flex-col pb-16 lg:pb-0">
+                            <div className="flex-1 overflow-y-auto flex flex-col" data-scroll-container>
                                 {children}
                             </div>
-
-                            {/* Mobile Bottom Navigation */}
-                            <MobileBottomNav />
                         </div>
                     </div>
 
                     {/* AI Chat Floating Button */}
                     <AIChatFloat />
+                    {/* Scroll to top */}
+                    <ScrollToTop />
                 </ErrorBoundary>
             </body>
         </html>

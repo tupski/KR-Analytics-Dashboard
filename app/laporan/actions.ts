@@ -36,13 +36,13 @@ function getDateRange(filter: DateFilter) {
         }
         case 'month': {
             const monthStart = format(now, 'yyyy-MM-01');
-            const start = `${monthStart}T00:00:00`;
+            const start = `${monthStart}T12:00:00`;
             const end = `${format(new Date(hotelDayStart.getTime() + 86400000), 'yyyy-MM-dd')}T11:59:59`;
             return { start, end, label: 'Bulan Ini' };
         }
         case 'year': {
             const yearStart = format(now, 'yyyy-01-01');
-            const start = `${yearStart}T00:00:00`;
+            const start = `${yearStart}T12:00:00`;
             const end = `${format(new Date(hotelDayStart.getTime() + 86400000), 'yyyy-MM-dd')}T11:59:59`;
             return { start, end, label: 'Tahun Ini' };
         }
@@ -87,7 +87,7 @@ function getPreviousDateRange(filter: DateFilter) {
             const firstThisMonth = new Date(now.getFullYear(), now.getMonth(), 1);
             const firstLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
             return {
-                start: `${format(firstLastMonth, 'yyyy-MM-dd')}T00:00:00`,
+                start: `${format(firstLastMonth, 'yyyy-MM-dd')}T12:00:00`,
                 end: `${format(firstThisMonth, 'yyyy-MM-dd')}T11:59:59`,
                 label: 'Bulan Lalu',
             };
@@ -97,7 +97,7 @@ function getPreviousDateRange(filter: DateFilter) {
             const firstThisYear = new Date(now.getFullYear(), 0, 1);
             const firstLastYear = new Date(now.getFullYear() - 1, 0, 1);
             return {
-                start: `${format(firstLastYear, 'yyyy-MM-dd')}T00:00:00`,
+                start: `${format(firstLastYear, 'yyyy-MM-dd')}T12:00:00`,
                 end: `${format(firstThisYear, 'yyyy-MM-dd')}T11:59:59`,
                 label: 'Tahun Lalu',
             };

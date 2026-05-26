@@ -112,10 +112,10 @@ async function fetchFollowUpSuggestions(
         const config = getConfig();
         if (!config.apiKey) return [];
 
-        const prompt = `Berdasarkan pertanyaan dan jawaban berikut, buat TEPAT 2 pertanyaan lanjutan yang relevan dan spesifik (tentang data bisnis Kakarama Room). Kembalikan HANYA 2 baris teks biasa, tanpa nomor/bullet.
+        const prompt = `Kamu adalah Krai, AI Business Copilot Kakarama Room. Berdasarkan konteks percakapan berikut, hasilkan TEPAT 2 pertanyaan lanjutan yang akan membantu owner mendapat insight bisnis yang lebih dalam atau actionable. Pertanyaan harus spesifik, berbasis data, dan relevan dengan konteks. Kembalikan HANYA 2 baris teks biasa tanpa nomor/bullet/prefix apapun.
 
-Pertanyaan: ${userQuestion.slice(0, 200)}
-Jawaban: ${aiAnswer.slice(0, 400)}
+Pertanyaan user: ${userQuestion.slice(0, 200)}
+Jawaban Krai: ${aiAnswer.slice(0, 400)}
 
 2 pertanyaan lanjutan:`;
 
@@ -343,8 +343,8 @@ export default function AIChatCore({
                         <div className={`bg-gradient-to-br from-blue-600 to-blue-400 rounded-2xl flex items-center justify-center mx-auto mb-3 ${isFloat ? 'w-10 h-10' : 'w-14 h-14'}`}>
                             <Bot className={`text-white ${isFloat ? 'w-5 h-5' : 'w-7 h-7'}`} />
                         </div>
-                        <p className={`font-semibold text-gray-800 ${isFull ? 'text-base' : 'text-sm'}`}>Krai siap membantu.</p>
-                        <p className="mt-1 text-gray-500 text-xs">Punya akses langsung ke database Kakarama Room.</p>
+                        <p className={`font-semibold text-gray-800 ${isFull ? 'text-base' : 'text-sm'}`}>Halo, saya Krai. Saya Asisten AI Kakarama Room.</p>
+                        <p className="mt-1 text-gray-500 text-xs">Tanyakan apa aja tentang laporan bisnis Kakarama Room.</p>
                     </div>
                 )}
 

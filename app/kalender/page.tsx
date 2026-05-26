@@ -1,8 +1,9 @@
 import { createServerClient } from '@/lib/supabase/server';
-import { format, subDays, addDays, startOfMonth, endOfMonth, eachDayOfInterval } from 'date-fns';
+import { format, startOfMonth, endOfMonth, eachDayOfInterval } from 'date-fns';
 import { id as idLocale } from 'date-fns/locale';
 import { toZonedTime } from 'date-fns-tz';
 import AIInsightCard from '@/components/ai/AIInsightCard';
+import { getHolidayName, isWeekend } from '@/lib/liburNasional';
 
 async function fetchCalendarData() {
     const supabase = createServerClient();
@@ -26,85 +27,168 @@ async function fetchCalendarData() {
 
     const days = eachDayOfInterval({ start: monthStart, end: monthEnd });
 
-    return { days, dayCounts, monthLabel: format(now, 'MMMM yyyy', { locale: idLocale }) };
+    return {
+        days,
+        dayCounts,
+        monthLabel: format(now, 'MMMM yyyy', { locale: idLocale }),
+    };
 }
 
 export default async function KalenderPage() {
     const { days, dayCounts, monthLabel } = await fetchCalendarData();
-    const today = format(new Date(), 'yyyy-MM-dd');
+    const timezone = 'Asia/Jakarta';
+    const today = format(toZonedTime(new Date(), timezone), 'yyyy-MM-dd');
 
-    const getIntensity = (count: number) => {
-        if (count === 0) return 'bg-gray-50';
+    const getHeatBg = (count: number, isHol: boolean, isWknd: boolean) => {
+        if (count === 0) {
+            if (isHol) return 'bg-red-50';
+            if (isWknd) return 'bg-orange-50';
+            return 'bg-gray-50';
+        }
         if (count <= 2) return 'bg-green-100';
         if (count <= 5) return 'bg-green-200';
         if (count <= 10) return 'bg-green-300';
-        return 'bg-green-500 text-white';
+        if (count <= 20) return 'bg-green-400';
+        return 'bg-green-500';
     };
 
-    // Pad start of month to align with day of week
-    const firstDayOfWeek = days[0].getDay(); // 0=Sun
+    const firstDayOfWeek = days[0].getDay(); // 0 = Sun
 
     return (
         <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50/30">
             <div className="bg-white border-b border-gray-200 px-4 sm:px-6 lg:px-8 py-4 sm:py-6">
                 <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Kalender</h1>
-                <p className="mt-1 text-sm text-gray-500">Kalender booking bulanan — {monthLabel}</p>
+                <p className="mt-1 text-sm text-gray-500 capitalize">
+                    Kalender booking bulanan — {monthLabel}
+                </p>
             </div>
 
             <main className="px-4 sm:px-6 lg:px-8 py-6 space-y-6">
                 <AIInsightCard
                     title="Insight Kalender"
-                    prompt="Analisis pola booking bulan ini: hari apa yang paling ramai, apakah ada pola weekend vs weekday, dan prediksi untuk minggu depan. Maksimal 3 kalimat."
+                    prompt="Analisis pola booking bulan ini: hari apa yang paling ramai, apakah ada pola weekend vs weekday vs libur nasional, dan prediksi untuk minggu depan. Maksimal 4 kalimat."
                 />
 
-                {/* Calendar Grid */}
-                <div className="bg-white rounded-lg border border-gray-200 p-6 shadow-sm">
+                {/* Calendar Card */}
+                <div className="bg-white rounded-xl border border-gray-200 p-4 sm:p-6 shadow-sm">
                     <h2 className="text-lg font-semibold text-gray-900 mb-4 capitalize">{monthLabel}</h2>
 
-                    {/* Day headers */}
-                    <div className="grid grid-cols-7 gap-1 mb-2">
-                        {['Min', 'Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab'].map(d => (
-                            <div key={d} className="text-center text-xs font-medium text-gray-500 py-1">{d}</div>
+                    {/* Day-of-week headers */}
+                    <div className="grid grid-cols-7 gap-1 mb-1">
+                        {['Min', 'Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab'].map((d, i) => (
+                            <div
+                                key={d}
+                                className={`text-center text-xs font-semibold py-1 ${i === 0 || i === 6 ? 'text-orange-500' : 'text-gray-500'}`}
+                            >
+                                {d}
+                            </div>
                         ))}
                     </div>
 
                     {/* Calendar cells */}
                     <div className="grid grid-cols-7 gap-1">
-                        {/* Empty cells for padding */}
+                        {/* Padding for first week */}
                         {Array.from({ length: firstDayOfWeek }).map((_, i) => (
-                            <div key={`empty-${i}`} className="aspect-square"></div>
+                            <div key={`empty-${i}`} className="aspect-square" />
                         ))}
 
                         {days.map(day => {
                             const dateStr = format(day, 'yyyy-MM-dd');
                             const count = dayCounts[dateStr] || 0;
                             const isToday = dateStr === today;
+                            const holidayName = getHolidayName(dateStr);
+                            const weekend = isWeekend(day);
+                            const dayNum = day.getDay();
+
+                            const bg = getHeatBg(count, !!holidayName, weekend);
+                            const isGreen = count > 10;
 
                             return (
                                 <div
                                     key={dateStr}
-                                    className={`aspect-square rounded-lg flex flex-col items-center justify-center text-xs transition-colors ${getIntensity(count)} ${isToday ? 'ring-2 ring-blue-500' : ''}`}
-                                    title={`${format(day, 'dd MMM')}: ${count} booking`}
+                                    className={`relative aspect-square rounded-lg flex flex-col items-center justify-center text-xs transition-colors cursor-default select-none
+                                        ${bg}
+                                        ${isToday ? 'ring-2 ring-blue-500 ring-offset-1' : ''}
+                                        ${holidayName ? 'ring-1 ring-red-300' : ''}
+                                    `}
+                                    title={[
+                                        format(day, 'EEEE, dd MMMM yyyy', { locale: idLocale }),
+                                        count > 0 ? `${count} booking` : 'Tidak ada booking',
+                                        holidayName ? `🎌 ${holidayName}` : '',
+                                    ].filter(Boolean).join('\n')}
                                 >
-                                    <span className={`font-medium ${isToday ? 'text-blue-700' : ''}`}>{format(day, 'd')}</span>
-                                    {count > 0 && <span className="text-[10px] font-bold">{count}</span>}
+                                    {/* Holiday dot indicator */}
+                                    {holidayName && (
+                                        <span className="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-red-400" />
+                                    )}
+
+                                    {/* Day number */}
+                                    <span className={`font-semibold leading-none ${isToday ? 'text-blue-700' :
+                                            holidayName ? 'text-red-600' :
+                                                weekend ? 'text-orange-600' :
+                                                    isGreen ? 'text-white' :
+                                                        'text-gray-800'
+                                        }`}>
+                                        {format(day, 'd')}
+                                    </span>
+
+                                    {/* Booking count */}
+                                    {count > 0 && (
+                                        <span className={`text-[9px] font-bold mt-0.5 leading-none ${isGreen ? 'text-white' : 'text-gray-600'}`}>
+                                            {count}
+                                        </span>
+                                    )}
                                 </div>
                             );
                         })}
                     </div>
 
                     {/* Legend */}
-                    <div className="mt-4 flex items-center gap-4 text-xs text-gray-500">
-                        <span>Sedikit</span>
-                        <div className="flex gap-1">
-                            <div className="w-4 h-4 rounded bg-gray-50 border"></div>
-                            <div className="w-4 h-4 rounded bg-green-100"></div>
-                            <div className="w-4 h-4 rounded bg-green-200"></div>
-                            <div className="w-4 h-4 rounded bg-green-300"></div>
-                            <div className="w-4 h-4 rounded bg-green-500"></div>
+                    <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-gray-500">
+                        <div className="flex items-center gap-1.5">
+                            <div className="flex gap-0.5">
+                                {['bg-gray-50', 'bg-green-100', 'bg-green-200', 'bg-green-300', 'bg-green-400', 'bg-green-500'].map(c => (
+                                    <div key={c} className={`w-3.5 h-3.5 rounded ${c} border border-gray-200`} />
+                                ))}
+                            </div>
+                            <span>Booking: kosong → ramai</span>
                         </div>
-                        <span>Banyak</span>
+                        <div className="flex items-center gap-1.5">
+                            <div className="w-3.5 h-3.5 rounded bg-red-50 ring-1 ring-red-300 relative">
+                                <span className="absolute top-0 right-0 w-1 h-1 rounded-full bg-red-400" />
+                            </div>
+                            <span>Libur nasional / cuti bersama</span>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                            <div className="w-3.5 h-3.5 rounded bg-orange-50" />
+                            <span>Weekend</span>
+                        </div>
                     </div>
+
+                    {/* Holiday list for the month */}
+                    {(() => {
+                        const thisMonthHolidays = days
+                            .map(d => ({ date: format(d, 'yyyy-MM-dd'), day: d, name: getHolidayName(format(d, 'yyyy-MM-dd')) }))
+                            .filter(h => h.name);
+
+                        if (thisMonthHolidays.length === 0) return null;
+
+                        return (
+                            <div className="mt-4 pt-4 border-t border-gray-100">
+                                <p className="text-xs font-semibold text-gray-600 mb-2">🎌 Libur Nasional Bulan Ini</p>
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                                    {thisMonthHolidays.map(h => (
+                                        <div key={h.date} className="flex items-center gap-2 text-xs">
+                                            <span className="text-gray-500 font-mono w-14 flex-shrink-0">
+                                                {format(h.day, 'dd MMM', { locale: idLocale })}
+                                            </span>
+                                            <span className="text-red-700 font-medium">{h.name}</span>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        );
+                    })()}
                 </div>
             </main>
         </div>

@@ -12,7 +12,6 @@ export default function AIChatFloat() {
     const [messages, setMessages] = useState<ChatMessage[]>([]);
     const [hasConfig, setHasConfig] = useState(false);
 
-    // Check if AI is configured whenever the bubble opens
     useEffect(() => {
         try {
             const stored = localStorage.getItem(STORAGE_KEY);
@@ -25,17 +24,28 @@ export default function AIChatFloat() {
 
     return (
         <>
-            {/* Chat Window */}
+            {/* Chat Window — full-width on mobile, fixed-width on sm+ */}
             {isOpen && (
-                <div className="fixed bottom-[5.5rem] lg:bottom-24 right-4 sm:right-6 w-[360px] sm:w-[420px] h-[540px] max-h-[calc(100vh-8rem)] bg-white rounded-2xl shadow-2xl border border-blue-200 flex flex-col z-50 overflow-hidden">
+                <div className={`
+                    fixed z-50 bg-white shadow-2xl border border-blue-200 flex flex-col overflow-hidden
+                    /* Mobile: bottom sheet — full width, anchored to bottom, max ~65vh */
+                    bottom-0 left-0 right-0 rounded-t-2xl
+                    h-[65vh] max-h-[65vh]
+                    /* Desktop: floating bubble bottom-right */
+                    sm:bottom-6 sm:right-6 sm:left-auto sm:w-[400px] sm:h-[520px] sm:max-h-[calc(100vh-5rem)] sm:rounded-2xl
+                `}>
+                    {/* Drag handle — mobile only */}
+                    <div className="flex justify-center pt-2 pb-1 sm:hidden flex-shrink-0">
+                        <div className="w-10 h-1 rounded-full bg-gray-300" />
+                    </div>
+
                     {/* Header */}
-                    <div className="flex items-center justify-between px-4 py-3 bg-gradient-to-r from-blue-600 to-blue-500 text-white flex-shrink-0">
+                    <div className="flex items-center justify-between px-4 py-2.5 bg-gradient-to-r from-blue-600 to-blue-500 text-white flex-shrink-0">
                         <div className="flex items-center gap-2">
-                            <Bot className="w-5 h-5" />
+                            <Bot className="w-4 h-4" />
                             <span className="font-semibold text-sm">Krai</span>
                         </div>
                         <div className="flex items-center gap-1">
-                            {/* Fullscreen button */}
                             <Link
                                 href="/analytics-ai/chat"
                                 className="p-1.5 hover:bg-white/20 rounded-lg transition-colors"
@@ -56,17 +66,16 @@ export default function AIChatFloat() {
                     {/* Body */}
                     <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
                         {messages.length === 0 && !hasConfig ? (
-                            <div className="flex-1 overflow-y-auto p-4 bg-slate-50">
-                                <div className="text-center py-6">
-                                    <Bot className="w-12 h-12 text-blue-300 mx-auto mb-2" />
-                                    <p className="text-sm font-medium text-gray-700">AI belum dikonfigurasi.</p>
-                                    <Link
-                                        href="/analytics-ai"
-                                        className="mt-3 inline-block text-xs text-blue-600 hover:underline"
-                                    >
-                                        Klik di sini untuk setup API key →
-                                    </Link>
-                                </div>
+                            <div className="flex-1 overflow-y-auto p-4 bg-slate-50 flex flex-col items-center justify-center text-center">
+                                <Bot className="w-10 h-10 text-blue-300 mb-2" />
+                                <p className="text-sm font-medium text-gray-700">AI belum dikonfigurasi.</p>
+                                <Link
+                                    href="/pengaturan"
+                                    className="mt-2 inline-block text-xs text-blue-600 hover:underline"
+                                    onClick={() => setIsOpen(false)}
+                                >
+                                    Setup API key di Pengaturan →
+                                </Link>
                             </div>
                         ) : (
                             <AIChatCoreFloat
@@ -78,22 +87,18 @@ export default function AIChatFloat() {
                 </div>
             )}
 
-            {/* Floating Button */}
+            {/* Floating button — bottom-right, above mobile header area */}
             <button
                 onClick={() => setIsOpen(v => !v)}
-                className={`fixed bottom-20 lg:bottom-6 right-4 sm:right-6 w-14 h-14 bg-blue-600 text-white rounded-full shadow-lg hover:shadow-xl transition-all hover:scale-110 flex items-center justify-center z-50 ${!isOpen ? 'pulse-glow' : ''}`}
-                title="Krai - AI Assistant"
+                className="fixed bottom-4 right-4 sm:bottom-6 sm:right-6 w-13 h-13 w-[52px] h-[52px] bg-blue-600 text-white rounded-full shadow-lg hover:shadow-xl transition-all hover:scale-110 flex items-center justify-center z-40"
+                title="Krai AI"
             >
-                {isOpen ? <X className="w-6 h-6" /> : <Bot className="w-7 h-7" />}
+                {isOpen ? <X className="w-5 h-5" /> : <Bot className="w-6 h-6" />}
             </button>
         </>
     );
 }
 
-/**
- * Thin wrapper that connects AIChatCore to a custom window event,
- * so other parts of the UI can inject questions without prop-drilling.
- */
 function AIChatCoreFloat({
     messages,
     onMessagesChange,
