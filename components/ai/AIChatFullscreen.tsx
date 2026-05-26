@@ -1,98 +1,151 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Bot, Minimize2, ChevronRight, ChevronDown, Settings, LayoutGrid, Brain, Menu, X } from 'lucide-react';
+import { Bot, Minimize2, ChevronRight, ChevronDown, Settings, LayoutGrid, Brain, Menu, X, Plus } from 'lucide-react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import AIChatCore, { type ChatMessage } from './AIChatCore';
 import AIChatHistorySidebar from './AIChatHistorySidebar';
 import { TEMPLATE_GROUPS, COLOR_MAP } from './chatTemplates';
 import { loadMemory } from '@/lib/ai/memory';
 import {
-    listConversations,
     getConversation,
+    getConversationWithMessages,
     createConversation,
     updateConversationMessages,
     setActiveConversation,
-    getActiveId,
+    syncFromRemote,
     type Conversation,
 } from '@/lib/ai/history';
 
-export default function AIChatFullscreen() {
+interface Props {
+    /** Conversation ID from URL param */
+    conversationId?: string;
+    /** If true, create a fresh conversation with this id */
+    forceNew?: boolean;
+}
+
+// First 2 categories: full cards with questions
+// Remaining: name-only chips linking to sidebar templates
+const WELCOME_FULL_CATEGORIES = TEMPLATE_GROUPS.slice(0, 2);
+const WELCOME_CHIP_CATEGORIES = TEMPLATE_GROUPS.slice(2);
+
+export default function AIChatFullscreen({ conversationId, forceNew }: Props) {
+    const router = useRouter();
     const [activeConv, setActiveConv] = useState<Conversation | null>(null);
     const [messages, setMessages] = useState<ChatMessage[]>([]);
     const [memoryCount, setMemoryCount] = useState(0);
     const [historyLoaded, setHistoryLoaded] = useState(false);
 
-    // Sidebar visibility
-    const [sidebarOpen, setSidebarOpen] = useState(false); // mobile drawer
-    const [templatesOpen, setTemplatesOpen] = useState(false); // templates section
+    // Sidebar
+    const [sidebarOpen, setSidebarOpen] = useState(false);
+    const [templatesOpen, setTemplatesOpen] = useState(false);
     const [activeGroup, setActiveGroup] = useState<string | null>(null);
 
-    // Init: load active conversation or create one if needed
+    // ── Init: load or create conversation ────────────────────────────────────
     useEffect(() => {
-        const list = listConversations();
-        let activeId = getActiveId();
-
-        if (!activeId || !list.find(c => c.id === activeId)) {
-            // No active or stale id — pick most recent or create new
-            if (list.length > 0) {
-                activeId = list[0].id;
-                setActiveConversation(activeId);
-            }
-        }
-
-        if (activeId) {
-            const conv = getConversation(activeId);
-            if (conv) {
-                setActiveConv(conv);
-                setMessages(conv.messages);
-            }
-        }
         setMemoryCount(loadMemory().length);
-        setHistoryLoaded(true);
-    }, []);
 
+        // Sync remote history in background on first load
+        syncFromRemote().catch(() => { });
+
+        if (!conversationId) {
+            setHistoryLoaded(true);
+            return;
+        }
+
+        try {
+            if (forceNew) {
+                const existing = getConversation(conversationId);
+                if (existing) {
+                    setActiveConv(existing);
+                    setMessages(existing.messages || []);
+                } else {
+                    const newConv = createConversation(conversationId);
+                    setActiveConv(newConv);
+                    setMessages([]);
+                }
+                setActiveConversation(conversationId);
+                setHistoryLoaded(true);
+            } else {
+                // Try local first, then fetch from Supabase if needed
+                const local = getConversation(conversationId);
+                if (local && local.messages && local.messages.length > 0) {
+                    setActiveConv(local);
+                    setMessages(local.messages);
+                    setActiveConversation(conversationId);
+                    setHistoryLoaded(true);
+                } else {
+                    // May need to load messages from Supabase
+                    const newConv = local || createConversation(conversationId);
+                    setActiveConv(newConv);
+                    setMessages([]);
+                    setActiveConversation(conversationId);
+                    setHistoryLoaded(true);
+                    // Load messages async
+                    getConversationWithMessages(conversationId)
+                        .then(full => {
+                            if (full && full.messages && full.messages.length > 0) {
+                                setActiveConv(full);
+                                setMessages(full.messages);
+                            }
+                        })
+                        .catch(err => {
+                            console.error('[AIChatFullscreen] Failed to load conversation:', err);
+                        });
+                }
+            }
+        } catch (err) {
+            console.error('[AIChatFullscreen] Init error:', err);
+            setHistoryLoaded(true);
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [conversationId, forceNew]);
+
+    // ── Message persistence ───────────────────────────────────────────────────
     const handleMessagesChange = useCallback((msgs: ChatMessage[]) => {
         setMessages(msgs);
-        // Persist to active conversation, creating one if needed
-        if (msgs.length === 0) return;
-        let convId = activeConv?.id;
-        if (!convId) {
-            const newConv = createConversation();
-            setActiveConv(newConv);
-            convId = newConv.id;
+        if (!msgs || msgs.length === 0) return;
+        const convId = activeConv?.id;
+        if (!convId) return;
+        try {
+            updateConversationMessages(convId, msgs);
+        } catch (err) {
+            console.error('[AIChatFullscreen] Failed to update messages:', err);
         }
-        updateConversationMessages(convId, msgs);
     }, [activeConv]);
 
+    // ── Navigation to a conversation ─────────────────────────────────────────
     const handleSelectConversation = (id: string) => {
-        const conv = getConversation(id);
-        if (conv) {
-            setActiveConv(conv);
-            setMessages(conv.messages);
-            setActiveConversation(id);
-            setSidebarOpen(false); // close mobile drawer
-        }
-    };
-
-    const handleNewConversation = () => {
-        const conv = createConversation();
-        setActiveConv(conv);
-        setMessages([]);
-        setActiveConversation(conv.id);
+        router.push(`/chat/${id}`);
         setSidebarOpen(false);
     };
 
+    const handleNewConversation = () => {
+        const newId = crypto.randomUUID().replace(/-/g, '').slice(0, 16);
+        router.push(`/chat/${newId}?new=1`);
+        setSidebarOpen(false);
+    };
+
+    // ── Templates ─────────────────────────────────────────────────────────────
     const handleTemplateClick = (question: string) => {
-        // Inject into the chat core (fills input, doesn't send)
         window.dispatchEvent(new CustomEvent('ai-chat-send', { detail: question }));
         setSidebarOpen(false);
     };
 
+    /** Open sidebar + expand all templates */
+    const handleViewAllTemplates = () => {
+        setSidebarOpen(true);
+        setTemplatesOpen(true);
+        // Expand all groups
+        TEMPLATE_GROUPS.forEach(g => setActiveGroup(g.id));
+    };
+
+    // ── Sidebar content ───────────────────────────────────────────────────────
     const sidebarContent = (
-        <div className="h-full flex flex-col">
+        <div className="h-full flex flex-col overflow-hidden">
             {/* Templates section — collapsible */}
-            <div className="border-b border-gray-200">
+            <div className="border-b border-gray-200 flex-shrink-0">
                 <button
                     onClick={() => setTemplatesOpen(v => !v)}
                     className="w-full flex items-center gap-2 px-3 py-2.5 text-left hover:bg-gray-50 transition-colors"
@@ -105,7 +158,7 @@ export default function AIChatFullscreen() {
                 </button>
 
                 {templatesOpen && (
-                    <div className="max-h-72 overflow-y-auto px-2 pb-2 space-y-0.5">
+                    <div className="max-h-64 overflow-y-auto px-2 pb-2 space-y-0.5">
                         {TEMPLATE_GROUPS.map(group => {
                             const colors = COLOR_MAP[group.color];
                             const isOpen = activeGroup === group.id;
@@ -141,8 +194,8 @@ export default function AIChatFullscreen() {
                 )}
             </div>
 
-            {/* Chat history — fills remaining space */}
-            <div className="flex-1 min-h-0">
+            {/* Chat history */}
+            <div className="flex-1 min-h-0 overflow-hidden">
                 <AIChatHistorySidebar
                     activeId={activeConv?.id ?? null}
                     onSelect={handleSelectConversation}
@@ -151,55 +204,58 @@ export default function AIChatFullscreen() {
             </div>
 
             {/* Footer */}
-            <div className="px-2 py-2 border-t border-gray-200">
+            <div className="px-2 py-2 border-t border-gray-200 flex-shrink-0">
                 <Link
                     href="/pengaturan"
                     className="flex items-center gap-1.5 px-2 py-1.5 text-[11px] text-gray-500 hover:bg-gray-50 rounded-lg transition-colors"
                 >
                     <Settings className="w-3 h-3" />
-                    Pengaturan AI
+                    Pengaturan Krai
                 </Link>
             </div>
         </div>
     );
 
+    // ── Render ────────────────────────────────────────────────────────────────
     return (
         <div className="flex h-full overflow-hidden bg-white">
-            {/* ── Sidebar — desktop fixed, mobile drawer ───────────────── */}
             {/* Desktop sidebar */}
-            <aside className="hidden md:flex flex-shrink-0 w-64 border-r border-gray-200 bg-gray-50/80 flex-col">
+            <aside className="hidden md:flex flex-shrink-0 w-64 border-r border-gray-200 bg-gray-50/80 flex-col overflow-hidden">
                 {sidebarContent}
             </aside>
 
-            {/* Mobile drawer */}
+            {/* Mobile sidebar drawer */}
             <div
-                className={`md:hidden fixed inset-0 z-50 transition-opacity ${sidebarOpen ? 'pointer-events-auto opacity-100' : 'pointer-events-none opacity-0'}`}
+                className={`md:hidden fixed inset-0 z-50 transition-opacity duration-200 ${sidebarOpen ? 'pointer-events-auto opacity-100' : 'pointer-events-none opacity-0'}`}
             >
                 <div className="absolute inset-0 bg-black/40" onClick={() => setSidebarOpen(false)} />
                 <aside
-                    className={`absolute inset-y-0 left-0 w-72 bg-white border-r border-gray-200 shadow-xl transform transition-transform ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}
+                    className={`absolute inset-y-0 left-0 w-[min(72vw,280px)] flex flex-col bg-white border-r border-gray-200 shadow-xl transform transition-transform duration-200 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}
                 >
-                    <div className="flex items-center justify-between px-3 py-2 border-b border-gray-200">
-                        <span className="text-sm font-semibold text-gray-800">Krai</span>
+                    <div className="flex items-center justify-between px-3 py-2.5 border-b border-gray-200 flex-shrink-0">
+                        <span className="text-sm font-semibold text-gray-800 flex items-center gap-1.5">
+                            <Bot className="w-4 h-4 text-blue-600" /> Krai
+                        </span>
                         <button onClick={() => setSidebarOpen(false)} className="p-1 hover:bg-gray-100 rounded">
                             <X className="w-4 h-4 text-gray-600" />
                         </button>
                     </div>
-                    <div className="h-[calc(100%-40px)]">
+                    <div className="flex-1 min-h-0 overflow-hidden">
                         {sidebarContent}
                     </div>
                 </aside>
             </div>
 
-            {/* ── Main chat area ───────────────────────────────────────── */}
+            {/* Main area */}
             <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
                 {/* Top bar */}
                 <div className="flex items-center justify-between px-3 py-2 border-b border-gray-100 bg-white flex-shrink-0">
                     <div className="flex items-center gap-2 min-w-0">
+                        {/* Mobile: toggle sidebar */}
                         <button
                             onClick={() => setSidebarOpen(true)}
-                            className="md:hidden p-1.5 rounded-lg hover:bg-gray-100 text-gray-600"
-                            aria-label="Toggle sidebar"
+                            className="md:hidden p-1.5 rounded-lg hover:bg-gray-100 text-gray-600 flex-shrink-0"
+                            aria-label="Buka sidebar"
                         >
                             <Menu className="w-4 h-4" />
                         </button>
@@ -210,9 +266,11 @@ export default function AIChatFullscreen() {
                             </div>
                             <div className="min-w-0">
                                 <p className="text-sm font-bold text-gray-900 leading-tight truncate">
-                                    {activeConv?.title || 'Krai'}
+                                    {activeConv?.title && activeConv.title !== 'Percakapan baru'
+                                        ? activeConv.title
+                                        : 'Krai'}
                                 </p>
-                                <p className="text-[10px] text-gray-400 leading-tight truncate hidden sm:block">
+                                <p className="text-[10px] text-gray-400 leading-tight hidden sm:block">
                                     Kakarama AI Assistant
                                 </p>
                             </div>
@@ -226,6 +284,15 @@ export default function AIChatFullscreen() {
                                 {memoryCount}
                             </span>
                         )}
+                        {/* New chat button */}
+                        <button
+                            onClick={handleNewConversation}
+                            className="p-1.5 text-gray-500 hover:bg-gray-100 rounded-lg transition-colors"
+                            title="Chat baru"
+                            aria-label="Buat chat baru"
+                        >
+                            <Plus className="w-4 h-4" />
+                        </button>
                         <Link
                             href="/dashboard"
                             className="flex items-center gap-1 px-2 py-1.5 text-xs text-gray-500 hover:bg-gray-100 rounded-lg transition-colors"
@@ -237,34 +304,39 @@ export default function AIChatFullscreen() {
                     </div>
                 </div>
 
-                {/* Welcome state */}
+                {/* Welcome state — only when no messages */}
                 {historyLoaded && messages.length === 0 && (
-                    <div className="overflow-y-auto flex-shrink-0">
-                        <div className="max-w-3xl mx-auto px-4 pt-6 pb-3">
-                            <div className="text-center mb-5">
-                                <div className="w-14 h-14 bg-gradient-to-br from-blue-600 to-blue-400 rounded-2xl flex items-center justify-center mx-auto mb-3">
-                                    <Bot className="w-8 h-8 text-white" />
+                    <div className="flex-shrink-0 overflow-y-auto">
+                        <div className="max-w-2xl mx-auto px-4 pt-8 pb-4 flex flex-col items-center">
+                            {/* Branding */}
+                            <div className="text-center mb-6">
+                                <div className="w-16 h-16 bg-gradient-to-br from-blue-600 to-blue-400 rounded-2xl flex items-center justify-center mx-auto mb-3 shadow-lg">
+                                    <Bot className="w-9 h-9 text-white" />
                                 </div>
-                                <h2 className="text-lg font-bold text-gray-900">Halo, saya Krai!</h2>
-                                <p className="text-xs text-gray-500 mt-0.5 max-w-md mx-auto">
-                                    Asisten AI analitik Kakarama Room. Tanyakan apa saja tentang data bisnis.
+                                <h1 className="text-xl sm:text-2xl font-bold text-gray-900">Halo, saya Krai!</h1>
+                                <p className="text-sm text-gray-500 mt-1.5 max-w-sm mx-auto leading-relaxed">
+                                    Saya adalah asisten AI Kakarama Room yang dilatih khusus membantu menganalisa data laporan bisnis Kakarama Room.
                                 </p>
                             </div>
 
-                            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
-                                {TEMPLATE_GROUPS.slice(0, 6).map(group => {
+                            {/* 2 full category cards */}
+                            <div className="w-full grid grid-cols-1 sm:grid-cols-2 gap-2.5 mb-3">
+                                {WELCOME_FULL_CATEGORIES.map(group => {
                                     const colors = COLOR_MAP[group.color];
                                     return (
-                                        <div key={group.id} className={`rounded-xl border ${colors.border} p-2.5`}>
-                                            <p className={`text-xs font-semibold ${colors.text} mb-1`}>
+                                        <div
+                                            key={group.id}
+                                            className={`rounded-xl border ${colors.border} bg-white hover:shadow-sm transition-shadow p-3`}
+                                        >
+                                            <p className={`text-xs font-semibold ${colors.text} mb-2`}>
                                                 {group.emoji} {group.label}
                                             </p>
-                                            <div className="space-y-1">
+                                            <div className="space-y-1.5">
                                                 {group.questions.slice(0, 2).map((q, qi) => (
                                                     <button
                                                         key={qi}
                                                         onClick={() => handleTemplateClick(q)}
-                                                        className={`w-full text-left text-[11px] px-2 py-1.5 ${colors.bg} ${colors.hover} rounded-lg ${colors.text} transition-colors flex items-start gap-1 leading-snug`}
+                                                        className={`w-full text-left text-xs px-2.5 py-2 ${colors.bg} ${colors.hover} rounded-lg ${colors.text} transition-colors flex items-start gap-1.5 leading-snug`}
                                                     >
                                                         <ChevronRight className="w-3 h-3 flex-shrink-0 mt-0.5" />
                                                         <span>{q}</span>
@@ -275,6 +347,32 @@ export default function AIChatFullscreen() {
                                     );
                                 })}
                             </div>
+
+                            {/* Remaining categories — name chips → open sidebar */}
+                            <div className="flex flex-wrap gap-1.5 mb-4 justify-center">
+                                {WELCOME_CHIP_CATEGORIES.map(group => {
+                                    const colors = COLOR_MAP[group.color];
+                                    return (
+                                        <button
+                                            key={group.id}
+                                            onClick={handleViewAllTemplates}
+                                            className={`flex items-center gap-1 px-3 py-1.5 rounded-full border ${colors.border} ${colors.bg} ${colors.text} ${colors.hover} text-xs font-medium transition-colors`}
+                                        >
+                                            <span>{group.emoji}</span>
+                                            <span>{group.label}</span>
+                                        </button>
+                                    );
+                                })}
+                            </div>
+
+                            {/* View all templates link */}
+                            <button
+                                onClick={handleViewAllTemplates}
+                                className="text-sm text-blue-600 hover:text-blue-700 font-medium hover:underline flex items-center gap-1"
+                            >
+                                <LayoutGrid className="w-3.5 h-3.5" />
+                                Lihat semua template →
+                            </button>
                         </div>
                     </div>
                 )}

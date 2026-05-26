@@ -1,26 +1,24 @@
 'use client';
 
-import { useState, useCallback } from 'react';
-import MobileHeader from '@/components/layout/MobileHeader';
+import { useState } from 'react';
 import Sidebar from '@/components/layout/Sidebar';
 
-/**
- * MobileNavController
- *
- * Client component that owns the mobile sidebar open/close state.
- * Renders both the MobileHeader (mobile-only sticky top bar) and
- * the Sidebar (desktop fixed + mobile overlay).
- */
-export default function MobileNavController() {
+interface Props {
+    userEmail?: string | null;
+}
+
+export default function MobileNavController({ userEmail }: Props) {
     const [isMobileOpen, setIsMobileOpen] = useState(false);
 
-    const handleOpen = useCallback(() => setIsMobileOpen(true), []);
-    const handleClose = useCallback(() => setIsMobileOpen(false), []);
+    if (typeof window !== 'undefined') {
+        (window as any).__krOpenMobileSidebar = () => setIsMobileOpen(true);
+    }
 
     return (
-        <>
-            <MobileHeader onOpenSidebar={handleOpen} />
-            <Sidebar isMobileOpen={isMobileOpen} onClose={handleClose} />
-        </>
+        <Sidebar
+            isMobileOpen={isMobileOpen}
+            onClose={() => setIsMobileOpen(false)}
+            userEmail={userEmail}
+        />
     );
 }

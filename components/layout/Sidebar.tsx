@@ -15,11 +15,13 @@ import {
     X,
     ChevronLeft,
     ChevronRight,
+    LogOut,
 } from 'lucide-react';
 
 interface SidebarProps {
     isMobileOpen?: boolean;
     onClose?: () => void;
+    userEmail?: string | null;
 }
 
 const MENU_ITEMS = [
@@ -29,7 +31,7 @@ const MENU_ITEMS = [
     { label: 'Unit', href: '/unit', icon: Building },
     { label: 'Customer', href: '/customer', icon: Users },
     { label: 'Laporan', href: '/laporan', icon: Wallet },
-    { label: 'AI Chat', href: '/analytics-ai', icon: Brain },
+    { label: 'AI Chat', href: '/chat', icon: Brain },
     { label: 'Pengaturan', href: '/pengaturan', icon: Settings },
 ];
 
@@ -42,7 +44,29 @@ function writeCollapsed(v: boolean) {
     try { localStorage.setItem(COLLAPSED_KEY, v ? '1' : '0'); } catch { }
 }
 
-export default function Sidebar({ isMobileOpen = false, onClose }: SidebarProps) {
+function LogoutButton() {
+    const handleLogout = async () => {
+        const { createClient } = await import('@supabase/supabase-js');
+        const supabase = createClient(
+            process.env.NEXT_PUBLIC_SUPABASE_URL!,
+            process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+        );
+        await supabase.auth.signOut();
+        window.location.href = '/login';
+    };
+
+    return (
+        <button
+            onClick={handleLogout}
+            className="flex items-center gap-2 w-full rounded-lg px-2 py-1.5 text-xs text-red-500 hover:bg-red-50 hover:text-red-700 transition-colors"
+        >
+            <LogOut className="w-3.5 h-3.5" />
+            <span>Keluar</span>
+        </button>
+    );
+}
+
+export default function Sidebar({ isMobileOpen = false, onClose, userEmail }: SidebarProps) {
     const pathname = usePathname();
     const [collapsed, setCollapsed] = useState<boolean>(() => {
         if (typeof window !== 'undefined') return readCollapsed();
@@ -110,22 +134,25 @@ export default function Sidebar({ isMobileOpen = false, onClose }: SidebarProps)
             {!collapsed && (
                 <div className="border-t border-gray-200 p-3">
                     <div className="flex items-center gap-3 px-2 py-1.5 mb-2">
-                        <div className="w-7 h-7 bg-gray-200 rounded-full flex items-center justify-center flex-shrink-0">
-                            <Users className="w-4 h-4 text-gray-600" />
+                        <div className="w-7 h-7 bg-blue-100 rounded-full flex items-center justify-center flex-shrink-0">
+                            <Users className="w-4 h-4 text-blue-600" />
                         </div>
                         <div className="flex-1 min-w-0">
-                            <p className="text-xs font-medium text-gray-900 truncate">Admin</p>
-                            <p className="text-[11px] text-gray-500 truncate">admin@kakarama.com</p>
+                            <p className="text-xs font-medium text-gray-900 truncate">Super Admin</p>
+                            <p className="text-[11px] text-gray-500 truncate">{userEmail || '—'}</p>
                         </div>
                     </div>
-                    <button
-                        onClick={toggleCollapsed}
-                        title="Ciutkan sidebar"
-                        className="flex items-center gap-2 w-full rounded-lg px-2 py-1.5 text-xs text-gray-500 hover:bg-gray-100 hover:text-gray-700 transition-colors"
-                    >
-                        <ChevronLeft className="w-4 h-4" />
-                        <span>Ciutkan</span>
-                    </button>
+                    <div className="flex items-center gap-1">
+                        <LogoutButton />
+                        <button
+                            onClick={toggleCollapsed}
+                            title="Ciutkan sidebar"
+                            className="flex items-center gap-1 rounded-lg px-2 py-1.5 text-xs text-gray-500 hover:bg-gray-100 hover:text-gray-700 transition-colors ml-auto"
+                        >
+                            <ChevronLeft className="w-4 h-4" />
+                            <span>Ciutkan</span>
+                        </button>
+                    </div>
                 </div>
             )}
 
@@ -195,15 +222,16 @@ export default function Sidebar({ isMobileOpen = false, onClose }: SidebarProps)
                 </nav>
 
                 <div className="px-3 py-3 border-t border-gray-200">
-                    <div className="flex items-center gap-3 px-2 py-1.5">
-                        <div className="w-7 h-7 bg-gray-200 rounded-full flex items-center justify-center flex-shrink-0">
-                            <Users className="w-4 h-4 text-gray-600" />
+                    <div className="flex items-center gap-3 px-2 py-1.5 mb-2">
+                        <div className="w-7 h-7 bg-blue-100 rounded-full flex items-center justify-center flex-shrink-0">
+                            <Users className="w-4 h-4 text-blue-600" />
                         </div>
                         <div className="flex-1 min-w-0">
-                            <p className="text-xs font-medium text-gray-900 truncate">Admin</p>
-                            <p className="text-[11px] text-gray-500 truncate">admin@kakarama.com</p>
+                            <p className="text-xs font-medium text-gray-900 truncate">Super Admin</p>
+                            <p className="text-[11px] text-gray-500 truncate">{userEmail || '—'}</p>
                         </div>
                     </div>
+                    <LogoutButton />
                 </div>
             </aside>
         </div>

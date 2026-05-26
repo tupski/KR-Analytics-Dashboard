@@ -11,7 +11,6 @@ import {
     listConversations,
     deleteConversation,
     renameConversation,
-    createConversation,
     setActiveConversation,
     type Conversation,
 } from '@/lib/ai/history';
@@ -67,9 +66,9 @@ export default function AIChatHistorySidebar({ activeId, onSelect, onNew }: Prop
     };
 
     const handleNew = () => {
-        const conv = createConversation();
-        setActiveConversation(conv.id);
+        const newId = crypto.randomUUID().replace(/-/g, '').slice(0, 16);
         onNew();
+        // Navigation is handled by parent via router.push in AIChatFullscreen
     };
 
     return (

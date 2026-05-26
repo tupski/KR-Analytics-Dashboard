@@ -126,6 +126,45 @@ export function setThinkingMode(mode: ThinkingMode) {
     saveConfig(cfg);
 }
 
+/**
+ * Add a custom model to a provider's model list.
+ * Used when user tests a custom model name and it works.
+ */
+export function addCustomModel(providerId: ProviderId, model: { id: string; label: string; inputPrice: number; outputPrice: number; capabilities: any }) {
+    // This is stored in a separate key to persist custom models
+    const CUSTOM_MODELS_KEY = 'kr-ai-custom-models';
+    try {
+        const raw = localStorage.getItem(CUSTOM_MODELS_KEY);
+        const customModels: Record<string, any[]> = raw ? JSON.parse(raw) : {};
+        if (!customModels[providerId]) {
+            customModels[providerId] = [];
+        }
+        // Check if already exists
+        const exists = customModels[providerId].some((m: any) => m.id === model.id);
+        if (!exists) {
+            customModels[providerId].push(model);
+            localStorage.setItem(CUSTOM_MODELS_KEY, JSON.stringify(customModels));
+            // Trigger models reload
+            window.dispatchEvent(new Event('kr-ai-models-changed'));
+        }
+    } catch { }
+}
+
+/**
+ * Get custom models for a provider
+ */
+export function getCustomModels(providerId: ProviderId): any[] {
+    const CUSTOM_MODELS_KEY = 'kr-ai-custom-models';
+    try {
+        const raw = localStorage.getItem(CUSTOM_MODELS_KEY);
+        if (!raw) return [];
+        const customModels: Record<string, any[]> = JSON.parse(raw);
+        return customModels[providerId] || [];
+    } catch {
+        return [];
+    }
+}
+
 /** List of providers that have an API key configured */
 export function configuredProviders(): ProviderId[] {
     const cfg = loadConfig();

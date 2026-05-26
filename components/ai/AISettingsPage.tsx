@@ -1,13 +1,15 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Brain, Key, Server, Check, AlertCircle, ExternalLink, Eye, Lightbulb, Wrench, Zap, DollarSign, Trash2 } from 'lucide-react';
+import { Brain, Key, Server, Check, AlertCircle, ExternalLink, Eye, Lightbulb, Wrench, Zap, DollarSign, Trash2, Clock, Plus, Copy } from 'lucide-react';
 import { PROVIDERS, priceTier, allModelsSorted, type ProviderId, type ModelInfo } from '@/lib/ai/models';
 import {
     loadConfig,
     setProviderConfig,
     removeProvider,
     setActive,
+    addCustomModel,
+    getCustomModels,
     type MultiAIConfig,
 } from '@/lib/ai/config';
 
@@ -43,12 +45,18 @@ export default function AISettingsPage() {
     const [saved, setSaved] = useState<string | null>(null);
     const [testing, setTesting] = useState(false);
     const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
+    // Custom model
+    const [customModelName, setCustomModelName] = useState('');
+    const [testingCustom, setTestingCustom] = useState(false);
+    // Retention settings
+    const [retentionDays, setRetentionDays] = useState(30);
+    const [retentionSaved, setRetentionSaved] = useState(false);
+    const [pruning, setPruning] = useState(false);
+    const [pruneResult, setPruneResult] = useState<string | null>(null);
 
-    // Load config on mount
     useEffect(() => {
         const cfg = loadConfig();
         setConfig(cfg);
-        // Pre-select first configured provider, or default to deepseek
         const firstConfigured = (Object.keys(cfg.providers) as ProviderId[])[0];
         if (firstConfigured) {
             setActiveProviderId(firstConfigured);
@@ -59,15 +67,52 @@ export default function AISettingsPage() {
                 setDraftBaseUrl(c.baseUrl || '');
             }
         }
+        // Load retention days from Supabase
+        fetch('/api/krai/history?action=settings')
+            .then(r => r.json())
+            .then(data => { if (data.retentionDays) setRetentionDays(data.retentionDays); })
+            .catch(() => { });
     }, []);
+
+    const handleSaveRetention = async () => {
+        await fetch('/api/krai/history', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'save_settings', retentionDays }),
+        });
+        setRetentionSaved(true);
+        setTimeout(() => setRetentionSaved(false), 2000);
+    };
+
+    const handlePruneNow = async () => {
+        setPruning(true);
+        setPruneResult(null);
+        try {
+            const res = await fetch('/api/krai/history', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: 'prune' }),
+            });
+            const data = await res.json();
+            setPruneResult(`${data.deleted ?? 0} percakapan lama dihapus.`);
+        } catch {
+            setPruneResult('Gagal menjalankan pembersihan.');
+        } finally {
+            setPruning(false);
+        }
+    };
 
     if (!config) return null;
 
     const provider = PROVIDERS.find(p => p.id === activeProviderId);
     if (!provider) return null;
 
+    // Merge provider models with custom models
+    const customModels = getCustomModels(activeProviderId);
+    const allModels = [...provider.models, ...customModels];
+
     const isConfigured = !!config.providers[activeProviderId]?.apiKey;
-    const selectedModel = provider.models.find(m => m.id === draftModel);
+    const selectedModel = allModels.find(m => m.id === draftModel);
 
     const handleProviderTab = (id: ProviderId) => {
         setActiveProviderId(id);
@@ -134,6 +179,48 @@ export default function AISettingsPage() {
             setTestResult({ success: false, message: err.message });
         } finally {
             setTesting(false);
+        }
+    };
+
+    const handleTestCustomModel = async () => {
+        if (!draftKey.trim() || !customModelName.trim()) return;
+        setTestingCustom(true);
+        setTestResult(null);
+        try {
+            const res = await fetch('/api/ai/chat', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    messages: [{ role: 'user', content: 'Halo, balas singkat dengan satu kalimat saja.' }],
+                    config: {
+                        provider: activeProviderId,
+                        apiKey: draftKey.trim(),
+                        model: customModelName.trim(),
+                        baseUrl: draftBaseUrl.trim() || undefined,
+                    },
+                }),
+            });
+            const data = await res.json();
+            if (res.ok) {
+                // Success — add to provider models
+                addCustomModel(activeProviderId, {
+                    id: customModelName.trim(),
+                    label: customModelName.trim(),
+                    inputPrice: 0,
+                    outputPrice: 0,
+                    capabilities: { vision: false, reasoning: false, tools: true, fast: false },
+                });
+                setDraftModel(customModelName.trim());
+                setCustomModelName('');
+                setConfig(loadConfig());
+                setTestResult({ success: true, message: `Model "${customModelName.trim()}" berhasil ditambahkan!` });
+            } else {
+                setTestResult({ success: false, message: data.error || 'Gagal terhubung' });
+            }
+        } catch (err: any) {
+            setTestResult({ success: false, message: err.message });
+        } finally {
+            setTestingCustom(false);
         }
     };
 
@@ -234,38 +321,43 @@ export default function AISettingsPage() {
                         </div>
                     )}
 
-                    {/* Model picker */}
-                    {provider.models.length > 0 && (
+                    {/* Model picker — compact cards like 9router */}
+                    {allModels.length > 0 && (
                         <div>
-                            <label className="block text-xs font-medium text-gray-700 mb-1">
+                            <label className="block text-xs font-medium text-gray-700 mb-1.5">
                                 Model <span className="text-gray-400 font-normal">(termurah → termahal)</span>
                             </label>
-                            <div className="space-y-1.5">
-                                {provider.models.map(m => {
-                                    const tier = priceTier(m.inputPrice);
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                {allModels.map(m => {
                                     const isSelected = draftModel === m.id;
                                     return (
                                         <button
                                             key={m.id}
                                             onClick={() => setDraftModel(m.id)}
-                                            className={`w-full text-left p-3 rounded-lg border transition-colors ${isSelected
+                                            className={`relative text-left px-3 py-2 rounded-lg border transition-all group ${isSelected
                                                 ? 'border-blue-500 bg-blue-50/50 ring-1 ring-blue-500'
                                                 : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
                                                 }`}
                                         >
                                             <div className="flex items-start justify-between gap-2 mb-1">
-                                                <span className="font-medium text-gray-900 text-sm">{m.label}</span>
-                                                <span className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full border text-[10px] font-medium ${tier.cls} flex-shrink-0`}>
-                                                    {tier.label}
-                                                </span>
+                                                <span className="font-medium text-gray-900 text-xs leading-tight">{m.label}</span>
+                                                <button
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        navigator.clipboard.writeText(m.id);
+                                                    }}
+                                                    className="opacity-0 group-hover:opacity-100 p-0.5 hover:bg-gray-200 rounded transition-opacity"
+                                                    title="Copy model ID"
+                                                >
+                                                    <Copy className="w-3 h-3 text-gray-500" />
+                                                </button>
                                             </div>
-                                            <div className="flex items-center gap-2 flex-wrap">
-                                                <CapabilityBadges caps={m.capabilities} />
-                                                <span className="text-[10px] text-gray-400 ml-auto">
-                                                    {fmtPrice(m.inputPrice)} in / {fmtPrice(m.outputPrice)} out per 1M
-                                                </span>
+                                            <div className="flex items-center gap-1.5 flex-wrap mb-1">
+                                                <CapabilityBadges caps={m.capabilities} size="xs" />
                                             </div>
-                                            {m.notes && <p className="text-[10px] text-gray-500 mt-1 italic">{m.notes}</p>}
+                                            <div className="text-[9px] text-gray-400 font-mono">
+                                                {fmtPrice(m.inputPrice)} in · {fmtPrice(m.outputPrice)} out
+                                            </div>
                                         </button>
                                     );
                                 })}
@@ -274,7 +366,7 @@ export default function AISettingsPage() {
                     )}
 
                     {/* Custom model name for openai-compatible */}
-                    {provider.models.length === 0 && (
+                    {allModels.length === 0 && (
                         <div>
                             <label className="block text-xs font-medium text-gray-700 mb-1">Nama Model</label>
                             <input
@@ -284,6 +376,40 @@ export default function AISettingsPage() {
                                 placeholder="contoh: llama-3.1-70b"
                                 className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
                             />
+                        </div>
+                    )}
+
+                    {/* Add custom model — for providers with models */}
+                    {allModels.length > 0 && (
+                        <div className="pt-2 border-t border-gray-100">
+                            <label className="block text-xs font-medium text-gray-700 mb-1.5">
+                                <Plus className="w-3 h-3 inline mr-1" />
+                                Tambah Model Custom
+                            </label>
+                            <div className="flex gap-2">
+                                <input
+                                    type="text"
+                                    value={customModelName}
+                                    onChange={e => setCustomModelName(e.target.value)}
+                                    placeholder="Nama model (contoh: kr/claude-haiku-4.5)"
+                                    className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                                    onKeyDown={e => { if (e.key === 'Enter') handleTestCustomModel(); }}
+                                />
+                                <button
+                                    onClick={handleTestCustomModel}
+                                    disabled={!customModelName.trim() || !draftKey.trim() || testingCustom}
+                                    className="px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700 transition-colors disabled:opacity-50 flex-shrink-0"
+                                >
+                                    {testingCustom ? (
+                                        <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                                    ) : (
+                                        'Test & Tambah'
+                                    )}
+                                </button>
+                            </div>
+                            <p className="text-[10px] text-gray-500 mt-1">
+                                Masukkan nama model, lalu klik &quot;Test & Tambah&quot;. Jika valid, model akan otomatis muncul di pilihan.
+                            </p>
                         </div>
                     )}
 
@@ -395,6 +521,64 @@ export default function AISettingsPage() {
                     <li>Mode <strong>Thinking</strong> akan otomatis pakai model dengan kemampuan reasoning (jika tersedia).</li>
                     <li>Mode <strong>Instant</strong> akan pakai model paling cepat & murah.</li>
                 </ul>
+            </div>
+
+            {/* ── Pengaturan Krai: Chat History ── */}
+            <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 space-y-4">
+                <h2 className="text-base font-semibold text-gray-900 flex items-center gap-2">
+                    <Clock className="w-4 h-4 text-blue-600" />
+                    Riwayat Chat Krai
+                </h2>
+                <p className="text-xs text-gray-500">
+                    Riwayat percakapan disimpan ke database Supabase. Percakapan yang lebih lama dari batas yang ditentukan akan otomatis dihapus.
+                </p>
+
+                <div className="flex items-center gap-4">
+                    <div className="flex-1">
+                        <label className="block text-xs font-medium text-gray-700 mb-1">
+                            Simpan riwayat selama
+                        </label>
+                        <div className="flex items-center gap-3">
+                            <input
+                                type="range"
+                                min={1}
+                                max={365}
+                                value={retentionDays}
+                                onChange={e => setRetentionDays(Number(e.target.value))}
+                                className="flex-1 accent-blue-600"
+                            />
+                            <span className="text-sm font-semibold text-gray-900 w-20 text-right">
+                                {retentionDays} hari
+                            </span>
+                        </div>
+                        <div className="flex justify-between text-[10px] text-gray-400 mt-0.5">
+                            <span>1 hari</span>
+                            <span>1 tahun</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2">
+                    <button
+                        onClick={handleSaveRetention}
+                        className="inline-flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors"
+                    >
+                        {retentionSaved ? <Check className="w-4 h-4" /> : <Clock className="w-4 h-4" />}
+                        {retentionSaved ? 'Tersimpan' : 'Simpan Pengaturan'}
+                    </button>
+                    <button
+                        onClick={handlePruneNow}
+                        disabled={pruning}
+                        className="inline-flex items-center gap-1.5 px-4 py-2 border border-red-200 text-red-600 rounded-lg text-sm font-medium hover:bg-red-50 transition-colors disabled:opacity-50"
+                    >
+                        <Trash2 className="w-4 h-4" />
+                        {pruning ? 'Membersihkan...' : 'Bersihkan Sekarang'}
+                    </button>
+                </div>
+
+                {pruneResult && (
+                    <p className="text-xs text-gray-600 bg-gray-50 rounded px-3 py-2">{pruneResult}</p>
+                )}
             </div>
         </div>
     );

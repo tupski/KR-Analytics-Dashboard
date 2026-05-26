@@ -64,68 +64,16 @@ function LoadingBubble({ thinking }: { thinking?: boolean }) {
     );
 }
 
-// ── Typing animation — per-word with rAF, light on CPU ───────────────────────
-//
-// Strategy:
-// 1. Split content into words (preserve whitespace/newlines as tokens)
-// 2. Use requestAnimationFrame to batch-reveal words — no setInterval
-// 3. Each rAF tick appends CHUNK_SIZE words at once → fewer state updates
-// 4. Auto-scroll only every SCROLL_EVERY ticks
+// ── Opsi A: Direct render with CSS fade-in, zero animation overhead ─────────
+// No typing loop, no rAF, no setInterval.
+// Response appears instantly with a subtle fade-in — same as Claude/Gemini.
 
-const CHUNK_SIZE = 3;      // words per rAF tick  (increase = faster & lighter)
-const SCROLL_EVERY = 20;   // scroll every N ticks (reduce scroll jank)
-
-function TypingMessage({
-    content,
-    onDone,
-    scrollRef,
-}: {
-    content: string;
-    onDone: () => void;
-    scrollRef: React.RefObject<HTMLDivElement | null>;
-}) {
-    const [displayed, setDisplayed] = useState('');
-    const [done, setDone] = useState(false);
-    const rafRef = useRef<number>(0);
-    const wordIdxRef = useRef(0);
-    const tickRef = useRef(0);
-
-    useEffect(() => {
-        // Tokenise: split on whitespace but keep the whitespace chars as tokens
-        const tokens = content.split(/(\s+)/);
-        wordIdxRef.current = 0;
-        tickRef.current = 0;
-        setDisplayed('');
-        setDone(false);
-
-        const tick = () => {
-            if (wordIdxRef.current >= tokens.length) {
-                setDone(true);
-                onDone();
-                return;
-            }
-
-            // Append CHUNK_SIZE tokens at once
-            const end = Math.min(wordIdxRef.current + CHUNK_SIZE, tokens.length);
-            const slice = tokens.slice(0, end).join('');
-            wordIdxRef.current = end;
-            tickRef.current++;
-
-            setDisplayed(slice);
-
-            if (tickRef.current % SCROLL_EVERY === 0) {
-                scrollRef.current?.scrollIntoView({ behavior: 'smooth' });
-            }
-
-            rafRef.current = requestAnimationFrame(tick);
-        };
-
-        rafRef.current = requestAnimationFrame(tick);
-        return () => cancelAnimationFrame(rafRef.current);
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [content]);
-
-    return <MarkdownRenderer content={displayed} partial={!done} />;
+function AssistantMessage({ content }: { content: string }) {
+    return (
+        <div className="animate-fade-in">
+            <MarkdownRenderer content={content} />
+        </div>
+    );
 }
 
 // ── API ──────────────────────────────────────────────────────────────────────
@@ -345,13 +293,7 @@ export default function AIChatCore({
     }, [messages]);
 
     const markLastTyped = useCallback(() => {
-        setMessages(prev => {
-            const updated = [...prev];
-            if (updated.length > 0) {
-                updated[updated.length - 1] = { ...updated[updated.length - 1], typed: true };
-            }
-            return updated;
-        });
+        // No-op: typing animation removed (Opsi A — direct render)
     }, []);
 
     const addSuggestions = useCallback((userQ: string, aiAnswer: string) => {
@@ -432,13 +374,13 @@ export default function AIChatCore({
             const assistantMsg: ChatMessage = {
                 role: 'assistant',
                 content: result.message,
-                typed: false,
+                typed: true,        // immediate — no typing animation
                 timestamp: Date.now(),
                 model: result.model,
                 provider: result.provider,
             };
             setMessages([...newMessages, assistantMsg]);
-            setTimeout(() => addSuggestions(msg, result.message), 1200);
+            setTimeout(() => addSuggestions(msg, result.message), 300);
         } catch (err: any) {
             setError(err.message || 'Gagal menghubungi Krai');
         } finally {
@@ -598,11 +540,7 @@ export default function AIChatCore({
                                         }`}
                                 >
                                     {msg.role === 'assistant' ? (
-                                        msg.typed ? (
-                                            <MarkdownRenderer content={msg.content} />
-                                        ) : (
-                                            <TypingMessage content={msg.content} onDone={markLastTyped} scrollRef={messagesEndRef} />
-                                        )
+                                        <AssistantMessage content={msg.content} />
                                     ) : (
                                         <span>{msg.content}</span>
                                     )}

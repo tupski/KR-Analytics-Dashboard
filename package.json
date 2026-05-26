@@ -12,9 +12,11 @@
         "test:watch": "jest --watch"
     },
     "dependencies": {
+        "@supabase/ssr": "0.6.1",
         "@supabase/supabase-js": "^2.39.0",
         "date-fns": "^3.6.0",
         "date-fns-tz": "^3.2.0",
+        "jspdf": "2.5.2",
         "lucide-react": "^0.344.0",
         "next": "^15.0.0",
         "react": "^18.3.0",

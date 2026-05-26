@@ -1,14 +1,8 @@
-import AIChatFullscreen from '@/components/ai/AIChatFullscreen';
+import { redirect } from 'next/navigation';
 
 /**
- * Krai — Full-screen AI Chat page.
- * flex-1 + overflow-hidden fills the layout's scrollable container
- * without showing a scrollbar on the outer wrapper.
+ * /analytics-ai/chat → redirected to /chat for cleaner URL.
  */
-export default function AIChatPage() {
-    return (
-        <div className="flex-1 overflow-hidden flex flex-col">
-            <AIChatFullscreen />
-        </div>
-    );
+export default function OldChatPage() {
+    redirect('/chat');
 }

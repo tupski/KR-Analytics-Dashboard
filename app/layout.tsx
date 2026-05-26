@@ -6,48 +6,39 @@ import NavigationProgress from '@/components/layout/NavigationProgress';
 import AIChatFloat from '@/components/ai/AIChatFloat';
 import ScrollToTop from '@/components/ScrollToTop';
 import ErrorBoundary from '@/components/ErrorBoundary';
+import { getSession } from '@/lib/supabase/auth';
 import './globals.css';
 
 const inter = Inter({ subsets: ['latin'] });
 
 export const metadata: Metadata = {
     title: 'Kakarama Room Analytics Dashboard',
-    description: 'Comprehensive analytics dashboard for apartment rental management',
+    description: 'Analytics dashboard for Kakarama Room apartment rental',
 };
 
-/**
- * RootLayout - Main Application Layout
- *
- * Provides the base layout structure with:
- * - Desktop: fixed sidebar (always visible)
- * - Mobile: sticky header with hamburger + slide-in sidebar overlay
- *
- */
-export default function RootLayout({
-    children,
-}: {
-    children: React.ReactNode;
-}) {
+export default async function RootLayout({ children }: { children: React.ReactNode }) {
+    // Get session server-side to pass user info to layout components
+    let userEmail: string | null = null;
+    try {
+        const session = await getSession();
+        userEmail = session?.user?.email ?? null;
+    } catch {
+        // On login page, session doesn't exist yet — that's fine
+    }
+
     return (
         <html lang="id">
             <body className={inter.className}>
                 <NavigationProgress />
                 <ErrorBoundary>
                     <div className="flex h-screen overflow-hidden">
-                        {/* Sidebar (desktop fixed) + MobileHeader + mobile overlay sidebar */}
-                        <MobileNavController />
-
-                        {/* Main Content Area — margin syncs with sidebar collapse state */}
+                        <MobileNavController userEmail={userEmail} />
                         <ContentWrapper>
-                            <div className="flex-1 overflow-y-auto flex flex-col" data-scroll-container>
-                                {children}
-                            </div>
+                            {children}
                         </ContentWrapper>
                     </div>
 
-                    {/* AI Chat Floating Button */}
                     <AIChatFloat />
-                    {/* Scroll to top */}
                     <ScrollToTop />
                 </ErrorBoundary>
             </body>

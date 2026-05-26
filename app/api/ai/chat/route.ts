@@ -91,6 +91,8 @@ async function runOpenAILoop(
             max_tokens: 2000,
         };
 
+        console.log(`[OpenAI Loop] Iteration ${iter + 1}, URL: ${apiUrl}, Model: ${model}`);
+
         const res = await fetch(apiUrl, {
             method: 'POST',
             headers,
@@ -99,7 +101,14 @@ async function runOpenAILoop(
 
         if (!res.ok) {
             const errorText = await res.text();
-            throw new Error(`AI API error: ${res.status} - ${errorText.substring(0, 300)}`);
+            console.error('[OpenAI Loop] Error:', {
+                status: res.status,
+                statusText: res.statusText,
+                url: apiUrl,
+                model,
+                errorBody: errorText.substring(0, 500),
+            });
+            throw new Error(`AI API error: ${res.status} ${res.statusText} - ${errorText.substring(0, 300)}`);
         }
 
         const data = await res.json();
@@ -223,9 +232,27 @@ export async function POST(request: NextRequest) {
             baseUrl: config?.baseUrl || process.env.AI_BASE_URL || undefined,
         };
 
+        // If no API key in request, try loading from Supabase global config
+        if (!resolvedConfig.apiKey) {
+            try {
+                const { loadAllProviderConfigs } = await import('@/lib/ai/configServer');
+                const dbConfigs = await loadAllProviderConfigs();
+                // Find active provider first, then fallback to first configured
+                const active = dbConfigs.find(c => c.isActive) || dbConfigs[0];
+                if (active) {
+                    resolvedConfig.provider = active.providerId;
+                    resolvedConfig.apiKey = active.apiKey;
+                    resolvedConfig.model = active.model || resolvedConfig.model;
+                    resolvedConfig.baseUrl = active.baseUrl;
+                }
+            } catch (dbErr) {
+                console.error('Could not load AI config from DB:', dbErr);
+            }
+        }
+
         if (!resolvedConfig.apiKey) {
             return NextResponse.json(
-                { error: 'API key belum dikonfigurasi. Atur di halaman Analytics AI atau set AI_API_KEY di environment.' },
+                { error: 'API key belum dikonfigurasi. Atur di halaman Pengaturan atau buka Krai Chat.' },
                 { status: 400 },
             );
         }
@@ -427,7 +454,16 @@ Hanya tampilkan jika benar-benar relevan dan menambah nilai.`,
                 break;
             }
             case 'openai-compatible': {
-                const apiUrl = resolvedConfig.baseUrl || 'https://api.openai.com/v1/chat/completions';
+                // For openai-compatible, base URL should be the full endpoint
+                // If it ends with /v1, append /chat/completions
+                // If it already includes /chat/completions, use as-is
+                let apiUrl = resolvedConfig.baseUrl || 'https://api.openai.com/v1/chat/completions';
+                if (apiUrl.endsWith('/v1')) {
+                    apiUrl = `${apiUrl}/chat/completions`;
+                } else if (!apiUrl.includes('/chat/completions')) {
+                    // If base URL doesn't end with /v1 and doesn't include /chat/completions,
+                    // assume it's a custom endpoint and use as-is
+                }
                 const headers = {
                     'Content-Type': 'application/json',
                     Authorization: `Bearer ${resolvedConfig.apiKey}`,
@@ -489,13 +525,27 @@ Hanya tampilkan jika benar-benar relevan dan menambah nilai.`,
                 break;
             }
             case 'openrouter': {
-                const apiUrl = resolvedConfig.baseUrl || 'https://openrouter.ai/api/v1/chat/completions';
+                // OpenRouter and compatible proxies (like 9router)
+                // Base URL should be full endpoint or end with /v1
+                let apiUrl = resolvedConfig.baseUrl || 'https://openrouter.ai/api/v1/chat/completions';
+                if (apiUrl.endsWith('/v1')) {
+                    apiUrl = `${apiUrl}/chat/completions`;
+                } else if (!apiUrl.includes('/chat/completions')) {
+                    // Assume it's already a full endpoint
+                }
                 const headers: Record<string, string> = {
                     'Content-Type': 'application/json',
                     Authorization: `Bearer ${resolvedConfig.apiKey}`,
                     'HTTP-Referer': 'https://kakarama.com',
                     'X-Title': 'Kakarama Room Analytics',
                 };
+
+                console.log('[OpenRouter] Request:', {
+                    url: apiUrl,
+                    model: resolvedConfig.model,
+                    hasApiKey: !!resolvedConfig.apiKey,
+                });
+
                 assistantMessage = await runOpenAILoop(
                     apiUrl,
                     headers,
