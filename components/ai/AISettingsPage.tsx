@@ -173,14 +173,31 @@ export default function AISettingsPage() {
                     },
                 }),
             });
-            const data = await res.json();
+            
+            // Handle both JSON and streaming responses
+            const contentType = res.headers.get('content-type');
+            let data: any;
+            
+            if (contentType?.includes('application/json')) {
+                data = await res.json();
+            } else {
+                // Handle streaming or text responses
+                const text = await res.text();
+                try {
+                    data = JSON.parse(text);
+                } catch {
+                    // If not JSON, treat as error
+                    data = { error: 'Respons tidak valid dari server' };
+                }
+            }
+            
             if (res.ok) {
-                setTestResult({ success: true, message: data.message });
+                setTestResult({ success: true, message: data.message || 'Koneksi berhasil!' });
             } else {
                 setTestResult({ success: false, message: data.error || 'Gagal terhubung' });
             }
         } catch (err: any) {
-            setTestResult({ success: false, message: err.message });
+            setTestResult({ success: false, message: err.message || 'Gagal menghubungi server' });
         } finally {
             setTesting(false);
         }
@@ -204,7 +221,24 @@ export default function AISettingsPage() {
                     },
                 }),
             });
-            const data = await res.json();
+            
+            // Handle both JSON and streaming responses
+            const contentType = res.headers.get('content-type');
+            let data: any;
+            
+            if (contentType?.includes('application/json')) {
+                data = await res.json();
+            } else {
+                // Handle streaming or text responses
+                const text = await res.text();
+                try {
+                    data = JSON.parse(text);
+                } catch {
+                    // If not JSON, treat as error
+                    data = { error: 'Respons tidak valid dari server' };
+                }
+            }
+            
             if (res.ok) {
                 // Success — add to provider models
                 addCustomModel(activeProviderId, {
@@ -222,7 +256,7 @@ export default function AISettingsPage() {
                 setTestResult({ success: false, message: data.error || 'Gagal terhubung' });
             }
         } catch (err: any) {
-            setTestResult({ success: false, message: err.message });
+            setTestResult({ success: false, message: err.message || 'Gagal menghubungi server' });
         } finally {
             setTestingCustom(false);
         }
@@ -527,11 +561,11 @@ export default function AISettingsPage() {
                 </ul>
             </div>
 
-            {/* ── Pengaturan Krai: Chat History ── */}
+            {/* ── Pengaturan KR·AI: Chat History ── */}
             <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 space-y-4">
                 <h2 className="text-base font-semibold text-gray-900 flex items-center gap-2">
                     <Clock className="w-4 h-4 text-blue-600" />
-                    Riwayat Chat Krai
+                    Riwayat Chat KR·AI
                 </h2>
                 <p className="text-xs text-gray-500">
                     Riwayat percakapan disimpan ke database Supabase. Percakapan yang lebih lama dari batas yang ditentukan akan otomatis dihapus.

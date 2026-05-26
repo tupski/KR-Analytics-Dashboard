@@ -91,8 +91,6 @@ async function runOpenAILoop(
             max_tokens: 2000,
         };
 
-        console.log(`[OpenAI Loop] Iteration ${iter + 1}, URL: ${apiUrl}, Model: ${model}`);
-
         const res = await fetch(apiUrl, {
             method: 'POST',
             headers,
@@ -101,13 +99,6 @@ async function runOpenAILoop(
 
         if (!res.ok) {
             const errorText = await res.text();
-            console.error('[OpenAI Loop] Error:', {
-                status: res.status,
-                statusText: res.statusText,
-                url: apiUrl,
-                model,
-                errorBody: errorText.substring(0, 500),
-            });
             throw new Error(`AI API error: ${res.status} ${res.statusText} - ${errorText.substring(0, 300)}`);
         }
 
@@ -246,13 +237,13 @@ export async function POST(request: NextRequest) {
                     resolvedConfig.baseUrl = active.baseUrl;
                 }
             } catch (dbErr) {
-                console.error('Could not load AI config from DB:', dbErr);
+                // Silently fail - config not available from DB
             }
         }
 
         if (!resolvedConfig.apiKey) {
             return NextResponse.json(
-                { error: 'API key belum dikonfigurasi. Atur di halaman Pengaturan atau buka Krai Chat.' },
+                { error: 'API key belum dikonfigurasi. Atur di halaman Pengaturan atau buka KR·AI Chat.' },
                 { status: 400 },
             );
         }
@@ -279,9 +270,9 @@ Owner ingin analisis mendalam. Ambil waktu untuk:
 
         const systemContent = [
             // ── IDENTITY & ROLE ──────────────────────────────────────────────
-            `# KRAI — AI Business Copilot Kakarama Room
+            `# KR·AI — AI Business Copilot Kakarama Room
 
-Kamu adalah Krai, AI Business Copilot untuk Kakarama Room (bisnis penyewaan apartemen & kamar harian di Indonesia).
+Kamu adalah KR·AI, AI Business Copilot untuk Kakarama Room (bisnis penyewaan apartemen & kamar harian di Indonesia).
 
 Kamu berperan sebagai:
 - Business Intelligence Analyst
@@ -292,7 +283,7 @@ Kamu berperan sebagai:
 Kamu PUNYA AKSES ke database via tools. Selalu gunakan tools untuk mengambil angka aktual — jangan pernah mengarang data.`,
 
             // ── TUJUAN ───────────────────────────────────────────────────────
-            `## Tujuan Krai
+            `## Tujuan KR·AI
 
 Bantu owner memahami kondisi bisnis dengan:
 - Menemukan insight penting dari data
@@ -540,12 +531,6 @@ Hanya tampilkan jika benar-benar relevan dan menambah nilai.`,
                     'X-Title': 'Kakarama Room Analytics',
                 };
 
-                console.log('[OpenRouter] Request:', {
-                    url: apiUrl,
-                    model: resolvedConfig.model,
-                    hasApiKey: !!resolvedConfig.apiKey,
-                });
-
                 assistantMessage = await runOpenAILoop(
                     apiUrl,
                     headers,
@@ -584,7 +569,6 @@ Hanya tampilkan jika benar-benar relevan dan menambah nilai.`,
             provider: resolvedConfig.provider,
         });
     } catch (error: any) {
-        console.error('AI chat error:', error);
         return NextResponse.json(
             { error: `Gagal menghubungi AI: ${error.message}` },
             { status: 500 },

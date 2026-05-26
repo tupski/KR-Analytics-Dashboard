@@ -1,7 +1,7 @@
 'use client';
 
 /**
- * AIChatCore — shared chat engine for both AIChatFloat and the full-screen Krai page.
+ * AIChatCore — shared chat engine for both AIChatFloat and the full-screen KR·AI page.
  *
  * Features:
  * - Multi-provider config + Auto model selection
@@ -17,6 +17,7 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import { Send, Bot, Brain, X, ChevronRight, Copy, Check, AlertTriangle, Eye, Lightbulb, Wrench, Zap, ChevronDown } from 'lucide-react';
 import MarkdownRenderer from './MarkdownRenderer';
 import { loadMemory, addMemory, deleteMemory, getMemoryContext, type MemoryEntry } from '@/lib/ai/memory';
+import KraiLogo from '@/components/shared/KraiLogo';
 import {
     loadConfig,
     setActive,
@@ -117,7 +118,7 @@ async function fetchFollowUpSuggestions(
     try {
         const resolved = resolveActive('instant', false);
         if (!resolved) return [];
-        const prompt = `Kamu adalah Krai. Berdasarkan konteks berikut, hasilkan TEPAT 2 pertanyaan lanjutan yang spesifik dan relevan untuk membantu owner mendapat insight bisnis. Kembalikan HANYA 2 baris teks tanpa nomor/bullet.
+        const prompt = `Kamu adalah KR·AI. Berdasarkan konteks berikut, hasilkan TEPAT 2 pertanyaan lanjutan yang spesifik dan relevan untuk membantu owner mendapat insight bisnis. Kembalikan HANYA 2 baris teks tanpa nomor/bullet.
 
 Pertanyaan: ${userQuestion.slice(0, 200)}
 Jawaban: ${aiAnswer.slice(0, 400)}
@@ -175,14 +176,14 @@ function MemoryPanel({ onClose }: { onClose: () => void }) {
                 <div className="px-5 py-4 border-b border-gray-200 flex items-center justify-between">
                     <div className="flex items-center gap-2">
                         <Brain className="w-4 h-4 text-blue-600" />
-                        <h2 className="font-semibold text-gray-900 text-sm">Memori Krai</h2>
+                        <h2 className="font-semibold text-gray-900 text-sm">Memori <KraiLogo size="sm" /></h2>
                     </div>
                     <button onClick={onClose} className="p-1.5 hover:bg-gray-100 rounded-lg"><X className="w-4 h-4" /></button>
                 </div>
                 <div className="flex-1 overflow-y-auto p-4 space-y-2">
                     {entries.length === 0 && (
                         <p className="text-sm text-gray-500 text-center py-6">
-                            Belum ada memori. Tambahkan fakta atau konteks yang ingin Krai ingat.
+                            Belum ada memori. Tambahkan fakta atau konteks yang ingin KR·AI ingat.
                         </p>
                     )}
                     {entries.map(e => (
@@ -382,7 +383,7 @@ export default function AIChatCore({
             setMessages([...newMessages, assistantMsg]);
             setTimeout(() => addSuggestions(msg, result.message), 300);
         } catch (err: any) {
-            setError(err.message || 'Gagal menghubungi Krai');
+            setError(err.message || 'Gagal menghubungi KR·AI');
         } finally {
             setLoading(false);
         }
@@ -514,7 +515,9 @@ export default function AIChatCore({
                         <div className={`bg-gradient-to-br from-blue-600 to-blue-400 rounded-2xl flex items-center justify-center mx-auto mb-3 ${isFloat ? 'w-10 h-10' : 'w-14 h-14'}`}>
                             <Bot className={`text-white ${isFloat ? 'w-5 h-5' : 'w-7 h-7'}`} />
                         </div>
-                        <p className={`font-semibold text-gray-800 ${isFull ? 'text-base' : 'text-sm'}`}>Halo, saya Krai.</p>
+                        <p className={`font-semibold text-gray-800 ${isFull ? 'text-base' : 'text-sm'}`}>
+                            Halo, saya <KraiLogo size={isFull ? 'base' : 'sm'} />
+                        </p>
                         <p className="mt-1 text-gray-500 text-xs">Asisten AI analitik Kakarama Room. Tanyakan apa saja tentang data bisnis.</p>
                     </div>
                 )}
@@ -645,7 +648,7 @@ export default function AIChatCore({
                             onChange={e => setInput(e.target.value)}
                             onKeyDown={handleKeyDown}
                             onPaste={handlePaste}
-                            placeholder="Tanya Krai... (Enter kirim, Shift+Enter baris baru, paste gambar didukung untuk model vision)"
+                            placeholder="Tanya KR·AI... (Enter kirim, Shift+Enter baris baru, paste gambar didukung untuk model vision)"
                             disabled={loading}
                             rows={2}
                             className="flex-1 px-3 py-2 border border-gray-300 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none disabled:opacity-50 resize-none bg-white"
@@ -658,7 +661,7 @@ export default function AIChatCore({
                             onChange={e => setInput(e.target.value)}
                             onKeyDown={handleKeyDown}
                             onPaste={handlePaste}
-                            placeholder="Tanya Krai..."
+                            placeholder="Tanya KR·AI..."
                             disabled={loading}
                             className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none disabled:opacity-50 bg-white"
                         />

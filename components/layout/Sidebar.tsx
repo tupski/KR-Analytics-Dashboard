@@ -17,6 +17,7 @@ import {
     ChevronRight,
     LogOut,
 } from 'lucide-react';
+import KraiLogo from '@/components/shared/KraiLogo';
 
 interface SidebarProps {
     isMobileOpen?: boolean;
@@ -31,7 +32,7 @@ const MENU_ITEMS = [
     { label: 'Unit', href: '/unit', icon: Building },
     { label: 'Customer', href: '/customer', icon: Users },
     { label: 'Laporan', href: '/laporan', icon: Wallet },
-    { label: 'AI Chat', href: '/chat', icon: Brain },
+    { label: 'KR·AI Chat', href: '/chat', icon: Brain, isKrai: true },
     { label: 'Pengaturan', href: '/pengaturan', icon: Settings },
 ];
 
@@ -44,7 +45,7 @@ function writeCollapsed(v: boolean) {
     try { localStorage.setItem(COLLAPSED_KEY, v ? '1' : '0'); } catch { }
 }
 
-function LogoutButton() {
+function LogoutButton({ iconOnly = false }: { iconOnly?: boolean }) {
     const handleLogout = async () => {
         const { createClient } = await import('@supabase/supabase-js');
         const supabase = createClient(
@@ -54,6 +55,18 @@ function LogoutButton() {
         await supabase.auth.signOut();
         window.location.href = '/login';
     };
+
+    if (iconOnly) {
+        return (
+            <button
+                onClick={handleLogout}
+                title="Keluar"
+                className="p-1.5 text-red-500 hover:bg-red-50 rounded-lg transition-colors"
+            >
+                <LogOut className="w-4 h-4" />
+            </button>
+        );
+    }
 
     return (
         <button
@@ -122,7 +135,9 @@ export default function Sidebar({ isMobileOpen = false, onClose, userEmail }: Si
                                         }`}
                                 >
                                     <Icon className={`w-5 h-5 flex-shrink-0 ${active ? 'text-blue-700' : 'text-gray-500'}`} />
-                                    {!collapsed && <span>{item.label}</span>}
+                                    {!collapsed && (
+                                        (item as any).isKrai ? <KraiLogo size="sm" /> : <span>{item.label}</span>
+                                    )}
                                 </Link>
                             </li>
                         );
@@ -132,8 +147,8 @@ export default function Sidebar({ isMobileOpen = false, onClose, userEmail }: Si
 
             {/* Footer: profile + collapse button (expanded mode only) */}
             {!collapsed && (
-                <div className="border-t border-gray-200 p-3">
-                    <div className="flex items-center gap-3 px-2 py-1.5 mb-2">
+                <div className="border-t border-gray-200 p-3 space-y-2">
+                    <div className="flex items-center gap-3 px-2 py-1.5 bg-gray-50 rounded-lg">
                         <div className="w-7 h-7 bg-blue-100 rounded-full flex items-center justify-center flex-shrink-0">
                             <Users className="w-4 h-4 text-blue-600" />
                         </div>
@@ -141,18 +156,16 @@ export default function Sidebar({ isMobileOpen = false, onClose, userEmail }: Si
                             <p className="text-xs font-medium text-gray-900 truncate">Super Admin</p>
                             <p className="text-[11px] text-gray-500 truncate">{userEmail || '—'}</p>
                         </div>
+                        <LogoutButton iconOnly />
                     </div>
-                    <div className="flex items-center gap-1">
-                        <LogoutButton />
-                        <button
-                            onClick={toggleCollapsed}
-                            title="Ciutkan sidebar"
-                            className="flex items-center gap-1 rounded-lg px-2 py-1.5 text-xs text-gray-500 hover:bg-gray-100 hover:text-gray-700 transition-colors ml-auto"
-                        >
-                            <ChevronLeft className="w-4 h-4" />
-                            <span>Ciutkan</span>
-                        </button>
-                    </div>
+                    <button
+                        onClick={toggleCollapsed}
+                        title="Ciutkan sidebar"
+                        className="flex items-center justify-center gap-1 w-full rounded-lg px-2 py-1.5 text-xs text-gray-500 hover:bg-gray-100 hover:text-gray-700 transition-colors"
+                    >
+                        <ChevronLeft className="w-4 h-4" />
+                        <span>Ciutkan</span>
+                    </button>
                 </div>
             )}
 
@@ -222,7 +235,7 @@ export default function Sidebar({ isMobileOpen = false, onClose, userEmail }: Si
                 </nav>
 
                 <div className="px-3 py-3 border-t border-gray-200">
-                    <div className="flex items-center gap-3 px-2 py-1.5 mb-2">
+                    <div className="flex items-center gap-3 px-2 py-1.5 bg-gray-50 rounded-lg">
                         <div className="w-7 h-7 bg-blue-100 rounded-full flex items-center justify-center flex-shrink-0">
                             <Users className="w-4 h-4 text-blue-600" />
                         </div>
@@ -230,8 +243,8 @@ export default function Sidebar({ isMobileOpen = false, onClose, userEmail }: Si
                             <p className="text-xs font-medium text-gray-900 truncate">Super Admin</p>
                             <p className="text-[11px] text-gray-500 truncate">{userEmail || '—'}</p>
                         </div>
+                        <LogoutButton iconOnly />
                     </div>
-                    <LogoutButton />
                 </div>
             </aside>
         </div>

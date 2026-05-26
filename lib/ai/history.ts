@@ -1,5 +1,5 @@
 /**
- * Krai chat history — dual-layer storage.
+ * KR·AI chat history — dual-layer storage.
  *
  * Primary: localStorage (instant reads/writes, offline-capable)
  * Backup:  Supabase via /api/krai/history (async, background sync)

@@ -25,7 +25,6 @@ export async function GET() {
         }));
         return NextResponse.json({ configs: masked });
     } catch (err: any) {
-        console.error('GET /api/ai/config error:', err);
         return NextResponse.json({ error: err.message }, { status: 500 });
     }
 }
@@ -76,7 +75,6 @@ export async function POST(request: NextRequest) {
                 return NextResponse.json({ error: `Unknown action: ${action}` }, { status: 400 });
         }
     } catch (err: any) {
-        console.error('POST /api/ai/config error:', err);
         return NextResponse.json({ error: err.message }, { status: 500 });
     }
 }

@@ -8,6 +8,7 @@ import AIChatCore, { type ChatMessage } from './AIChatCore';
 import AIChatHistorySidebar from './AIChatHistorySidebar';
 import { TEMPLATE_GROUPS, COLOR_MAP } from './chatTemplates';
 import { loadMemory } from '@/lib/ai/memory';
+import KraiLogo from '@/components/shared/KraiLogo';
 import {
     getConversation,
     getConversationWithMessages,
@@ -210,7 +211,7 @@ export default function AIChatFullscreen({ conversationId, forceNew }: Props) {
                     className="flex items-center gap-1.5 px-2 py-1.5 text-[11px] text-gray-500 hover:bg-gray-50 rounded-lg transition-colors"
                 >
                     <Settings className="w-3 h-3" />
-                    Pengaturan Krai
+                    Pengaturan KR·AI
                 </Link>
             </div>
         </div>
@@ -234,9 +235,9 @@ export default function AIChatFullscreen({ conversationId, forceNew }: Props) {
                 >
                     <div className="flex items-center justify-between px-3 py-2.5 border-b border-gray-200 flex-shrink-0">
                         <span className="text-sm font-semibold text-gray-800 flex items-center gap-1.5">
-                            <Bot className="w-4 h-4 text-blue-600" /> Krai
+                            <Bot className="w-4 h-4 text-blue-600" /> KR·AI
                         </span>
-                        <button onClick={() => setSidebarOpen(false)} className="p-1 hover:bg-gray-100 rounded">
+                        <button onClick={() => setSidebarOpen(false)} className="p-1 hover:bg-gray-100 rounded" title="Tutup sidebar">
                             <X className="w-4 h-4 text-gray-600" />
                         </button>
                     </div>
@@ -268,7 +269,7 @@ export default function AIChatFullscreen({ conversationId, forceNew }: Props) {
                                 <p className="text-sm font-bold text-gray-900 leading-tight truncate">
                                     {activeConv?.title && activeConv.title !== 'Percakapan baru'
                                         ? activeConv.title
-                                        : 'Krai'}
+                                        : 'KR·AI'}
                                 </p>
                                 <p className="text-[10px] text-gray-400 leading-tight hidden sm:block">
                                     Kakarama AI Assistant
@@ -307,72 +308,65 @@ export default function AIChatFullscreen({ conversationId, forceNew }: Props) {
                 {/* Welcome state — only when no messages */}
                 {historyLoaded && messages.length === 0 && (
                     <div className="flex-shrink-0 overflow-y-auto">
-                        <div className="max-w-2xl mx-auto px-4 pt-8 pb-4 flex flex-col items-center">
-                            {/* Branding */}
-                            <div className="text-center mb-6">
-                                <div className="w-16 h-16 bg-gradient-to-br from-blue-600 to-blue-400 rounded-2xl flex items-center justify-center mx-auto mb-3 shadow-lg">
-                                    <Bot className="w-9 h-9 text-white" />
+                        <div className="max-w-2xl mx-auto px-4 pt-6 pb-4">
+                            {/* Branding - Icon on left, smaller text */}
+                            <div className="flex items-start gap-3 mb-6">
+                                <div className="w-12 h-12 bg-gradient-to-br from-blue-600 to-blue-400 rounded-xl flex items-center justify-center flex-shrink-0 shadow-md">
+                                    <Bot className="w-6 h-6 text-white" />
                                 </div>
-                                <h1 className="text-xl sm:text-2xl font-bold text-gray-900">Halo, saya Krai!</h1>
-                                <p className="text-sm text-gray-500 mt-1.5 max-w-sm mx-auto leading-relaxed">
-                                    Saya adalah asisten AI Kakarama Room yang dilatih khusus membantu menganalisa data laporan bisnis Kakarama Room.
+                                <div>
+                                    <h1 className="text-base sm:text-lg font-bold text-gray-900 flex items-center gap-1.5 mb-1">
+                                        Halo, saya <KraiLogo size="lg" />!
+                                    </h1>
+                                    <p className="text-xs text-gray-500 leading-relaxed">
+                                        Saya adalah asisten AI Kakarama Room yang dilatih khusus membantu menganalisa data laporan bisnis Kakarama Room.
+                                    </p>
+                                </div>
+                            </div>
+
+                            {/* Template questions card - max 1 question on mobile */}
+                            <div className="w-full rounded-xl border border-blue-100 bg-blue-50/30 p-3 mb-3">
+                                <p className="text-xs font-semibold text-blue-700 mb-2">
+                                    📊 Performa Harian
                                 </p>
-                            </div>
-
-                            {/* 2 full category cards */}
-                            <div className="w-full grid grid-cols-1 sm:grid-cols-2 gap-2.5 mb-3">
-                                {WELCOME_FULL_CATEGORIES.map(group => {
-                                    const colors = COLOR_MAP[group.color];
-                                    return (
-                                        <div
-                                            key={group.id}
-                                            className={`rounded-xl border ${colors.border} bg-white hover:shadow-sm transition-shadow p-3`}
-                                        >
-                                            <p className={`text-xs font-semibold ${colors.text} mb-2`}>
-                                                {group.emoji} {group.label}
-                                            </p>
-                                            <div className="space-y-1.5">
-                                                {group.questions.slice(0, 2).map((q, qi) => (
-                                                    <button
-                                                        key={qi}
-                                                        onClick={() => handleTemplateClick(q)}
-                                                        className={`w-full text-left text-xs px-2.5 py-2 ${colors.bg} ${colors.hover} rounded-lg ${colors.text} transition-colors flex items-start gap-1.5 leading-snug`}
-                                                    >
-                                                        <ChevronRight className="w-3 h-3 flex-shrink-0 mt-0.5" />
-                                                        <span>{q}</span>
-                                                    </button>
-                                                ))}
-                                            </div>
-                                        </div>
-                                    );
-                                })}
-                            </div>
-
-                            {/* Remaining categories — name chips → open sidebar */}
-                            <div className="flex flex-wrap gap-1.5 mb-4 justify-center">
-                                {WELCOME_CHIP_CATEGORIES.map(group => {
-                                    const colors = COLOR_MAP[group.color];
-                                    return (
+                                <div className="space-y-1.5">
+                                    {/* Show only 1 question on mobile, 2 on desktop */}
+                                    {TEMPLATE_GROUPS[0]?.questions.slice(0, 1).map((q, qi) => (
                                         <button
-                                            key={group.id}
-                                            onClick={handleViewAllTemplates}
-                                            className={`flex items-center gap-1 px-3 py-1.5 rounded-full border ${colors.border} ${colors.bg} ${colors.text} ${colors.hover} text-xs font-medium transition-colors`}
+                                            key={qi}
+                                            onClick={() => handleTemplateClick(q)}
+                                            className="w-full text-left text-xs px-2.5 py-2 bg-white hover:bg-blue-50 rounded-lg text-blue-700 transition-colors flex items-start gap-1.5 leading-snug border border-blue-100"
                                         >
-                                            <span>{group.emoji}</span>
-                                            <span>{group.label}</span>
+                                            <ChevronRight className="w-3 h-3 flex-shrink-0 mt-0.5" />
+                                            <span>{q}</span>
                                         </button>
-                                    );
-                                })}
+                                    ))}
+                                    {/* Show 2nd question only on desktop */}
+                                    <div className="hidden sm:block">
+                                        {TEMPLATE_GROUPS[0]?.questions.slice(1, 2).map((q, qi) => (
+                                            <button
+                                                key={qi}
+                                                onClick={() => handleTemplateClick(q)}
+                                                className="w-full text-left text-xs px-2.5 py-2 bg-white hover:bg-blue-50 rounded-lg text-blue-700 transition-colors flex items-start gap-1.5 leading-snug border border-blue-100"
+                                            >
+                                                <ChevronRight className="w-3 h-3 flex-shrink-0 mt-0.5" />
+                                                <span>{q}</span>
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
                             </div>
 
                             {/* View all templates link */}
-                            <button
-                                onClick={handleViewAllTemplates}
-                                className="text-sm text-blue-600 hover:text-blue-700 font-medium hover:underline flex items-center gap-1"
-                            >
-                                <LayoutGrid className="w-3.5 h-3.5" />
-                                Lihat semua template →
-                            </button>
+                            <div className="text-center">
+                                <button
+                                    onClick={handleViewAllTemplates}
+                                    className="text-sm text-blue-600 hover:text-blue-700 font-medium hover:underline flex items-center gap-1 mx-auto"
+                                >
+                                    <LayoutGrid className="w-3.5 h-3.5" />
+                                    Lihat semua template →
+                                </button>
+                            </div>
                         </div>
                     </div>
                 )}

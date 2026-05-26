@@ -6,6 +6,7 @@ import { X, Bot, Maximize2 } from 'lucide-react';
 import Link from 'next/link';
 import AIChatCore, { type ChatMessage } from './AIChatCore';
 import { configuredProviders } from '@/lib/ai/config';
+import KraiLogo from '@/components/shared/KraiLogo';
 
 const HINT_DISMISSED_KEY = 'kr-ai-hint-dismissed';
 const HINT_REMIND_AFTER_DAYS = 3;
@@ -73,7 +74,9 @@ export default function AIChatFloat() {
                                 <Bot className="w-4 h-4 text-white" />
                             </div>
                             <div className="flex-1 min-w-0">
-                                <p className="text-xs font-semibold text-gray-900">Halo, saya Krai!</p>
+                                <p className="text-xs font-semibold text-gray-900">
+                                    Halo, saya <KraiLogo size="xs" />!
+                                </p>
                                 <p className="text-[11px] text-gray-600 mt-0.5 leading-snug">
                                     Tanyakan apa saja tentang bisnis Kakarama Room — pendapatan, hunian, tren, lokasi.
                                 </p>
@@ -107,7 +110,11 @@ export default function AIChatFloat() {
                     <div className="flex items-center justify-between px-3 py-2.5 bg-gradient-to-r from-blue-600 to-blue-500 text-white flex-shrink-0">
                         <div className="flex items-center gap-2">
                             <Bot className="w-4 h-4" />
-                            <span className="font-semibold text-sm">Krai</span>
+                            <span className="font-semibold text-sm">
+                                <span className="text-white font-bold">KR</span>
+                                <span className="text-blue-200">·</span>
+                                <span className="text-white font-bold">AI</span>
+                            </span>
                         </div>
                         <div className="flex items-center gap-1">
                             <Link
@@ -156,8 +163,8 @@ export default function AIChatFloat() {
             <button
                 onClick={() => { dismissHint(); setIsOpen(v => !v); }}
                 className="fixed bottom-4 right-4 sm:bottom-6 sm:right-6 w-[52px] h-[52px] bg-blue-600 text-white rounded-full shadow-lg hover:shadow-xl transition-all hover:scale-110 flex items-center justify-center z-40"
-                title="Krai - AI Assistant"
-                aria-label="Buka Krai chat"
+                title="KR·AI - AI Assistant"
+                aria-label="Buka KR·AI chat"
             >
                 {isOpen ? <X className="w-5 h-5" /> : <Bot className="w-6 h-6" />}
             </button>

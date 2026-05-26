@@ -1,5 +1,5 @@
-/**
- * Server-side Krai chat history storage in Supabase.
+ /**
+ * Server-side KR·AI chat history storage in Supabase.
  * Used only in API Routes (server-side).
  */
 

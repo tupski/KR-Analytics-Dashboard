@@ -1,9 +1,9 @@
 /**
- * Krai Memory System
+ * KR·AI Memory System
  *
  * Stores key facts that the AI should remember across sessions.
  * Saved to localStorage under a single key as a list of timestamped entries.
- * The memory is injected into the system prompt so Krai can reference past context.
+ * The memory is injected into the system prompt so KR·AI can reference past context.
  *
  * DESIGN:
  * - Max 30 entries (oldest pruned first)

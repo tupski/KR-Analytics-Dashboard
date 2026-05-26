@@ -54,14 +54,14 @@ export default function MobileHeader() {
                 <span className="text-sm font-semibold text-gray-900 truncate">{pageLabel}</span>
             </div>
 
-            {/* Right: Krai button */}
+            {/* Right: KR·AI button */}
             <Link
                 href="/chat"
-                aria-label="Buka Krai AI chat"
+                aria-label="Buka KR·AI chat"
                 className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition-colors text-xs font-semibold flex-shrink-0 ml-2"
             >
                 <Bot className="w-3.5 h-3.5 flex-shrink-0" />
-                <span>Krai</span>
+                <span>KR·AI</span>
             </Link>
         </header>
     );

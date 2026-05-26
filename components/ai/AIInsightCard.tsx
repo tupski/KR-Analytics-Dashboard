@@ -135,7 +135,7 @@ export default function AIInsightCard({
             const resolved = resolveActive('instant', false);
             if (!resolved) return;
 
-            const suggPrompt = `Kamu adalah Krai. Berdasarkan pertanyaan dan jawabannya, hasilkan TEPAT 2 pertanyaan lanjutan yang spesifik dan actionable untuk owner. Kembalikan HANYA 2 baris teks tanpa nomor/bullet.
+            const suggPrompt = `Kamu adalah KR·AI. Berdasarkan pertanyaan dan jawabannya, hasilkan TEPAT 2 pertanyaan lanjutan yang spesifik dan actionable untuk owner. Kembalikan HANYA 2 baris teks tanpa nomor/bullet.
 
 Pertanyaan: ${originalPrompt.slice(0, 150)}
 Insight: ${insightText.slice(0, 300)}
