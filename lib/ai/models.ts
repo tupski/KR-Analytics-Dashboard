@@ -68,10 +68,12 @@ export const PROVIDERS: ProviderInfo[] = [
         description: 'Murah, performa kuat untuk analitik',
         placeholder: 'sk-...',
         hasBaseUrl: false,
-        signupUrl: 'https://platform.deepseek.com/api_keys',
+        signupUrl: 'https://api.deepseek.com/v1',
         models: [
-            { id: 'deepseek-chat', label: 'DeepSeek V3', inputPrice: 0.27, outputPrice: 1.10, capabilities: cap({ tools: true, fast: true }) },
-            { id: 'deepseek-reasoner', label: 'DeepSeek R1', inputPrice: 0.55, outputPrice: 2.19, capabilities: cap({ reasoning: true, tools: true }), notes: 'Reasoning step-by-step' },
+            { id: 'deepseek-chat', label: 'DeepSeek V4 Flash', inputPrice: 0.14, outputPrice: 0.28, capabilities: cap({ tools: true, fast: true }), notes: 'Non-thinking mode' },
+            { id: 'deepseek-reasoner', label: 'DeepSeek V4 Flash Reasoner', inputPrice: 0.14, outputPrice: 0.28, capabilities: cap({ reasoning: true, tools: true }), notes: 'Thinking mode' },
+            { id: 'deepseek-v4-pro', label: 'DeepSeek V4 Pro', inputPrice: 0.435, outputPrice: 0.87, capabilities: cap({ reasoning: true, tools: true }), notes: 'Higher quality, official DeepSeek API' },
+            { id: 'deepseek-v4-flash', label: 'DeepSeek V4 Flash', inputPrice: 0.14, outputPrice: 0.28, capabilities: cap({ tools: true, fast: true }), notes: 'Fast & low-cost official DeepSeek API' },
         ],
     },
     {

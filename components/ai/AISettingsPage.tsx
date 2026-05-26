@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Brain, Key, Server, Check, AlertCircle, ExternalLink, Eye, Lightbulb, Wrench, Zap, DollarSign, Trash2, Clock, Plus, Copy } from 'lucide-react';
+import { Brain, Key, Server, Check, AlertCircle, ExternalLink, Eye, Lightbulb, Wrench, Zap, DollarSign, Trash2, Clock, Plus, Copy, Cloud, CloudOff, Download, Upload } from 'lucide-react';
 import { PROVIDERS, priceTier, allModelsSorted, type ProviderId, type ModelInfo } from '@/lib/ai/models';
 import {
     loadConfig,
@@ -12,6 +12,7 @@ import {
     getCustomModels,
     type MultiAIConfig,
 } from '@/lib/ai/config';
+import { saveAIConfig, loadAIConfig } from '@/app/(dashboard)/pengaturan/ai-actions';
 
 const fmtPrice = (v: number) => v === 0 ? 'Gratis' : `$${v.toFixed(2)}`;
 
@@ -48,6 +49,9 @@ export default function AISettingsPage() {
     // Custom model
     const [customModelName, setCustomModelName] = useState('');
     const [testingCustom, setTestingCustom] = useState(false);
+    // Cloud sync
+    const [syncing, setSyncing] = useState(false);
+    const [syncMessage, setSyncMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
     // Retention settings
     const [retentionDays, setRetentionDays] = useState(30);
     const [retentionSaved, setRetentionSaved] = useState(false);

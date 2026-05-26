@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
+import { usePathname } from 'next/navigation';
 import { X, Bot, Maximize2 } from 'lucide-react';
 import Link from 'next/link';
 import AIChatCore, { type ChatMessage } from './AIChatCore';
@@ -10,10 +11,14 @@ const HINT_DISMISSED_KEY = 'kr-ai-hint-dismissed';
 const HINT_REMIND_AFTER_DAYS = 3;
 
 export default function AIChatFloat() {
+    const pathname = usePathname();
     const [isOpen, setIsOpen] = useState(false);
     const [messages, setMessages] = useState<ChatMessage[]>([]);
     const [hasConfig, setHasConfig] = useState(false);
     const [showHint, setShowHint] = useState(false);
+
+    // Hide on /chat and /chat/[id] pages
+    const isOnChatPage = pathname?.startsWith('/chat');
 
     useEffect(() => {
         // Check if AI is configured
@@ -44,6 +49,11 @@ export default function AIChatFloat() {
         dismissHint();
         setIsOpen(true);
     };
+
+    // Don't render on chat pages
+    if (isOnChatPage) {
+        return null;
+    }
 
     return (
         <>
