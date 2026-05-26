@@ -14,7 +14,7 @@
  */
 
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { Send, Bot, Brain, X, ChevronRight, Copy, Check, AlertTriangle, Image as ImageIcon, Eye, Lightbulb, Wrench, Zap, ChevronDown } from 'lucide-react';
+import { Send, Bot, Brain, X, ChevronRight, Copy, Check, AlertTriangle, Eye, Lightbulb, Wrench, Zap, ChevronDown } from 'lucide-react';
 import MarkdownRenderer from './MarkdownRenderer';
 import { loadMemory, addMemory, deleteMemory, getMemoryContext, type MemoryEntry } from '@/lib/ai/memory';
 import {
@@ -41,62 +41,39 @@ export interface ChatMessage {
     imageDataUrl?: string;
 }
 
-// ── Loading indicator with rotating typewriter status ────────────────────────
-
-const LOADING_STEPS = [
-    'Membaca data terbaru...',
-    'Menganalisis angka...',
-    'Menghitung perbandingan...',
-    'Menyiapkan jawaban...',
-    'Mengolah insight...',
-    'Memeriksa tren...',
-    'Memvalidasi hasil...',
-    'Merumuskan rekomendasi...',
-];
+// ── Loading indicator — pure CSS dots, zero JS state ────────────────────────
 
 function LoadingBubble({ thinking }: { thinking?: boolean }) {
-    const [stepIdx, setStepIdx] = useState(0);
-    const [displayed, setDisplayed] = useState('');
-    const charRef = useRef(0);
-    const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
-    useEffect(() => {
-        const current = thinking ? `🧠 Berpikir... ${LOADING_STEPS[stepIdx]}` : LOADING_STEPS[stepIdx];
-        charRef.current = 0;
-        setDisplayed('');
-        timerRef.current = setInterval(() => {
-            charRef.current++;
-            if (charRef.current <= current.length) {
-                setDisplayed(current.slice(0, charRef.current));
-            } else {
-                if (timerRef.current) clearInterval(timerRef.current);
-                setTimeout(() => setStepIdx(i => (i + 1) % LOADING_STEPS.length), 900);
-            }
-        }, 35);
-        return () => { if (timerRef.current) clearInterval(timerRef.current); };
-    }, [stepIdx, thinking]);
-
     return (
         <div className="flex justify-start items-center gap-2">
             <div className="w-7 h-7 rounded-xl bg-blue-600 flex items-center justify-center flex-shrink-0">
                 <Bot className="w-4 h-4 text-white" />
             </div>
-            <div className="bg-white border border-gray-200 rounded-xl rounded-bl-sm shadow-sm px-3 py-2 flex items-center gap-2 max-w-[260px]">
-                <span className="flex gap-0.5 flex-shrink-0">
-                    {[0, 150, 300].map(d => (
-                        <span key={d} className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-bounce" style={{ animationDelay: `${d}ms` }} />
-                    ))}
+            <div className="bg-white border border-gray-200 rounded-xl rounded-bl-sm shadow-sm px-3 py-2.5 flex items-center gap-2">
+                {/* 3 dot pulse — pure CSS, no JS re-render */}
+                <span className="flex gap-1">
+                    <span className="w-2 h-2 rounded-full bg-blue-400 animate-bounce [animation-delay:0ms]" />
+                    <span className="w-2 h-2 rounded-full bg-blue-400 animate-bounce [animation-delay:150ms]" />
+                    <span className="w-2 h-2 rounded-full bg-blue-400 animate-bounce [animation-delay:300ms]" />
                 </span>
-                <span className="text-xs text-gray-500 truncate">
-                    {displayed}
-                    <span className="inline-block w-0.5 h-3 bg-blue-400 ml-0.5 animate-pulse align-text-bottom" />
-                </span>
+                {thinking && (
+                    <span className="text-xs text-gray-400 italic">Berpikir...</span>
+                )}
             </div>
         </div>
     );
 }
 
-// ── Typing animation ─────────────────────────────────────────────────────────
+// ── Typing animation — per-word with rAF, light on CPU ───────────────────────
+//
+// Strategy:
+// 1. Split content into words (preserve whitespace/newlines as tokens)
+// 2. Use requestAnimationFrame to batch-reveal words — no setInterval
+// 3. Each rAF tick appends CHUNK_SIZE words at once → fewer state updates
+// 4. Auto-scroll only every SCROLL_EVERY ticks
+
+const CHUNK_SIZE = 3;      // words per rAF tick  (increase = faster & lighter)
+const SCROLL_EVERY = 20;   // scroll every N ticks (reduce scroll jank)
 
 function TypingMessage({
     content,
@@ -109,29 +86,42 @@ function TypingMessage({
 }) {
     const [displayed, setDisplayed] = useState('');
     const [done, setDone] = useState(false);
-    const iRef = useRef(0);
-    const doneRef = useRef(false);
+    const rafRef = useRef<number>(0);
+    const wordIdxRef = useRef(0);
+    const tickRef = useRef(0);
 
     useEffect(() => {
-        iRef.current = 0;
-        doneRef.current = false;
+        // Tokenise: split on whitespace but keep the whitespace chars as tokens
+        const tokens = content.split(/(\s+)/);
+        wordIdxRef.current = 0;
+        tickRef.current = 0;
         setDisplayed('');
         setDone(false);
-        const speed = 8;
-        const timer = setInterval(() => {
-            if (doneRef.current) return;
-            iRef.current++;
-            if (iRef.current <= content.length) {
-                setDisplayed(content.slice(0, iRef.current));
-                if (iRef.current % 10 === 0) scrollRef.current?.scrollIntoView({ behavior: 'smooth' });
-            } else {
-                doneRef.current = true;
+
+        const tick = () => {
+            if (wordIdxRef.current >= tokens.length) {
                 setDone(true);
-                clearInterval(timer);
                 onDone();
+                return;
             }
-        }, speed);
-        return () => clearInterval(timer);
+
+            // Append CHUNK_SIZE tokens at once
+            const end = Math.min(wordIdxRef.current + CHUNK_SIZE, tokens.length);
+            const slice = tokens.slice(0, end).join('');
+            wordIdxRef.current = end;
+            tickRef.current++;
+
+            setDisplayed(slice);
+
+            if (tickRef.current % SCROLL_EVERY === 0) {
+                scrollRef.current?.scrollIntoView({ behavior: 'smooth' });
+            }
+
+            rafRef.current = requestAnimationFrame(tick);
+        };
+
+        rafRef.current = requestAnimationFrame(tick);
+        return () => cancelAnimationFrame(rafRef.current);
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [content]);
 

@@ -72,8 +72,8 @@ export default function Sidebar({ isMobileOpen = false, onClose }: SidebarProps)
                 </div>
                 {!collapsed && (
                     <div className="min-w-0">
-                        <h1 className="text-base font-bold text-gray-900 leading-tight">Kakarama</h1>
-                        <p className="text-xs text-gray-500 leading-tight">Room Analytics</p>
+                        <h1 className="text-base font-bold text-gray-900 leading-tight">Kakarama Room</h1>
+                        <p className="text-s text-gray-600 leading-tight">Analytics</p>
                     </div>
                 )}
             </div>
