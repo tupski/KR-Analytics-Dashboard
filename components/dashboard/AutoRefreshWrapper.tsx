@@ -25,7 +25,6 @@ interface AutoRefreshWrapperProps {
  * - Handle refresh failures with retry logic
  * - Manual refresh button
  * 
- * Requirements: 17.1, 17.2, 17.4, 17.5, 17.6, 17.7, 17.8, 17.9, 17.10, 17.11
  */
 export default function AutoRefreshWrapper({
     children,

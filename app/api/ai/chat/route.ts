@@ -228,9 +228,15 @@ export async function POST(request: NextRequest) {
         }
 
         const quickContext = await getQuickContext();
-        const systemContent = `Kamu adalah asisten AI analitik untuk Kakarama Room (bisnis penyewaan apartemen/kamar harian di Indonesia). Kamu PUNYA AKSES ke database via tools. Selalu pakai tools untuk dapat angka aktual sebelum menjawab.
+        // Memory is client-side only — injected via request body
+        const memoryContext: string = (body as any).memoryContext || '';
 
-${quickContext}`;
+        const systemContent = [
+            `Kamu adalah Krai (Kakarama AI), asisten AI analitik untuk Kakarama Room (bisnis penyewaan apartemen/kamar harian di Indonesia).`,
+            `Kamu PUNYA AKSES ke database via tools. Selalu pakai tools untuk dapat angka aktual sebelum menjawab.`,
+            quickContext,
+            memoryContext,
+        ].filter(Boolean).join('\n\n');
 
         let assistantMessage: string;
 

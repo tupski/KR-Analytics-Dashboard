@@ -10,7 +10,6 @@ import { toZonedTime } from 'date-fns-tz';
  * Displays the current time in Asia/Jakarta timezone with a blinking colon separator.
  * Updates every second and blinks the colon every 500ms.
  * 
- * Requirements: 16.2, 16.3, 16.4, 16.5, 16.6, 16.7, 16.9
  */
 export default function RealTimeClock() {
     const [time, setTime] = useState<Date>(new Date());

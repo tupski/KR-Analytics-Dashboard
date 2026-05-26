@@ -1,6 +1,5 @@
 -- Migration: Create RPC function get_category_summary
 -- Purpose: Server-side aggregation of expenses by category for PengeluaranUnit_Tab
--- Requirements: 5.1, 5.6
 -- Run this in Supabase SQL Editor or via migration
 
 CREATE OR REPLACE FUNCTION get_category_summary(

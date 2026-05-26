@@ -27,7 +27,6 @@ import {
  * - Logo/branding at top
  * - Hidden on mobile devices
  * 
- * Requirements: 6.1, 6.3, 6.5, 6.7, 9.2, 9.3
  */
 export default function Sidebar() {
     const pathname = usePathname();
@@ -39,7 +38,7 @@ export default function Sidebar() {
         { label: 'Unit', href: '/unit', icon: Building },
         { label: 'Customer', href: '/customer', icon: Users },
         { label: 'Laporan', href: '/laporan', icon: Wallet },
-        { label: 'Analytics AI', href: '/analytics-ai', icon: Brain },
+        { label: 'AI Chat', href: '/analytics-ai', icon: Brain },
         { label: 'Pengaturan', href: '/pengaturan', icon: Settings },
     ];
 

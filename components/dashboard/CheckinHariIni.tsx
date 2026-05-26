@@ -16,7 +16,6 @@ interface CheckinHariIniProps {
  * Displays today's check-in list with location, room number, customer name, and time.
  * Shows maximum 5 items with a "Lihat Semua" link to view all check-ins.
  * 
- * Requirements: 4.1, 4.2, 4.4, 4.6, 4.7, 4.9, 4.10, 15.3
  */
 export default function CheckinHariIni({ items, isLoading = false }: CheckinHariIniProps) {
     // Show skeleton loader when loading

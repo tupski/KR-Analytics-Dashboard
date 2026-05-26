@@ -26,7 +26,6 @@ export const metadata: Metadata = {
  * - Consistent spacing and structure
  * - Error boundary for graceful error handling
  * 
- * Requirements: 6.1, 6.2, 9.1, 9.2, 7.8, 8.3
  */
 export default function RootLayout({
     children,
@@ -44,8 +43,9 @@ export default function RootLayout({
 
                         {/* Main Content Area */}
                         <div className="flex-1 flex flex-col overflow-hidden lg:ml-64">
-                            {/* Scrollable Content */}
-                            <div className="flex-1 overflow-y-auto pb-16 lg:pb-0">
+                            {/* Content — overflow-y-auto for normal scrolling pages.
+                                Chat page uses flex-1 + overflow-hidden to fill this container. */}
+                            <div className="flex-1 overflow-y-auto flex flex-col pb-16 lg:pb-0">
                                 {children}
                             </div>
 

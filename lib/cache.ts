@@ -11,7 +11,6 @@ import { unstable_cache } from 'next/cache';
  * - Automatic cache invalidation
  * - Tagged caching for selective revalidation
  * 
- * Requirements: 11.1, 11.4
  */
 
 // Cache duration in seconds

@@ -10,7 +10,6 @@ import { AlertTriangle, RefreshCw, Home } from 'lucide-react';
  * Catches errors in the dashboard page and displays a user-friendly error message.
  * Provides options to retry or return to home.
  * 
- * Requirements: 7.8, 8.3, 8.4, 8.5
  */
 export default function DashboardError({
     error,

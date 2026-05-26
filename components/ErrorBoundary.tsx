@@ -25,7 +25,6 @@ interface State {
  * - Retry button to recover from errors
  * - Error logging for debugging
  * 
- * Requirements: 7.8, 8.3, 8.4, 8.5
  */
 export default class ErrorBoundary extends Component<Props, State> {
     constructor(props: Props) {

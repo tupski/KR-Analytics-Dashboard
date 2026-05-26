@@ -9,7 +9,6 @@ import Link from 'next/link';
  * Displays a single KPI metric with value, label, icon, and optional trend indicator.
  * Supports loading states, error states, and Indonesian locale formatting.
  * 
- * Requirements: 1.1, 1.6, 1.7, 1.8, 1.9, 9.2, 9.3
  */
 
 interface TrendData {

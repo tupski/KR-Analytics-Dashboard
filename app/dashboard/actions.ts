@@ -23,7 +23,6 @@ import type {
  * 
  * @returns Promise<UnitStatusCounts> Object containing counts for each unit status
  * 
- * Requirements: 5.4, 5.5, 5.6, 5.7, 5.8
  */
 export async function fetchUnitStatus(): Promise<UnitStatusCounts> {
     const supabase = createServerClient();
@@ -85,7 +84,6 @@ export async function fetchUnitStatus(): Promise<UnitStatusCounts> {
  * @returns Array of check-in items for today, limited to 5 items
  * @throws Error if data fetching fails
  * 
- * Requirements: 4.2, 4.4, 4.11, 14.2
  */
 export async function fetchTodayCheckins(): Promise<CheckinItem[]> {
     const supabase = createServerClient();
@@ -139,7 +137,6 @@ export async function fetchTodayCheckins(): Promise<CheckinItem[]> {
  * @returns Array of check-out items for today, limited to 5 items
  * @throws Error if data fetching fails
  * 
- * Requirements: 4.3, 4.5, 4.11, 14.2
  */
 export async function fetchTodayCheckouts(): Promise<CheckoutItem[]> {
     const supabase = createServerClient();
@@ -261,7 +258,6 @@ function pctChange(curr: number, prev: number): number | null {
  * If compareMode provided, also fetches the same metrics for the comparison day
  * and includes percentage change.
  *
- * Requirements: 1.2, 1.3, 1.4, 1.5, 7.1, 7.2, 14.1, 14.2, 14.6
  */
 export async function fetchKPIData(compareMode?: KPICompareMode): Promise<KPIData> {
     const supabase = createServerClient();
@@ -463,7 +459,6 @@ function aggregateRevenueData(
  * @returns Promise<RevenueDataPoint[]> Array of revenue data points
  * @throws Error if data fetching fails
  * 
- * Requirements: 2.4, 2.5, 2.6, 2.7, 2.8, 7.2, 14.1
  */
 export async function fetchRevenueData(filter: RevenueFilter): Promise<RevenueDataPoint[]> {
     const supabase = createServerClient();
@@ -525,7 +520,6 @@ export async function fetchRevenueData(filter: RevenueFilter): Promise<RevenueDa
  * @param days Number of days to fetch (default 30)
  * @returns Promise<OccupancyDataPoint[]> Array of occupancy data points
  * 
- * Requirements: 3.3, 3.4, 7.2, 14.4
  */
 export async function fetchOccupancyData(days: number = 30): Promise<OccupancyDataPoint[]> {
     const supabase = createServerClient();

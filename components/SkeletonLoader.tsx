@@ -11,7 +11,6 @@
  * - Consistent animation
  * - Proper dimensions
  * 
- * Requirements: 1.6, 8.1, 8.2, 8.7
  */
 
 export function KPICardSkeleton() {

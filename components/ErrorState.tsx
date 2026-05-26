@@ -21,7 +21,6 @@ interface ErrorStateProps {
  * - Loading state during retry
  * - Consistent styling
  * 
- * Requirements: 7.8, 8.3, 8.4, 8.5
  */
 export default function ErrorState({
     title = 'Gagal Memuat Data',

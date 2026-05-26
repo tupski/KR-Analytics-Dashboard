@@ -17,7 +17,6 @@ import {
  * Shows the most important navigation items with icons.
  * Hidden on desktop (lg breakpoint and above).
  * 
- * Requirements: 6.2, 6.4, 6.6, 9.2
  */
 export default function MobileBottomNav() {
     const pathname = usePathname();

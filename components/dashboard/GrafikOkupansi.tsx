@@ -23,7 +23,6 @@ interface GrafikOkupansiProps {
  * - Smooth curve interpolation
  * - Loading and empty states
  * 
- * Requirements: 3.1, 3.2, 3.3, 3.5, 3.6, 3.7, 3.8, 15.2
  */
 export default function GrafikOkupansi({ data, period = 30, isLoading = false }: GrafikOkupansiProps) {
     // Format date for X-axis (Indonesian format)

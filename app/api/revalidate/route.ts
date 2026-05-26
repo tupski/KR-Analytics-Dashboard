@@ -12,7 +12,6 @@ import { CACHE_TAGS } from '@/lib/cache';
  * POST /api/revalidate
  * Body: { tag: 'kpi-data' } or { tag: 'all' }
  * 
- * Requirements: 11.1, 11.4
  */
 export async function POST(request: NextRequest) {
     try {

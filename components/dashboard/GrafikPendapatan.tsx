@@ -22,7 +22,6 @@ interface GrafikPendapatanProps {
  * - Loading states during data fetch
  * - Empty state when no data exists
  * 
- * Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 2.9, 2.10, 2.11, 2.12, 15.2
  */
 export default function GrafikPendapatan({ initialData, initialFilter }: GrafikPendapatanProps) {
     const [filter, setFilter] = useState<RevenueFilter>(initialFilter);
