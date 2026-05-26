@@ -1,68 +1,38 @@
 'use client';
 
-import { useState, useEffect, Suspense } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
-import { createBrowserClient } from '@/lib/supabase/client';
+import { useState, useTransition, Suspense } from 'react';
+import { useSearchParams } from 'next/navigation';
+import { loginAction } from './actions';
 import { Building, Mail, Lock, AlertCircle, Loader2 } from 'lucide-react';
 
 function LoginForm() {
-    const router = useRouter();
     const searchParams = useSearchParams();
-    const [email, setEmail] = useState('');
-    const [password, setPassword] = useState('');
-    const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [isPending, startTransition] = useTransition();
 
-    useEffect(() => {
+    // Check for error from URL params
+    useState(() => {
         const errorParam = searchParams.get('error');
         if (errorParam === 'unauthorized') {
             setError('Akses ditolak. Hanya super admin yang dapat mengakses dashboard.');
         }
-    }, [searchParams]);
+    });
 
-    const handleLogin = async (e: React.FormEvent) => {
+    const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
         e.preventDefault();
-        setLoading(true);
         setError(null);
 
-        try {
-            const supabase = createBrowserClient();
+        const formData = new FormData(e.currentTarget);
 
-            // Sign in with email and password
-            const { data, error: signInError } = await supabase.auth.signInWithPassword({
-                email,
-                password,
-            });
-
-            if (signInError) {
-                throw signInError;
+        startTransition(async () => {
+            const result = await loginAction(formData);
+            if (result?.error) {
+                setError(result.error);
+            } else if (result?.success) {
+                // Login berhasil - redirect langsung ke dashboard
+                window.location.href = '/dashboard';
             }
-
-            if (!data.session) {
-                throw new Error('Login gagal. Silakan coba lagi.');
-            }
-
-            // Check role
-            const { data: roleData, error: roleError } = await supabase
-                .from('user_roles')
-                .select('role')
-                .eq('user_id', data.session.user.id)
-                .limit(1)
-                .single();
-
-            if (roleData?.role !== 'super_admin') {
-                await supabase.auth.signOut();
-                throw new Error('Akses ditolak. Hanya super admin yang dapat login.');
-            }
-
-            // Success - redirect using window.location for reliable navigation
-            const redirect = searchParams.get('redirect') || '/dashboard';
-            window.location.href = redirect;
-        } catch (err: any) {
-            setError(err.message || 'Login gagal. Periksa email dan password Anda.');
-            setLoading(false);
-        }
-        // Don't set loading to false on success - let the redirect happen
+        });
     };
 
     return (
@@ -87,7 +57,7 @@ function LoginForm() {
                     </div>
                 )}
 
-                <form onSubmit={handleLogin} className="space-y-4">
+                <form onSubmit={handleSubmit} className="space-y-4">
                     {/* Email */}
                     <div>
                         <label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-1.5">
@@ -97,11 +67,10 @@ function LoginForm() {
                             <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
                             <input
                                 id="email"
+                                name="email"
                                 type="email"
-                                value={email}
-                                onChange={(e) => setEmail(e.target.value)}
                                 required
-                                disabled={loading}
+                                disabled={isPending}
                                 placeholder="admin@kakarama.com"
                                 className="w-full pl-10 pr-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-colors disabled:bg-gray-50 disabled:text-gray-500"
                             />
@@ -117,11 +86,10 @@ function LoginForm() {
                             <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
                             <input
                                 id="password"
+                                name="password"
                                 type="password"
-                                value={password}
-                                onChange={(e) => setPassword(e.target.value)}
                                 required
-                                disabled={loading}
+                                disabled={isPending}
                                 placeholder="••••••••"
                                 className="w-full pl-10 pr-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-colors disabled:bg-gray-50 disabled:text-gray-500"
                             />
@@ -131,10 +99,10 @@ function LoginForm() {
                     {/* Submit Button */}
                     <button
                         type="submit"
-                        disabled={loading}
+                        disabled={isPending}
                         className="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-2.5 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                     >
-                        {loading ? (
+                        {isPending ? (
                             <>
                                 <Loader2 className="w-4 h-4 animate-spin" />
                                 <span>Memproses login...</span>
