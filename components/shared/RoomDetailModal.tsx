@@ -31,21 +31,21 @@ export default function RoomDetailModal({ location, room, filter, onClose }: Pro
     const totalRevenue = details.reduce((s, d) => s + d.cashAmount + d.transferAmount, 0);
 
     return (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/50" onClick={onClose}>
-            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[80vh] overflow-hidden flex flex-col" onClick={e => e.stopPropagation()}>
+        <div className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center p-2 sm:p-4 bg-black/50" onClick={onClose}>
+            <div className="bg-white rounded-t-2xl sm:rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] sm:max-h-[80vh] overflow-hidden flex flex-col" onClick={e => e.stopPropagation()}>
                 {/* Header */}
-                <div className="px-5 py-4 border-b border-gray-200 flex items-center justify-between bg-slate-50">
-                    <div>
-                        <p className="text-xs text-gray-500 uppercase">{location}</p>
-                        <h2 className="text-2xl font-bold text-gray-900">{room}</h2>
+                <div className="px-4 sm:px-5 py-3 sm:py-4 border-b border-gray-200 flex items-center justify-between bg-slate-50">
+                    <div className="min-w-0">
+                        <p className="text-xs text-gray-500 uppercase truncate">{location}</p>
+                        <h2 className="text-xl sm:text-2xl font-bold text-gray-900 truncate">{room}</h2>
                     </div>
-                    <button onClick={onClose} className="p-2 hover:bg-gray-200 rounded-lg" aria-label="Tutup">
+                    <button onClick={onClose} className="p-2 hover:bg-gray-200 rounded-lg flex-shrink-0" aria-label="Tutup">
                         <X className="w-5 h-5" />
                     </button>
                 </div>
 
                 {/* Body */}
-                <div className="flex-1 overflow-y-auto p-5 space-y-3">
+                <div className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-3">
                     {loading ? (
                         <div className="flex items-center justify-center py-8">
                             <Loader2 className="w-6 h-6 text-blue-600 animate-spin" />

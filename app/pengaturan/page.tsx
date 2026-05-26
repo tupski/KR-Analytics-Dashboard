@@ -5,15 +5,15 @@ import { Settings } from 'lucide-react';
 export default function PengaturanPage() {
     return (
         <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50/30">
-            <div className="bg-white border-b border-gray-200 px-4 sm:px-6 lg:px-8 py-4 sm:py-6">
-                <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Pengaturan</h1>
-                <p className="mt-1 text-sm text-gray-500">Konfigurasi aplikasi dan integrasi AI</p>
+            <div className="bg-white border-b border-gray-200 px-4 sm:px-6 lg:px-8 py-3 sm:py-5">
+                <h1 className="text-xl sm:text-2xl lg:text-3xl font-bold text-gray-900">Pengaturan</h1>
+                <p className="mt-1 text-xs sm:text-sm text-gray-500">Konfigurasi aplikasi dan integrasi AI</p>
             </div>
 
-            <main className="px-4 sm:px-6 lg:px-8 py-6 space-y-6">
+            <main className="px-4 sm:px-6 lg:px-8 py-4 sm:py-6 space-y-4 sm:space-y-6">
                 {/* AI Settings */}
                 <div>
-                    <h2 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
+                    <h2 className="text-base sm:text-lg font-semibold text-gray-900 mb-3 sm:mb-4 flex items-center gap-2">
                         <Settings className="w-5 h-5 text-gray-600" />
                         Konfigurasi AI
                     </h2>

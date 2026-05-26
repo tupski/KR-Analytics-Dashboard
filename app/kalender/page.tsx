@@ -56,22 +56,22 @@ export default async function KalenderPage() {
 
     return (
         <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50/30">
-            <div className="bg-white border-b border-gray-200 px-4 sm:px-6 lg:px-8 py-4 sm:py-6">
-                <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Kalender</h1>
-                <p className="mt-1 text-sm text-gray-500 capitalize">
+            <div className="bg-white border-b border-gray-200 px-4 sm:px-6 lg:px-8 py-3 sm:py-5">
+                <h1 className="text-xl sm:text-2xl lg:text-3xl font-bold text-gray-900">Kalender</h1>
+                <p className="mt-1 text-xs sm:text-sm text-gray-500 capitalize">
                     Kalender booking bulanan — {monthLabel}
                 </p>
             </div>
 
-            <main className="px-4 sm:px-6 lg:px-8 py-6 space-y-6">
+            <main className="px-4 sm:px-6 lg:px-8 py-4 sm:py-6 space-y-4 sm:space-y-6">
                 <AIInsightCard
                     title="Insight Kalender"
                     prompt="Analisis pola booking bulan ini: hari apa yang paling ramai, apakah ada pola weekend vs weekday vs libur nasional, dan prediksi untuk minggu depan. Maksimal 4 kalimat."
                 />
 
                 {/* Calendar Card */}
-                <div className="bg-white rounded-xl border border-gray-200 p-4 sm:p-6 shadow-sm">
-                    <h2 className="text-lg font-semibold text-gray-900 mb-4 capitalize">{monthLabel}</h2>
+                <div className="bg-white rounded-xl border border-gray-200 p-3 sm:p-4 lg:p-6 shadow-sm">
+                    <h2 className="text-base sm:text-lg font-semibold text-gray-900 mb-3 sm:mb-4 capitalize">{monthLabel}</h2>
 
                     {/* Day-of-week headers */}
                     <div className="grid grid-cols-7 gap-1 mb-1">
@@ -124,10 +124,10 @@ export default async function KalenderPage() {
 
                                     {/* Day number */}
                                     <span className={`font-semibold leading-none ${isToday ? 'text-blue-700' :
-                                            holidayName ? 'text-red-600' :
-                                                weekend ? 'text-orange-600' :
-                                                    isGreen ? 'text-white' :
-                                                        'text-gray-800'
+                                        holidayName ? 'text-red-600' :
+                                            weekend ? 'text-orange-600' :
+                                                isGreen ? 'text-white' :
+                                                    'text-gray-800'
                                         }`}>
                                         {format(day, 'd')}
                                     </span>

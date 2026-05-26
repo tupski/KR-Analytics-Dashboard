@@ -21,9 +21,9 @@ export default function CheckinHariIni({ items, isLoading = false }: CheckinHari
     // Show skeleton loader when loading
     if (isLoading) {
         return (
-            <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+            <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4 sm:p-6">
                 <div className="flex items-center justify-between mb-4">
-                    <h2 className="text-lg font-semibold text-gray-900">Check-in Hari Ini</h2>
+                    <h2 className="text-base sm:text-lg font-semibold text-gray-900">Check-in Hari Ini</h2>
                     <div className="h-4 w-20 bg-gray-200 rounded animate-pulse"></div>
                 </div>
                 <div className="space-y-3">
@@ -45,9 +45,9 @@ export default function CheckinHariIni({ items, isLoading = false }: CheckinHari
     // Show empty state when no check-ins exist
     if (!items || items.length === 0) {
         return (
-            <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+            <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4 sm:p-6">
                 <div className="flex items-center justify-between mb-4">
-                    <h2 className="text-lg font-semibold text-gray-900">Check-in Hari Ini</h2>
+                    <h2 className="text-base sm:text-lg font-semibold text-gray-900">Check-in Hari Ini</h2>
                 </div>
                 <div className="text-center py-8">
                     <div className="inline-flex items-center justify-center w-12 h-12 rounded-full bg-gray-100 mb-3">
@@ -64,11 +64,11 @@ export default function CheckinHariIni({ items, isLoading = false }: CheckinHari
     const hasMore = items.length > 5;
 
     return (
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4 sm:p-6">
             {/* Header */}
             <div className="flex items-center justify-between mb-4">
-                <h2 className="text-lg font-semibold text-gray-900">Check-in Hari Ini</h2>
-                <span className="text-sm font-medium text-blue-600 bg-blue-50 px-2.5 py-1 rounded-full">
+                <h2 className="text-base sm:text-lg font-semibold text-gray-900">Check-in Hari Ini</h2>
+                <span className="text-xs sm:text-sm font-medium text-blue-600 bg-blue-50 px-2.5 py-1 rounded-full">
                     {items.length} {items.length === 1 ? 'tamu' : 'tamu'}
                 </span>
             </div>

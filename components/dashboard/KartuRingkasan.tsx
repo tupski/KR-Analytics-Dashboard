@@ -99,8 +99,8 @@ function TrendIndicator({ trend }: { trend: TrendData }) {
     const trendSign = trend.isPositive ? '+' : '';
 
     return (
-        <div className={`flex items-center text-sm ${trendColor}`}>
-            <span className="mr-1">{trendIcon}</span>
+        <div className={`flex items-center text-xs sm:text-sm ${trendColor}`}>
+            <span className="mr-0.5 sm:mr-1">{trendIcon}</span>
             <span>{trendSign}{trend.value.toFixed(2)}%</span>
         </div>
     );
@@ -120,10 +120,10 @@ export default function KartuRingkasan({
     onRetry,
 }: KartuRingkasanProps) {
     const cardContent = (
-        <div className={`bg-white rounded-lg shadow-md p-6 border border-gray-200 hover:shadow-lg transition-shadow duration-200 ${href ? 'cursor-pointer' : ''}`}>
+        <div className={`bg-white rounded-lg shadow-md p-4 sm:p-6 border border-gray-200 hover:shadow-lg transition-shadow duration-200 ${href ? 'cursor-pointer' : ''}`}>
             {/* Icon Section */}
-            <div className="flex items-start justify-between mb-4">
-                <div className="flex-shrink-0 w-12 h-12 bg-blue-600 rounded-lg flex items-center justify-center text-white">
+            <div className="flex items-start justify-between mb-3 sm:mb-4">
+                <div className="flex-shrink-0 w-10 h-10 sm:w-12 sm:h-12 bg-blue-600 rounded-lg flex items-center justify-center text-white">
                     {icon}
                 </div>
                 {trend && !isLoading && !error && (
@@ -132,15 +132,15 @@ export default function KartuRingkasan({
             </div>
 
             {/* Content Section */}
-            <div className="min-h-[80px]">
+            <div className="min-h-[64px] sm:min-h-[80px]">
                 {isLoading ? (
                     <SkeletonLoader />
                 ) : error ? (
                     <ErrorState error={error} onRetry={onRetry} />
                 ) : (
                     <>
-                        <h3 className="text-sm font-medium text-gray-600 mb-2">{title}</h3>
-                        <p className="text-2xl font-bold text-gray-900 mb-1">
+                        <h3 className="text-xs sm:text-sm font-medium text-gray-600 mb-1 sm:mb-2">{title}</h3>
+                        <p className="text-lg sm:text-2xl font-bold text-gray-900 mb-1 break-words">
                             {formatValue(value)}
                         </p>
                     </>

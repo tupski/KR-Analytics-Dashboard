@@ -68,20 +68,20 @@ export default async function CustomerPage({
 
     return (
         <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50/30">
-            <div className="bg-white border-b border-gray-200 px-4 sm:px-6 lg:px-8 py-4 sm:py-6">
-                <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Customer</h1>
-                <p className="mt-1 text-sm text-gray-500">Data tamu yang pernah menginap di Kakarama Room</p>
+            <div className="bg-white border-b border-gray-200 px-4 sm:px-6 lg:px-8 py-3 sm:py-5">
+                <h1 className="text-xl sm:text-2xl lg:text-3xl font-bold text-gray-900">Customer</h1>
+                <p className="mt-1 text-xs sm:text-sm text-gray-500">Data tamu yang pernah menginap di Kakarama Room</p>
             </div>
 
-            <main className="px-4 sm:px-6 lg:px-8 py-6 space-y-6">
+            <main className="px-4 sm:px-6 lg:px-8 py-4 sm:py-6 space-y-4 sm:space-y-6">
                 <AIInsightCard
                     title="Insight Customer"
                     prompt="Analisis data customer: sebutkan jumlah tamu unik bulan ini, apakah ada tamu repeat, dan lokasi favorit tamu. Maksimal 3 kalimat."
                 />
 
                 {/* Search */}
-                <form action="/customer" className="bg-white rounded-lg border border-gray-200 p-4 shadow-sm">
-                    <div className="flex gap-3">
+                <form action="/customer" className="bg-white rounded-lg border border-gray-200 p-3 sm:p-4 shadow-sm">
+                    <div className="flex gap-2 sm:gap-3">
                         <div className="relative flex-1">
                             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
                             <input
@@ -89,14 +89,14 @@ export default async function CustomerPage({
                                 name="search"
                                 defaultValue={search}
                                 placeholder="Cari nama tamu..."
-                                className="w-full pl-10 pr-4 py-2.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
+                                className="w-full pl-10 pr-4 py-2 sm:py-2.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
                             />
                         </div>
                         {/* Preserve pageSize when searching */}
                         {pageSize !== DEFAULT_PAGE_SIZE && (
                             <input type="hidden" name="pageSize" value={pageSize} />
                         )}
-                        <button type="submit" className="px-5 py-2.5 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700">
+                        <button type="submit" className="px-4 sm:px-5 py-2 sm:py-2.5 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 flex-shrink-0">
                             Cari
                         </button>
                     </div>

@@ -39,10 +39,10 @@ export default function RealTimeClock() {
     const minutes = format(jakartaTime, 'mm');
 
     return (
-        <div className="flex items-center text-2xl font-mono text-gray-900">
+        <div className="flex items-center text-sm sm:text-base font-mono text-gray-700 flex-shrink-0 tabular-nums">
             <span>{hours}</span>
             <span
-                className="transition-opacity duration-100"
+                className="transition-opacity duration-100 mx-px"
                 style={{ opacity: showColon ? 1 : 0 }}
             >
                 :

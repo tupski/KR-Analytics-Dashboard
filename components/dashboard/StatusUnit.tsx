@@ -43,17 +43,17 @@ export default function StatusUnit({ statusCounts, isLoading = false }: StatusUn
     const total = statusCounts.tersedia + statusCounts.ditempati;
 
     return (
-        <div className="rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
+        <div className="rounded-lg border border-gray-200 bg-white p-4 sm:p-6 shadow-sm">
             <div className="flex items-center justify-between mb-4">
-                <h3 className="text-lg font-semibold text-gray-900">Status Unit</h3>
-                <div className="flex items-center gap-1.5 text-sm text-gray-500">
+                <h3 className="text-base sm:text-lg font-semibold text-gray-900">Status Unit</h3>
+                <div className="flex items-center gap-1.5 text-xs sm:text-sm text-gray-500">
                     <Building className="w-4 h-4" />
                     <span>{total} total</span>
                 </div>
             </div>
 
             {/* Status Grid */}
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-2 gap-3 sm:gap-4">
                 {statusItems.map((item) => {
                     const Icon = item.icon;
                     const count = statusCounts[item.key];

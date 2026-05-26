@@ -210,7 +210,11 @@ async function runAnthropicLoop(
 export async function POST(request: NextRequest) {
     try {
         const body = await request.json();
-        const { messages, config } = body as { messages: any[]; config: AIConfig };
+        const { messages, config, thinkingMode } = body as {
+            messages: any[];
+            config: AIConfig;
+            thinkingMode?: 'auto' | 'instant' | 'thinking';
+        };
 
         const resolvedConfig: AIConfig = {
             provider: config?.provider || process.env.AI_PROVIDER || 'deepseek',
@@ -229,6 +233,22 @@ export async function POST(request: NextRequest) {
         const quickContext = await getQuickContext();
         // Memory is client-side only — injected via request body
         const memoryContext: string = (body as any).memoryContext || '';
+
+        // Thinking mode instruction
+        let thinkingInstruction = '';
+        if (thinkingMode === 'instant') {
+            thinkingInstruction = `## Mode: INSTANT
+Owner ingin jawaban cepat dan langsung. Berikan ringkas, fokus pada angka kunci dan 1-2 insight terpenting. Hindari analisis panjang. Maksimal 5 kalimat atau 1 paragraf + tabel kecil jika perlu.`;
+        } else if (thinkingMode === 'thinking') {
+            thinkingInstruction = `## Mode: DEEP THINKING
+Owner ingin analisis mendalam. Ambil waktu untuk:
+1. Pikirkan dahulu — pakai tools secara strategis untuk dapat data lengkap
+2. Cari 3-5 angle analisis yang berbeda
+3. Identifikasi pola tersembunyi dan korelasi antar metrik
+4. Berikan struktur lengkap: Executive Summary → Analisis → Insight → Risiko → Rekomendasi
+5. Sertakan visualisasi hint jika cocok`;
+        }
+        // 'auto' → no special instruction, default behavior
 
         const systemContent = [
             // ── IDENTITY & ROLE ──────────────────────────────────────────────
@@ -344,7 +364,7 @@ Contoh rekomendasi baik (spesifik):
             // ── FORMAT ───────────────────────────────────────────────────────
             `## Format Jawaban
 
-- **Bahasa**: Indonesia, profesional tapi mudah dipahami owner bisnis
+- **Bahasa**: WAJIB Bahasa Indonesia. Hindari kata bahasa Inggris jika sudah ada padanan Indonesia (gunakan "pendapatan" bukan "revenue", "tingkat hunian" bukan "occupancy", "tamu" bukan "guest", "tren" bukan "trend"). Jika TERPAKSA harus pakai istilah asing, bungkus dengan tanda asterisk satu untuk italic — contoh: *occupancy rate*, *cross-selling*, *property*. Singkatan teknis universal seperti KPI, ID, OTA tidak perlu di-italic.
 - **Style**: Seperti business consultant, bukan technical report
 - **Markdown**: Gunakan heading ##/###, tabel, bold, list dengan emoji prefix
 - **Angka penting**: Selalu **bold**
@@ -370,6 +390,7 @@ Hanya tampilkan jika benar-benar relevan dan menambah nilai.`,
 
             quickContext,
             memoryContext,
+            thinkingInstruction,
         ].filter(Boolean).join('\n\n');
 
         let assistantMessage: string;
@@ -436,11 +457,82 @@ Hanya tampilkan jika benar-benar relevan dan menambah nilai.`,
                 );
                 break;
             }
+            case 'gemini': {
+                // Gemini uses OpenAI-compatible endpoint via official compatibility URL
+                const apiUrl = resolvedConfig.baseUrl || 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions';
+                const headers = {
+                    'Content-Type': 'application/json',
+                    Authorization: `Bearer ${resolvedConfig.apiKey}`,
+                };
+                assistantMessage = await runOpenAILoop(
+                    apiUrl,
+                    headers,
+                    resolvedConfig.model || 'gemini-2.0-flash',
+                    systemContent,
+                    messages,
+                );
+                break;
+            }
+            case 'groq': {
+                const apiUrl = resolvedConfig.baseUrl || 'https://api.groq.com/openai/v1/chat/completions';
+                const headers = {
+                    'Content-Type': 'application/json',
+                    Authorization: `Bearer ${resolvedConfig.apiKey}`,
+                };
+                assistantMessage = await runOpenAILoop(
+                    apiUrl,
+                    headers,
+                    resolvedConfig.model || 'llama-3.3-70b-versatile',
+                    systemContent,
+                    messages,
+                );
+                break;
+            }
+            case 'openrouter': {
+                const apiUrl = resolvedConfig.baseUrl || 'https://openrouter.ai/api/v1/chat/completions';
+                const headers: Record<string, string> = {
+                    'Content-Type': 'application/json',
+                    Authorization: `Bearer ${resolvedConfig.apiKey}`,
+                    'HTTP-Referer': 'https://kakarama.com',
+                    'X-Title': 'Kakarama Room Analytics',
+                };
+                assistantMessage = await runOpenAILoop(
+                    apiUrl,
+                    headers,
+                    resolvedConfig.model || 'meta-llama/llama-3.3-70b-instruct:free',
+                    systemContent,
+                    messages,
+                );
+                break;
+            }
+            case 'kiro': {
+                // Kiro uses an OpenAI-compatible proxy — base URL is required
+                const apiUrl = resolvedConfig.baseUrl || '';
+                if (!apiUrl) {
+                    return NextResponse.json({ error: 'Base URL Kiro belum dikonfigurasi.' }, { status: 400 });
+                }
+                const headers = {
+                    'Content-Type': 'application/json',
+                    Authorization: `Bearer ${resolvedConfig.apiKey}`,
+                };
+                assistantMessage = await runOpenAILoop(
+                    apiUrl,
+                    headers,
+                    resolvedConfig.model || 'kiro-claude-sonnet-4',
+                    systemContent,
+                    messages,
+                );
+                break;
+            }
             default:
-                return NextResponse.json({ error: 'Provider tidak didukung' }, { status: 400 });
+                return NextResponse.json({ error: `Provider "${resolvedConfig.provider}" tidak didukung` }, { status: 400 });
         }
 
-        return NextResponse.json({ message: assistantMessage });
+        return NextResponse.json({
+            message: assistantMessage,
+            model: resolvedConfig.model,
+            provider: resolvedConfig.provider,
+        });
     } catch (error: any) {
         console.error('AI chat error:', error);
         return NextResponse.json(

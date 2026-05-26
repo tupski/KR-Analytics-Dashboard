@@ -72,17 +72,17 @@ export default async function DashboardPage({
                 <HeaderDashboard />
 
                 {/* Main Content */}
-                <main className="px-4 sm:px-6 lg:px-8 py-6 space-y-6">
+                <main className="px-4 sm:px-6 lg:px-8 py-4 sm:py-6 space-y-4 sm:space-y-6">
                     {/* Top toolbar with compare switcher */}
-                    <div className="flex flex-wrap items-center justify-between gap-3 bg-white rounded-lg border border-gray-200 px-4 py-3 shadow-sm">
-                        <div className="flex items-center gap-2 text-xs text-gray-600">
+                    <div className="flex flex-wrap items-center justify-between gap-2 sm:gap-3 bg-white rounded-lg border border-gray-200 px-3 sm:px-4 py-2.5 sm:py-3 shadow-sm">
+                        <div className="flex items-center gap-2 text-xs text-gray-600 min-w-0 flex-1">
                             {kpiData.prev ? (
                                 <>
-                                    <span className="font-semibold text-blue-700">Mode Bandingkan:</span>
-                                    <span>Hari Ini vs {kpiData.prev.label}</span>
+                                    <span className="font-semibold text-blue-700 flex-shrink-0">Bandingkan:</span>
+                                    <span className="truncate">Hari Ini vs {kpiData.prev.label}</span>
                                 </>
                             ) : (
-                                <span>Tampilkan KPI hari ini. Pilih mode bandingkan untuk melihat perubahan.</span>
+                                <span className="truncate">Pilih mode bandingkan untuk melihat perubahan.</span>
                             )}
                         </div>
                         <CompareSwitcher current={compareMode} />
@@ -96,7 +96,7 @@ export default async function DashboardPage({
 
                     {/* KPI Cards Section */}
                     <section>
-                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 lg:gap-6">
+                        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 lg:gap-6">
                             <KartuRingkasan
                                 title="Booking Hari Ini"
                                 value={kpiData.bookingToday}
@@ -138,7 +138,7 @@ export default async function DashboardPage({
                     </section>
 
                     {/* Charts Section */}
-                    <section className="grid grid-cols-1 lg:grid-cols-2 gap-4 lg:gap-6">
+                    <section className="grid grid-cols-1 lg:grid-cols-2 gap-3 sm:gap-4 lg:gap-6">
                         <GrafikPendapatan
                             initialData={revenueData}
                             initialFilter="daily"
@@ -150,7 +150,7 @@ export default async function DashboardPage({
                     </section>
 
                     {/* Operational Section */}
-                    <section className="grid grid-cols-1 lg:grid-cols-3 gap-4 lg:gap-6">
+                    <section className="grid grid-cols-1 lg:grid-cols-3 gap-3 sm:gap-4 lg:gap-6">
                         <CheckinHariIni items={checkinsData} />
                         <CheckoutHariIni items={checkoutsData} />
                         <StatusUnit statusCounts={unitStatusData} />

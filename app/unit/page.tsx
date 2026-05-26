@@ -25,14 +25,14 @@ export default async function UnitPage({
 
     return (
         <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50/30">
-            <div className="bg-white border-b border-gray-200 px-4 sm:px-6 lg:px-8 py-4 sm:py-6">
-                <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Unit</h1>
-                <p className="mt-1 text-sm text-gray-500">
+            <div className="bg-white border-b border-gray-200 px-4 sm:px-6 lg:px-8 py-3 sm:py-5">
+                <h1 className="text-xl sm:text-2xl lg:text-3xl font-bold text-gray-900">Unit</h1>
+                <p className="mt-1 text-xs sm:text-sm text-gray-500">
                     Kelola dan pantau status seluruh unit kamar Kakarama Room
                 </p>
             </div>
 
-            <main className="px-4 sm:px-6 lg:px-8 py-6 space-y-6">
+            <main className="px-4 sm:px-6 lg:px-8 py-4 sm:py-6 space-y-4 sm:space-y-6">
                 {/* Sticky filter header — visible on all device sizes */}
                 <UnitStickyHeader
                     locations={locations}

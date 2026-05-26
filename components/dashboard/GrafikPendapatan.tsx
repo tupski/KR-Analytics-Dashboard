@@ -96,16 +96,16 @@ export default function GrafikPendapatan({ initialData, initialFilter }: GrafikP
     // Show empty state
     if (!data || data.length === 0) {
         return (
-            <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-                <div className="flex items-center justify-between mb-6">
-                    <h2 className="text-lg font-semibold text-gray-900">Grafik Pendapatan</h2>
-                    <div className="flex gap-2">
+            <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4 sm:p-6">
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between mb-4 sm:mb-6 gap-3">
+                    <h2 className="text-base sm:text-lg font-semibold text-gray-900">Grafik Pendapatan</h2>
+                    <div className="flex gap-1.5 sm:gap-2 flex-wrap">
                         {filters.map((f) => (
                             <button
                                 key={f.value}
                                 onClick={() => handleFilterChange(f.value)}
                                 disabled={isPending}
-                                className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${filter === f.value
+                                className={`px-2.5 sm:px-3 py-1 sm:py-1.5 text-xs sm:text-sm font-medium rounded-md transition-colors ${filter === f.value
                                     ? 'bg-blue-600 text-white'
                                     : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
                                     } disabled:opacity-50 disabled:cursor-not-allowed`}
@@ -115,7 +115,7 @@ export default function GrafikPendapatan({ initialData, initialFilter }: GrafikP
                         ))}
                     </div>
                 </div>
-                <div className="flex items-center justify-center h-80 text-gray-500">
+                <div className="flex items-center justify-center h-64 sm:h-80 text-gray-500">
                     <div className="text-center">
                         <svg
                             className="mx-auto h-12 w-12 text-gray-400"
@@ -138,16 +138,16 @@ export default function GrafikPendapatan({ initialData, initialFilter }: GrafikP
     }
 
     return (
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between mb-6 gap-4">
-                <h2 className="text-lg font-semibold text-gray-900">Grafik Pendapatan</h2>
-                <div className="flex gap-2 flex-wrap">
+        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4 sm:p-6">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between mb-4 sm:mb-6 gap-3">
+                <h2 className="text-base sm:text-lg font-semibold text-gray-900">Grafik Pendapatan</h2>
+                <div className="flex gap-1.5 sm:gap-2 flex-wrap">
                     {filters.map((f) => (
                         <button
                             key={f.value}
                             onClick={() => handleFilterChange(f.value)}
                             disabled={isPending}
-                            className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${filter === f.value
+                            className={`px-2.5 sm:px-3 py-1 sm:py-1.5 text-xs sm:text-sm font-medium rounded-md transition-colors ${filter === f.value
                                 ? 'bg-blue-600 text-white'
                                 : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
                                 } disabled:opacity-50 disabled:cursor-not-allowed`}

@@ -36,22 +36,22 @@ export default function UnitGrid({ units, dateFilter }: UnitGridProps) {
     };
 
     return (
-        <div className="space-y-6">
+        <div className="space-y-4 sm:space-y-6">
             {/* View toggle */}
-            <div className="flex items-center justify-between">
-                <h2 className="text-lg font-semibold text-gray-900">
+            <div className="flex items-center justify-between gap-2">
+                <h2 className="text-base sm:text-lg font-semibold text-gray-900 truncate">
                     Daftar Unit ({units.length})
                 </h2>
-                <div className="flex items-center gap-1 bg-gray-100 rounded-lg p-1">
+                <div className="flex items-center gap-1 bg-gray-100 rounded-lg p-1 flex-shrink-0">
                     <button
                         onClick={() => setViewMode('grid')}
-                        className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${viewMode === 'grid' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-600'}`}
+                        className={`px-2.5 sm:px-3 py-1 sm:py-1.5 text-xs sm:text-sm font-medium rounded-md transition-colors ${viewMode === 'grid' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-600'}`}
                     >
                         Grid
                     </button>
                     <button
                         onClick={() => setViewMode('list')}
-                        className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${viewMode === 'list' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-600'}`}
+                        className={`px-2.5 sm:px-3 py-1 sm:py-1.5 text-xs sm:text-sm font-medium rounded-md transition-colors ${viewMode === 'list' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-600'}`}
                     >
                         List
                     </button>
@@ -68,13 +68,13 @@ export default function UnitGrid({ units, dateFilter }: UnitGridProps) {
                     </h3>
 
                     {viewMode === 'grid' ? (
-                        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 xl:grid-cols-8 gap-3">
+                        <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-8 gap-2 sm:gap-3">
                             {locationUnits.map((unit) => (
                                 <UnitCard key={unit.id} unit={unit} onClick={() => openDetail(unit)} />
                             ))}
                         </div>
                     ) : (
-                        <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
+                        <div className="bg-white rounded-lg border border-gray-200 overflow-x-auto">
                             <table className="w-full text-sm">
                                 <thead className="bg-gray-50 border-b border-gray-200">
                                     <tr>
@@ -90,8 +90,8 @@ export default function UnitGrid({ units, dateFilter }: UnitGridProps) {
                                             className={`hover:bg-gray-50 ${unit.isOccupiedToday ? 'cursor-pointer' : ''}`}
                                             onClick={() => openDetail(unit)}
                                         >
-                                            <td className="px-4 py-2.5 font-medium text-gray-900">{unit.name}</td>
-                                            <td className="px-4 py-2.5">
+                                            <td className="px-4 py-2.5 font-medium text-gray-900 whitespace-nowrap">{unit.name}</td>
+                                            <td className="px-4 py-2.5 whitespace-nowrap">
                                                 {unit.isOccupiedToday ? (
                                                     <span className="inline-flex items-center gap-1 text-xs font-medium text-orange-700 bg-orange-50 px-2 py-0.5 rounded-full">
                                                         <User className="w-3 h-3" /> Terisi
@@ -102,7 +102,7 @@ export default function UnitGrid({ units, dateFilter }: UnitGridProps) {
                                                     </span>
                                                 )}
                                             </td>
-                                            <td className="px-4 py-2.5 text-gray-600">
+                                            <td className="px-4 py-2.5 text-gray-600 whitespace-nowrap">
                                                 {unit.currentGuest || '-'}
                                             </td>
                                         </tr>
@@ -115,7 +115,7 @@ export default function UnitGrid({ units, dateFilter }: UnitGridProps) {
             ))}
 
             {/* Legend */}
-            <div className="flex items-center gap-6 text-sm text-gray-600">
+            <div className="flex flex-wrap items-center gap-3 sm:gap-6 text-xs sm:text-sm text-gray-600">
                 <div className="flex items-center gap-2">
                     <div className="w-4 h-4 rounded bg-green-100 border border-green-300"></div>
                     <span>Tersedia</span>

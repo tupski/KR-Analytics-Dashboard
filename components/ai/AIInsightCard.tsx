@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { RefreshCw, Sparkles, ChevronDown, ChevronUp, Lightbulb, GitCompareArrows, ChevronRight } from 'lucide-react';
 import MarkdownRenderer from './MarkdownRenderer';
+import { resolveActive } from '@/lib/ai/config';
 
 interface AIInsightCardProps {
     prompt: string;
@@ -11,7 +12,6 @@ interface AIInsightCardProps {
     alternativeQuestions?: string[];
 }
 
-const STORAGE_KEY = 'kr-ai-config';
 const CACHE_PREFIX = 'kr-ai-insight-cache-';
 const CACHE_TTL = 10 * 60 * 1000; // 10 minutes
 
@@ -49,17 +49,6 @@ export default function AIInsightCard({
     const getCacheKey = (p: string, withCompare: boolean) =>
         CACHE_PREFIX + btoa(encodeURIComponent(p + (withCompare ? '|cmp' : ''))).slice(0, 32);
 
-    const getConfig = () => {
-        try {
-            const stored = localStorage.getItem(STORAGE_KEY);
-            if (stored) {
-                const config = JSON.parse(stored);
-                if (config.apiKey) return config;
-            }
-        } catch { }
-        return { provider: '', apiKey: '', model: '', baseUrl: '' };
-    };
-
     const getCachedInsight = (p: string, withCompare: boolean): string | null => {
         try {
             const cached = sessionStorage.getItem(getCacheKey(p, withCompare));
@@ -94,7 +83,12 @@ export default function AIInsightCard({
         setDynamicSuggestions([]);
 
         try {
-            const config = getConfig();
+            const resolved = resolveActive(withCompare ? 'thinking' : 'auto', false);
+            if (!resolved) {
+                setHasConfig(false);
+                setLoading(false);
+                return;
+            }
             const finalPrompt = withCompare ? p + COMPARE_PROMPT_SUFFIX : p;
             const res = await fetch('/api/ai/chat', {
                 method: 'POST',
@@ -102,12 +96,13 @@ export default function AIInsightCard({
                 body: JSON.stringify({
                     messages: [{ role: 'user', content: finalPrompt }],
                     config: {
-                        provider: config.provider === 'custom' ? 'openai-compatible' : config.provider,
-                        apiKey: config.apiKey,
-                        model: config.model,
-                        baseUrl: config.baseUrl || undefined,
+                        provider: resolved.providerId,
+                        apiKey: resolved.conf.apiKey,
+                        model: resolved.modelId,
+                        baseUrl: resolved.conf.baseUrl,
                     },
                     contextOptions: { includeHistory: withCompare },
+                    thinkingMode: withCompare ? 'thinking' : 'auto',
                 }),
             });
 
@@ -137,15 +132,15 @@ export default function AIInsightCard({
     /** Generate 2 context-aware follow-up question suggestions */
     const generateDynamicSuggestions = async (originalPrompt: string, insightText: string) => {
         try {
-            const config = getConfig();
-            if (!config.apiKey) return;
+            const resolved = resolveActive('instant', false);
+            if (!resolved) return;
 
-            const suggPrompt = `Kamu adalah Krai, AI Business Copilot Kakarama Room. Berdasarkan pertanyaan insight dan jawabannya berikut, hasilkan TEPAT 2 pertanyaan lanjutan yang spesifik dan actionable untuk membantu owner mendapat insight bisnis lebih dalam. Kembalikan HANYA 2 baris teks tanpa nomor/bullet.
+            const suggPrompt = `Kamu adalah Krai. Berdasarkan pertanyaan dan jawabannya, hasilkan TEPAT 2 pertanyaan lanjutan yang spesifik dan actionable untuk owner. Kembalikan HANYA 2 baris teks tanpa nomor/bullet.
 
-Pertanyaan awal: ${originalPrompt.slice(0, 150)}
+Pertanyaan: ${originalPrompt.slice(0, 150)}
 Insight: ${insightText.slice(0, 300)}
 
-2 pertanyaan lanjutan:`;
+2 pertanyaan:`;
 
             const res = await fetch('/api/ai/chat', {
                 method: 'POST',
@@ -153,12 +148,13 @@ Insight: ${insightText.slice(0, 300)}
                 body: JSON.stringify({
                     messages: [{ role: 'user', content: suggPrompt }],
                     config: {
-                        provider: config.provider === 'custom' ? 'openai-compatible' : config.provider,
-                        apiKey: config.apiKey,
-                        model: config.model,
-                        baseUrl: config.baseUrl || undefined,
+                        provider: resolved.providerId,
+                        apiKey: resolved.conf.apiKey,
+                        model: resolved.modelId,
+                        baseUrl: resolved.conf.baseUrl,
                     },
                     memoryContext: '',
+                    thinkingMode: 'instant',
                 }),
             });
 

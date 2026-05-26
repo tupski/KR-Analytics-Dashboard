@@ -84,20 +84,20 @@ export default function ExpenseCategoryModal({ category, filter, onClose }: Prop
 
     return (
         <div
-            className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/50"
+            className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center p-2 sm:p-4 bg-black/50"
             onClick={onClose}
         >
             <div
-                className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[85vh] overflow-hidden flex flex-col"
+                className="bg-white rounded-t-2xl sm:rounded-2xl shadow-2xl w-full max-w-3xl max-h-[90vh] sm:max-h-[85vh] overflow-hidden flex flex-col"
                 onClick={e => e.stopPropagation()}
             >
                 {/* Header */}
-                <div className="px-5 py-4 border-b border-gray-200 flex items-center justify-between bg-slate-50">
-                    <div>
+                <div className="px-4 sm:px-5 py-3 sm:py-4 border-b border-gray-200 flex items-center justify-between bg-slate-50">
+                    <div className="min-w-0">
                         <p className="text-xs text-gray-500 uppercase">Detail Pengeluaran</p>
-                        <h2 className="text-xl font-bold text-gray-900">{category}</h2>
+                        <h2 className="text-lg sm:text-xl font-bold text-gray-900 truncate">{category}</h2>
                     </div>
-                    <button onClick={onClose} className="p-2 hover:bg-gray-200 rounded-lg" aria-label="Tutup">
+                    <button onClick={onClose} className="p-2 hover:bg-gray-200 rounded-lg flex-shrink-0" aria-label="Tutup">
                         <X className="w-5 h-5" />
                     </button>
                 </div>
