@@ -16,6 +16,25 @@ import type {
 } from '@/types/dashboard';
 
 /**
+ * Get hotel-day range for "today": 12:00 WIB today → 11:59:59 WIB tomorrow.
+ * Returns ISO strings in Asia/Jakarta local time (no offset suffix, matches DB storage).
+ */
+function getHotelDayRange() {
+    const timezone = 'Asia/Jakarta';
+    const now = toZonedTime(new Date(), timezone);
+    // Hotel day starts at 12:00 WIB
+    const hotelStart = new Date(now);
+    hotelStart.setHours(12, 0, 0, 0);
+    if (now < hotelStart) hotelStart.setDate(hotelStart.getDate() - 1);
+    const hotelEnd = new Date(hotelStart.getTime() + 86400000); // +24h
+    return {
+        start: format(hotelStart, "yyyy-MM-dd'T'HH:mm:ss"),
+        end: format(new Date(hotelEnd.getTime() - 1000), "yyyy-MM-dd'T'HH:mm:ss"), // 11:59:59
+        dateStr: format(hotelStart, 'yyyy-MM-dd'),
+    };
+}
+
+/**
  * Fetches unit status summary derived from lokasi_apartemen and today's transactions.
  * Since there is no dedicated unit_apartemen table, we derive status from:
  * - Total rooms from lokasi_apartemen
@@ -26,18 +45,12 @@ import type {
  */
 export async function fetchUnitStatus(): Promise<UnitStatusCounts> {
     const supabase = createServerClient();
-    const timezone = 'Asia/Jakarta';
-    const today = format(toZonedTime(new Date(), timezone), 'yyyy-MM-dd');
 
     try {
-        // Get total rooms from nomor_kamar table (count per location)
-        const { data: rooms, error: roomError, count: totalRoomCount } = await supabase
+        // Get total rooms from nomor_kamar table
+        const { count: totalRoomCount } = await supabase
             .from('nomor_kamar')
-            .select('id, lokasi', { count: 'exact' });
-
-        if (roomError) {
-            console.error('Error fetching rooms:', roomError);
-        }
+            .select('id', { count: 'exact', head: true });
 
         const totalRooms = totalRoomCount || 0;
 
@@ -87,26 +100,23 @@ export async function fetchUnitStatus(): Promise<UnitStatusCounts> {
  */
 export async function fetchTodayCheckins(): Promise<CheckinItem[]> {
     const supabase = createServerClient();
-    const timezone = 'Asia/Jakarta';
-    const today = format(toZonedTime(new Date(), timezone), 'yyyy-MM-dd');
+    const { start, end } = getHotelDayRange();
 
     try {
         const { data, error } = await supabase
             .from('transactions')
             .select('id, apartment_location, room_number, customer_name, checkin_at')
-            .gte('checkin_at', `${today}T00:00:00`)
-            .lt('checkin_at', `${today}T23:59:59`)
+            .gte('checkin_at', start)
+            .lte('checkin_at', end)
             .order('checkin_at', { ascending: true })
             .limit(5);
 
         if (error) {
             console.error('Error fetching check-ins:', error);
-            throw new Error(`Failed to fetch check-ins: ${error.message}`);
+            throw new Error(`Gagal mengambil data check-in: ${error.message}`);
         }
 
-        if (!data) {
-            return [];
-        }
+        if (!data) return [];
 
         return data.map((item: {
             id: string;
@@ -124,7 +134,7 @@ export async function fetchTodayCheckins(): Promise<CheckinItem[]> {
         }));
     } catch (error) {
         console.error('Error in fetchTodayCheckins:', error);
-        throw new Error('Failed to fetch check-ins');
+        throw new Error('Gagal mengambil data check-in');
     }
 }
 
@@ -140,26 +150,23 @@ export async function fetchTodayCheckins(): Promise<CheckinItem[]> {
  */
 export async function fetchTodayCheckouts(): Promise<CheckoutItem[]> {
     const supabase = createServerClient();
-    const timezone = 'Asia/Jakarta';
-    const today = format(toZonedTime(new Date(), timezone), 'yyyy-MM-dd');
+    const { start, end } = getHotelDayRange();
 
     try {
         const { data, error } = await supabase
             .from('transactions')
             .select('id, apartment_location, room_number, customer_name, checkout_at')
-            .gte('checkout_at', `${today}T00:00:00`)
-            .lt('checkout_at', `${today}T23:59:59`)
+            .gte('checkout_at', start)
+            .lte('checkout_at', end)
             .order('checkout_at', { ascending: false })
             .limit(5);
 
         if (error) {
             console.error('Error fetching check-outs:', error);
-            throw new Error(`Failed to fetch check-outs: ${error.message}`);
+            throw new Error(`Gagal mengambil data check-out: ${error.message}`);
         }
 
-        if (!data) {
-            return [];
-        }
+        if (!data) return [];
 
         return data.map((item: {
             id: string;
@@ -177,7 +184,7 @@ export async function fetchTodayCheckouts(): Promise<CheckoutItem[]> {
         }));
     } catch (error) {
         console.error('Error in fetchTodayCheckouts:', error);
-        throw new Error('Failed to fetch check-outs');
+        throw new Error('Gagal mengambil data check-out');
     }
 }
 
@@ -192,8 +199,10 @@ async function fetchDailyKPISnapshot(
     targetDay: string,
     totalRoomsCount: number,
 ): Promise<{ bookingCount: number; revenue: number; distinctRoomsOccupied: number; avgOccupancy: number; availableUnits: number }> {
-    const dayStart = `${targetDay}T00:00:00`;
-    const dayEnd = `${targetDay}T23:59:59`;
+    // Use hotel day: 12:00 on targetDay → 11:59:59 on next day
+    const dayStart = `${targetDay}T12:00:00`;
+    const nextDay = format(new Date(new Date(targetDay + 'T12:00:00').getTime() + 86400000 - 1000), "yyyy-MM-dd'T'HH:mm:ss");
+    const dayEnd = nextDay;
 
     const [{ count: bookingCount }, { data: txData }] = await Promise.all([
         supabase
@@ -271,9 +280,8 @@ export async function fetchKPIData(compareMode?: KPICompareMode): Promise<KPIDat
             .select('id', { count: 'exact', head: true });
         const totalRoomsCount = totalRooms || 0;
 
-        // Today's snapshot — use point-in-time for "currently occupied" and day-window for booking/revenue
-        const dayStart = `${today}T00:00:00`;
-        const dayEnd = `${today}T23:59:59`;
+        // Today's snapshot — hotel day: 12:00 WIB today → 11:59:59 WIB tomorrow
+        const { start: dayStart, end: dayEnd } = getHotelDayRange();
 
         const { count: bookingCount } = await supabase
             .from('transactions')

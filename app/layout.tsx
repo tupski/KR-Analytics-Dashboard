@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import { Inter } from 'next/font/google';
 import MobileNavController from '@/components/layout/MobileNavController';
+import ContentWrapper from '@/components/layout/ContentWrapper';
 import NavigationProgress from '@/components/layout/NavigationProgress';
 import AIChatFloat from '@/components/ai/AIChatFloat';
 import ScrollToTop from '@/components/ScrollToTop';
@@ -36,14 +37,12 @@ export default function RootLayout({
                         {/* Sidebar (desktop fixed) + MobileHeader + mobile overlay sidebar */}
                         <MobileNavController />
 
-                        {/* Main Content Area */}
-                        <div className="flex-1 flex flex-col overflow-hidden lg:ml-64">
-                            {/* Content — overflow-y-auto for normal scrolling pages.
-                                Chat page uses flex-1 + overflow-hidden to fill this container. */}
+                        {/* Main Content Area — margin syncs with sidebar collapse state */}
+                        <ContentWrapper>
                             <div className="flex-1 overflow-y-auto flex flex-col" data-scroll-container>
                                 {children}
                             </div>
-                        </div>
+                        </ContentWrapper>
                     </div>
 
                     {/* AI Chat Floating Button */}

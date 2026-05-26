@@ -16,14 +16,10 @@ const PAGE_LABELS: Record<string, string> = {
 };
 
 function getPageLabel(pathname: string): string {
-    // Exact match first
     if (PAGE_LABELS[pathname]) return PAGE_LABELS[pathname];
-
-    // Prefix match (e.g. /analytics-ai/chat → 'AI Chat')
     for (const [key, label] of Object.entries(PAGE_LABELS)) {
         if (pathname.startsWith(`${key}/`)) return label;
     }
-
     return 'Kakarama Room';
 }
 
@@ -36,28 +32,28 @@ export default function MobileHeader({ onOpenSidebar }: MobileHeaderProps) {
     const pageLabel = getPageLabel(pathname ?? '/');
 
     return (
-        <header className="lg:hidden sticky top-0 z-40 bg-white border-b border-gray-200 py-2.5 px-4 flex items-center justify-between h-12">
+        <header className="lg:hidden sticky top-0 z-40 bg-white border-b border-gray-200 flex items-center justify-between h-12 px-3 shadow-sm">
             {/* Left: hamburger + page title */}
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2 min-w-0">
                 <button
                     type="button"
                     onClick={onOpenSidebar}
-                    aria-label="Open navigation menu"
-                    className="p-1 rounded-md text-gray-600 hover:text-gray-900 hover:bg-gray-100 transition-colors"
+                    aria-label="Buka menu navigasi"
+                    className="w-9 h-9 flex items-center justify-center rounded-lg text-gray-600 hover:bg-gray-100 transition-colors flex-shrink-0"
                 >
-                    <Menu className="w-6 h-6" />
+                    <Menu className="w-5 h-5" />
                 </button>
-                <span className="text-sm font-semibold text-gray-900">{pageLabel}</span>
+                <span className="text-sm font-semibold text-gray-900 truncate">{pageLabel}</span>
             </div>
 
-            {/* Right: Krai AI chat button */}
+            {/* Right: Krai button — compact, text hidden on very small screens */}
             <Link
                 href="/analytics-ai/chat"
-                aria-label="Open Krai AI chat"
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-50 text-blue-600 hover:bg-blue-100 transition-colors text-sm font-medium"
+                aria-label="Buka Krai AI chat"
+                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition-colors text-xs font-semibold flex-shrink-0 ml-2"
             >
-                <Bot className="w-4 h-4" />
-                <span>Krai</span>
+                <Bot className="w-3.5 h-3.5 flex-shrink-0" />
+                <span className="hidden xs:inline">Krai</span>
             </Link>
         </header>
     );

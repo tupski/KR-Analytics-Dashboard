@@ -82,7 +82,7 @@ export default function StatusUnit({ statusCounts, isLoading = false }: StatusUn
             </div>
 
             <p className="mt-3 text-xs text-gray-400 text-center">
-                Berdasarkan tamu yang sedang aktif menginap (check-in ≤ sekarang &amp; check-out ≥ sekarang)
+                Menampilkan tamu yang sedang aktif menginap saat ini
             </p>
         </div>
     );

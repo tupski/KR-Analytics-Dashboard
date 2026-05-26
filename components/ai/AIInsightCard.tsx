@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { RefreshCw, Sparkles, ChevronDown, ChevronUp, Lightbulb, GitCompareArrows } from 'lucide-react';
+import { RefreshCw, Sparkles, ChevronDown, ChevronUp, Lightbulb, GitCompareArrows, ChevronRight } from 'lucide-react';
 import MarkdownRenderer from './MarkdownRenderer';
 
 interface AIInsightCardProps {
@@ -38,6 +38,7 @@ export default function AIInsightCard({
     const [expanded, setExpanded] = useState(false);
     const [currentPrompt, setCurrentPrompt] = useState(prompt);
     const [compareMode, setCompareMode] = useState(false);
+    const [dynamicSuggestions, setDynamicSuggestions] = useState<string[]>([]);
 
     const defaultAlternatives = alternativeQuestions || [
         'Apa yang perlu diperhatikan hari ini?',
@@ -83,12 +84,14 @@ export default function AIInsightCard({
             if (cached) {
                 setInsight(cached);
                 setHasConfig(true);
+                generateDynamicSuggestions(p, cached);
                 return;
             }
         }
 
         setLoading(true);
         setError(null);
+        setDynamicSuggestions([]);
 
         try {
             const config = getConfig();
@@ -113,6 +116,7 @@ export default function AIInsightCard({
                 setInsight(data.message);
                 setCachedInsight(p, withCompare, data.message);
                 setHasConfig(true);
+                generateDynamicSuggestions(p, data.message);
             } else {
                 const data = await res.json();
                 if (res.status === 400 && data.error?.includes('API key')) {
@@ -130,6 +134,47 @@ export default function AIInsightCard({
         }
     };
 
+    /** Generate 2 context-aware follow-up question suggestions */
+    const generateDynamicSuggestions = async (originalPrompt: string, insightText: string) => {
+        try {
+            const config = getConfig();
+            if (!config.apiKey) return;
+
+            const suggPrompt = `Kamu adalah Krai, AI Business Copilot Kakarama Room. Berdasarkan pertanyaan insight dan jawabannya berikut, hasilkan TEPAT 2 pertanyaan lanjutan yang spesifik dan actionable untuk membantu owner mendapat insight bisnis lebih dalam. Kembalikan HANYA 2 baris teks tanpa nomor/bullet.
+
+Pertanyaan awal: ${originalPrompt.slice(0, 150)}
+Insight: ${insightText.slice(0, 300)}
+
+2 pertanyaan lanjutan:`;
+
+            const res = await fetch('/api/ai/chat', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    messages: [{ role: 'user', content: suggPrompt }],
+                    config: {
+                        provider: config.provider === 'custom' ? 'openai-compatible' : config.provider,
+                        apiKey: config.apiKey,
+                        model: config.model,
+                        baseUrl: config.baseUrl || undefined,
+                    },
+                    memoryContext: '',
+                }),
+            });
+
+            if (!res.ok) return;
+            const data = await res.json();
+            const lines = (data.message as string)
+                .split('\n')
+                .map((l: string) => l.trim().replace(/^[-•\d.)\s]+/, '').trim())
+                .filter((l: string) => l.length > 5)
+                .slice(0, 2);
+            if (lines.length > 0) setDynamicSuggestions(lines);
+        } catch {
+            // Fallback to static defaults silently
+        }
+    };
+
     useEffect(() => {
         fetchInsight(currentPrompt, compareMode);
         // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -140,7 +185,6 @@ export default function AIInsightCard({
         setExpanded(false);
         fetchInsight(q, compareMode);
     };
-
     const handleToggleCompare = () => {
         const next = !compareMode;
         setCompareMode(next);
@@ -216,21 +260,23 @@ export default function AIInsightCard({
                 </>
             )}
 
-            {/* Alternative questions */}
+            {/* Dynamic follow-up suggestions — max 2, full text on desktop, truncated on mobile */}
             {!loading && insight && (
                 <div className="mt-3 pt-3 border-t border-blue-100">
                     <div className="flex items-center gap-1.5 mb-2">
                         <Lightbulb className="w-3 h-3 text-blue-500" />
-                        <span className="text-xs text-blue-600 font-medium">Pertanyaan lain:</span>
+                        <span className="text-xs text-blue-600 font-medium">Pertanyaan lanjutan:</span>
                     </div>
-                    <div className="flex flex-wrap gap-2">
-                        {defaultAlternatives.map((q) => (
+                    <div className="flex flex-col gap-1.5 sm:flex-row sm:flex-wrap">
+                        {(dynamicSuggestions.length > 0 ? dynamicSuggestions : defaultAlternatives).slice(0, 2).map((q) => (
                             <button
                                 key={q}
                                 onClick={() => handleAlternativeClick(q)}
-                                className="text-xs px-2.5 py-1 bg-white border border-blue-200 rounded-full text-blue-700 hover:bg-blue-100 transition-colors"
+                                className="text-xs px-3 py-2 bg-white border border-blue-200 rounded-xl text-blue-700 hover:bg-blue-100 transition-colors text-left flex items-start gap-1.5 sm:max-w-xs"
                             >
-                                {q.length > 40 ? q.slice(0, 37) + '...' : q}
+                                <ChevronRight className="w-3 h-3 flex-shrink-0 mt-0.5" />
+                                {/* Full text on sm+, max 2 lines on mobile */}
+                                <span className="line-clamp-2 sm:line-clamp-none">{q}</span>
                             </button>
                         ))}
                     </div>

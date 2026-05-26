@@ -75,7 +75,7 @@ export default function CheckoutHariIni({ items, isLoading = false }: CheckoutHa
 
             {/* Check-out List */}
             <div className="space-y-3">
-                {displayItems.map((item, index) => (
+                {displayItems.map((item) => (
                     <div
                         key={item.id}
                         className="flex items-start gap-3 pb-3 border-b border-gray-100 last:border-0"
@@ -135,7 +135,7 @@ export default function CheckoutHariIni({ items, isLoading = false }: CheckoutHa
             )}
 
             <p className="mt-3 text-xs text-gray-400 text-center">
-                Data: transaksi dengan checkout_at = hari ini (WIB)
+                Periode hotel hari ini: 12:00 WIB kemarin – 11:59 WIB hari ini
             </p>
         </div>
     );

@@ -5,7 +5,7 @@
  */
 
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { Send, Bot, Loader2, ChevronRight, Brain, X } from 'lucide-react';
+import { Send, Bot, Brain, X, ChevronRight } from 'lucide-react';
 import MarkdownRenderer from './MarkdownRenderer';
 import { loadMemory, addMemory, deleteMemory, getMemoryContext, type MemoryEntry } from '@/lib/ai/memory';
 
@@ -17,6 +17,77 @@ export interface ChatMessage {
 }
 
 const STORAGE_KEY = 'kr-ai-config';
+
+// ── Variatif loading status messages ─────────────────────────────────────────
+
+const LOADING_STEPS = [
+    'Membaca data terbaru...',
+    'Menganalisis angka...',
+    'Menghitung perbandingan...',
+    'Menyiapkan jawaban...',
+    'Mengolah insight bisnis...',
+    'Memeriksa tren...',
+    'Memvalidasi data...',
+    'Merumuskan rekomendasi...',
+];
+
+/** Animated loading indicator — cycles through status messages with typewriter effect */
+function LoadingBubble() {
+    const [stepIdx, setStepIdx] = useState(0);
+    const [displayed, setDisplayed] = useState('');
+    const charRef = useRef(0);
+    const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+    useEffect(() => {
+        const current = LOADING_STEPS[stepIdx];
+        charRef.current = 0;
+        setDisplayed('');
+
+        // Type characters
+        timerRef.current = setInterval(() => {
+            charRef.current++;
+            if (charRef.current <= current.length) {
+                setDisplayed(current.slice(0, charRef.current));
+            } else {
+                // Finished typing — pause then move to next step
+                if (timerRef.current) clearInterval(timerRef.current);
+                setTimeout(() => {
+                    setStepIdx(i => (i + 1) % LOADING_STEPS.length);
+                }, 900);
+            }
+        }, 40);
+
+        return () => { if (timerRef.current) clearInterval(timerRef.current); };
+    }, [stepIdx]);
+
+    return (
+        <div className="flex justify-start items-center gap-2">
+            {/* Krai avatar */}
+            <div className="w-7 h-7 rounded-xl bg-blue-600 flex items-center justify-center flex-shrink-0">
+                <Bot className="w-4 h-4 text-white" />
+            </div>
+
+            {/* Bubble with animated dots + typewriter text */}
+            <div className="bg-white border border-gray-200 rounded-xl rounded-bl-sm shadow-sm px-3 py-2 flex items-center gap-2 max-w-[220px]">
+                {/* Three animated dots */}
+                <span className="flex gap-0.5 flex-shrink-0">
+                    {[0, 150, 300].map(delay => (
+                        <span
+                            key={delay}
+                            className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-bounce"
+                            style={{ animationDelay: `${delay}ms` }}
+                        />
+                    ))}
+                </span>
+                {/* Typewriter text */}
+                <span className="text-xs text-gray-500 truncate">
+                    {displayed}
+                    <span className="inline-block w-0.5 h-3 bg-blue-400 ml-0.5 animate-pulse align-text-bottom" />
+                </span>
+            </div>
+        </div>
+    );
+}
 
 // ── Typing animation ─────────────────────────────────────────────────────────
 
@@ -246,7 +317,6 @@ export default function AIChatCore({
     const [messages, setMessages] = useState<ChatMessage[]>(initialMessages);
     const [input, setInput] = useState('');
     const [loading, setLoading] = useState(false);
-    const [toolStatus, setToolStatus] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [showMemory, setShowMemory] = useState(false);
     const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -298,28 +368,44 @@ export default function AIChatCore({
         setInput('');
         setError(null);
         setLoading(true);
-        setToolStatus('Mengambil data dari database...');
 
         try {
             const memCtx = getMemoryContext();
             const apiMessages = newMessages.map(m => ({ role: m.role, content: m.content }));
             const response = await sendChat(apiMessages, memCtx);
-            setToolStatus(null);
             const assistantMsg: ChatMessage = { role: 'assistant', content: response, typed: false };
             setMessages([...newMessages, assistantMsg]);
             setTimeout(() => addSuggestions(msg, response), 1200);
         } catch (err: any) {
-            setToolStatus(null);
             setError(err.message || 'Gagal menghubungi Krai');
         } finally {
             setLoading(false);
         }
     }, [input, loading, messages, addSuggestions]);
 
-    // Expose send function via ref
+    /**
+     * Put text into input field instead of sending directly.
+     * Used for template/suggestion buttons.
+     */
+    const handleFillInput = useCallback((text: string) => {
+        setInput(text);
+        // Focus the input after filling
+        setTimeout(() => {
+            if (inputRef.current) {
+                inputRef.current.focus();
+                // Move cursor to end
+                const len = text.length;
+                if ('setSelectionRange' in inputRef.current) {
+                    inputRef.current.setSelectionRange(len, len);
+                }
+            }
+        }, 50);
+    }, []);
+
+    // Expose send function via ref (used by sidebar template dispatch)
     useEffect(() => {
-        if (onSendRef) onSendRef.current = (q: string) => handleSend(q);
-    }, [handleSend, onSendRef]);
+        if (onSendRef) onSendRef.current = (q: string) => handleFillInput(q);
+    }, [handleFillInput, onSendRef]);
 
     const handleKeyDown = (e: React.KeyboardEvent) => {
         if (e.key === 'Enter' && !e.shiftKey) {
@@ -333,7 +419,6 @@ export default function AIChatCore({
 
     return (
         <div className="flex flex-col h-full">
-            {/* Memory panel overlay */}
             {showMemory && <MemoryPanel onClose={() => setShowMemory(false)} />}
 
             {/* Message list */}
@@ -343,8 +428,8 @@ export default function AIChatCore({
                         <div className={`bg-gradient-to-br from-blue-600 to-blue-400 rounded-2xl flex items-center justify-center mx-auto mb-3 ${isFloat ? 'w-10 h-10' : 'w-14 h-14'}`}>
                             <Bot className={`text-white ${isFloat ? 'w-5 h-5' : 'w-7 h-7'}`} />
                         </div>
-                        <p className={`font-semibold text-gray-800 ${isFull ? 'text-base' : 'text-sm'}`}>Halo, saya Krai. Saya Asisten AI Kakarama Room.</p>
-                        <p className="mt-1 text-gray-500 text-xs">Tanyakan apa aja tentang laporan bisnis Kakarama Room.</p>
+                        <p className={`font-semibold text-gray-800 ${isFull ? 'text-base' : 'text-sm'}`}>Halo, saya Krai.</p>
+                        <p className="mt-1 text-gray-500 text-xs">Asisten AI analitik Kakarama Room. Tanyakan apa saja tentang data bisnis.</p>
                     </div>
                 )}
 
@@ -378,18 +463,19 @@ export default function AIChatCore({
                             </div>
                         </div>
 
-                        {/* Dynamic follow-up suggestions */}
+                        {/* Dynamic follow-up suggestions — fill input, don't send directly */}
                         {msg.role === 'assistant' && msg.typed && msg.suggestions && msg.suggestions.length > 0 && (
-                            <div className={`flex flex-wrap gap-1.5 ${isFloat ? 'pl-8' : 'pl-9'}`}>
+                            <div className={`flex flex-col gap-1.5 ${isFloat ? 'pl-8' : 'pl-9'}`}>
                                 {msg.suggestions.map((q, qi) => (
                                     <button
                                         key={qi}
-                                        onClick={() => handleSend(q)}
+                                        onClick={() => handleFillInput(q)}
                                         disabled={loading}
-                                        className="flex items-center gap-1 text-xs px-2.5 py-1.5 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-full text-blue-700 transition-colors disabled:opacity-50 max-w-[220px] text-left"
+                                        className={`flex items-start gap-1.5 text-xs px-3 py-2 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-xl text-blue-700 transition-colors disabled:opacity-50 text-left ${isFloat ? 'max-w-[240px]' : 'max-w-sm'}`}
                                     >
-                                        <ChevronRight className="w-3 h-3 flex-shrink-0" />
-                                        <span className="truncate">{q}</span>
+                                        <ChevronRight className="w-3 h-3 flex-shrink-0 mt-0.5" />
+                                        {/* Full text on desktop, truncated on mobile float */}
+                                        <span className={isFloat ? 'line-clamp-2' : ''}>{q}</span>
                                     </button>
                                 ))}
                             </div>
@@ -397,17 +483,7 @@ export default function AIChatCore({
                     </div>
                 ))}
 
-                {loading && (
-                    <div className="flex justify-start items-start gap-2">
-                        <div className={`rounded-xl bg-blue-600 flex items-center justify-center flex-shrink-0 ${isFloat ? 'w-6 h-6' : 'w-7 h-7'}`}>
-                            <Bot className={`text-white ${isFloat ? 'w-3.5 h-3.5' : 'w-4 h-4'}`} />
-                        </div>
-                        <div className="bg-white border border-gray-200 rounded-xl rounded-bl-sm shadow-sm px-3 py-2 flex items-center gap-2">
-                            <Loader2 className="w-3.5 h-3.5 text-blue-500 animate-spin flex-shrink-0" />
-                            <span className="text-xs text-gray-500">{toolStatus || 'Memproses...'}</span>
-                        </div>
-                    </div>
-                )}
+                {loading && <LoadingBubble />}
 
                 {error && (
                     <div className="text-xs text-red-600 bg-red-50 px-3 py-2 rounded-lg border border-red-200">
@@ -460,7 +536,7 @@ export default function AIChatCore({
                         disabled={loading || !input.trim()}
                         className={`bg-blue-600 text-white rounded-xl hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex-shrink-0 ${isFull ? 'px-4 py-2' : 'p-2 rounded-lg'}`}
                     >
-                        <Send className={isFull ? 'w-4 h-4' : 'w-4 h-4'} />
+                        <Send className="w-4 h-4" />
                     </button>
                 </div>
                 {isFull && (
