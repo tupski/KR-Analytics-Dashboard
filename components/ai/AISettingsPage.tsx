@@ -4,14 +4,15 @@ import { useState, useEffect } from 'react';
 import { Brain, Key, Server, Check, AlertCircle, ExternalLink, Eye, Lightbulb, Wrench, Zap, DollarSign, Trash2, Clock, Plus, Copy, Cloud, CloudOff, Download, Upload } from 'lucide-react';
 import { PROVIDERS, priceTier, allModelsSorted, type ProviderId, type ModelInfo } from '@/lib/ai/models';
 import {
-    loadConfig,
-    setProviderConfig,
-    removeProvider,
-    setActive,
-    addCustomModel,
-    getCustomModels,
+    loadConfigFromDb,
+    saveProviderConfigToDb,
+    deleteProviderConfigFromDb,
+    setActiveProviderInDb,
+    migrateLocalStorageToDb,
     type MultiAIConfig,
-} from '@/lib/ai/config';
+    type ProviderConfig,
+} from '@/lib/ai/configClient';
+import { addCustomModel, getCustomModels } from '@/lib/ai/config';
 import { saveAIConfig, loadAIConfig } from '@/app/(dashboard)/pengaturan/ai-actions';
 
 const fmtPrice = (v: number) => v === 0 ? 'Gratis' : `$${v.toFixed(2)}`;
@@ -59,23 +60,34 @@ export default function AISettingsPage() {
     const [pruneResult, setPruneResult] = useState<string | null>(null);
 
     useEffect(() => {
-        const cfg = loadConfig();
-        setConfig(cfg);
-        const firstConfigured = (Object.keys(cfg.providers) as ProviderId[])[0];
-        if (firstConfigured) {
-            setActiveProviderId(firstConfigured);
-            const c = cfg.providers[firstConfigured];
-            if (c) {
-                setDraftKey(c.apiKey);
-                setDraftModel(c.model);
-                setDraftBaseUrl(c.baseUrl || '');
+        async function loadData() {
+            // Run migration first
+            const migration = await migrateLocalStorageToDb();
+            if (migration.migrated > 0) {
+                // Migration successful - show notification if needed
             }
+            
+            // Load from database
+            const cfg = await loadConfigFromDb();
+            setConfig(cfg);
+            
+            // Set first configured provider as active
+            if (cfg.providers.length > 0) {
+                const first = cfg.providers[0];
+                setActiveProviderId(first.providerId);
+                setDraftKey(first.apiKey);
+                setDraftModel(first.model);
+                setDraftBaseUrl(first.baseUrl || '');
+            }
+            
+            // Load retention days from Supabase
+            fetch('/api/krai/history?action=settings')
+                .then(r => r.json())
+                .then(data => { if (data.retentionDays) setRetentionDays(data.retentionDays); })
+                .catch(() => { });
         }
-        // Load retention days from Supabase
-        fetch('/api/krai/history?action=settings')
-            .then(r => r.json())
-            .then(data => { if (data.retentionDays) setRetentionDays(data.retentionDays); })
-            .catch(() => { });
+        
+        loadData();
     }, []);
 
     const handleSaveRetention = async () => {
@@ -115,44 +127,62 @@ export default function AISettingsPage() {
     const customModels = getCustomModels(activeProviderId);
     const allModels = [...provider.models, ...customModels];
 
-    const isConfigured = !!config.providers[activeProviderId]?.apiKey;
+    const isConfigured = !!config.providers.find(p => p.providerId === activeProviderId)?.apiKey;
     const selectedModel = allModels.find(m => m.id === draftModel);
 
     const handleProviderTab = (id: ProviderId) => {
         setActiveProviderId(id);
         setTestResult(null);
         setSaved(null);
-        const c = config.providers[id];
+        const c = config.providers.find(p => p.providerId === id);
         setDraftKey(c?.apiKey || '');
         setDraftModel(c?.model || PROVIDERS.find(p => p.id === id)?.models[0]?.id || '');
         setDraftBaseUrl(c?.baseUrl || '');
     };
 
-    const handleSave = () => {
+    const handleSave = async () => {
         if (!draftKey.trim()) return;
-        setProviderConfig(activeProviderId, {
-            apiKey: draftKey.trim(),
-            model: draftModel || provider.models[0]?.id || '',
-            baseUrl: draftBaseUrl.trim() || undefined,
-        });
-        setConfig(loadConfig());
-        setSaved(activeProviderId);
-        setTimeout(() => setSaved(null), 2500);
+        try {
+            await saveProviderConfigToDb(
+                activeProviderId,
+                draftKey.trim(),
+                draftModel || provider.models[0]?.id || '',
+                draftBaseUrl.trim() || undefined,
+                false
+            );
+            // Reload config from database
+            const cfg = await loadConfigFromDb();
+            setConfig(cfg);
+            setSaved(activeProviderId);
+            setTimeout(() => setSaved(null), 2500);
+        } catch (error: any) {
+            alert(`Gagal menyimpan: ${error.message}`);
+        }
     };
 
-    const handleRemove = () => {
+    const handleRemove = async () => {
         if (!confirm(`Hapus konfigurasi ${provider.name}?`)) return;
-        removeProvider(activeProviderId);
-        setConfig(loadConfig());
-        setDraftKey('');
-        setDraftBaseUrl('');
+        try {
+            await deleteProviderConfigFromDb(activeProviderId);
+            const cfg = await loadConfigFromDb();
+            setConfig(cfg);
+            setDraftKey('');
+            setDraftBaseUrl('');
+        } catch (error: any) {
+            alert(`Gagal menghapus: ${error.message}`);
+        }
     };
 
-    const handleSetActive = () => {
-        setActive(activeProviderId, draftModel || 'auto');
-        setConfig(loadConfig());
-        setSaved(activeProviderId);
-        setTimeout(() => setSaved(null), 2000);
+    const handleSetActive = async () => {
+        try {
+            await setActiveProviderInDb(activeProviderId, draftModel || 'auto');
+            const cfg = await loadConfigFromDb();
+            setConfig(cfg);
+            setSaved(activeProviderId);
+            setTimeout(() => setSaved(null), 2000);
+        } catch (error: any) {
+            alert(`Gagal set active: ${error.message}`);
+        }
     };
 
     const handleTest = async () => {
@@ -250,7 +280,9 @@ export default function AISettingsPage() {
                 });
                 setDraftModel(customModelName.trim());
                 setCustomModelName('');
-                setConfig(loadConfig());
+                // Reload config from database
+                const cfg = await loadConfigFromDb();
+                setConfig(cfg);
                 setTestResult({ success: true, message: `Model "${customModelName.trim()}" berhasil ditambahkan!` });
             } else {
                 setTestResult({ success: false, message: data.error || 'Gagal terhubung' });
@@ -278,7 +310,7 @@ export default function AISettingsPage() {
                             )}
                         </p>
                         <p className="text-xs text-gray-500 mt-1">
-                            Provider terkonfigurasi: {Object.keys(config.providers).filter(k => config.providers[k as ProviderId]?.apiKey).length} dari {PROVIDERS.length}
+                            Provider terkonfigurasi: {config.providers.filter(p => p.apiKey).length} dari {PROVIDERS.length}
                         </p>
                     </div>
                 </div>
@@ -289,7 +321,7 @@ export default function AISettingsPage() {
                 <div className="border-b border-gray-200 overflow-x-auto">
                     <div className="flex gap-1 px-2 py-2 min-w-max">
                         {PROVIDERS.map(p => {
-                            const configured = !!config.providers[p.id]?.apiKey;
+                            const configured = !!config.providers.find(c => c.providerId === p.id)?.apiKey;
                             const active = activeProviderId === p.id;
                             return (
                                 <button

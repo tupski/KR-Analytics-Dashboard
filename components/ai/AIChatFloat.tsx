@@ -5,7 +5,7 @@ import { usePathname } from 'next/navigation';
 import { X, Bot, Maximize2 } from 'lucide-react';
 import Link from 'next/link';
 import AIChatCore, { type ChatMessage } from './AIChatCore';
-import { configuredProviders } from '@/lib/ai/config';
+import { hasConfiguredProviders } from '@/lib/ai/configClient';
 import KraiLogo from '@/components/shared/KraiLogo';
 
 const HINT_DISMISSED_KEY = 'kr-ai-hint-dismissed';
@@ -23,9 +23,15 @@ export default function AIChatFloat() {
 
     useEffect(() => {
         // Check if AI is configured
-        try {
-            setHasConfig(configuredProviders().length > 0);
-        } catch { }
+        async function checkConfig() {
+            try {
+                const configured = await hasConfiguredProviders();
+                setHasConfig(configured);
+            } catch { 
+                setHasConfig(false);
+            }
+        }
+        checkConfig();
 
         // Show hint bubble unless dismissed recently
         try {
