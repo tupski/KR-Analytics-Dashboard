@@ -8,7 +8,7 @@ import {
     type ExpenseDetail,
     type ExpenseSortKey,
     type SortDirection,
-} from '@/app/laporan/actions';
+} from '@/app/(dashboard)/laporan/actions';
 
 interface Props {
     category: string;

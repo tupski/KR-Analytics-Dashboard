@@ -2,7 +2,7 @@
 
 import { useRouter, useSearchParams } from 'next/navigation';
 import { MapPin, Clock, ChevronLeft, ChevronRight } from 'lucide-react';
-import type { BookingItem } from '@/app/booking/actions';
+import type { BookingItem } from '@/app/(dashboard)/booking/actions';
 
 interface BookingTableProps {
     items: BookingItem[];

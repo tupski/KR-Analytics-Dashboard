@@ -1,6 +1,6 @@
 'use client';
 
-import type { LocationSummary } from '@/app/unit/actions';
+import type { LocationSummary } from '@/app/(dashboard)/unit/actions';
 
 interface UnitLocationCardsProps {
     summaries: LocationSummary[];

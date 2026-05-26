@@ -2,7 +2,7 @@
 
 import { useState, useRef } from 'react';
 import { Save, Upload, X, Loader2, Check, AlertCircle } from 'lucide-react';
-import { updateAppSettings, uploadToCatbox, type AppSettings } from '@/app/pengaturan/actions';
+import { updateAppSettings, uploadToCatbox, type AppSettings } from '@/app/(dashboard)/pengaturan/actions';
 
 interface Props {
     initialSettings: AppSettings;

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { X, Clock, User, Loader2 } from 'lucide-react';
-import type { RoomDetail, DateFilter } from '@/app/laporan/actions';
+import type { RoomDetail, DateFilter } from '@/app/(dashboard)/laporan/actions';
 
 interface Props {
     location: string;
@@ -20,7 +20,7 @@ export default function RoomDetailModal({ location, room, filter, onClose }: Pro
     useEffect(() => {
         let cancelled = false;
         setLoading(true);
-        import('@/app/laporan/actions')
+        import('@/app/(dashboard)/laporan/actions')
             .then(({ fetchRoomDetails }) => fetchRoomDetails(location, room, filter))
             .then(d => { if (!cancelled) setDetails(d); })
             .catch(() => { if (!cancelled) setDetails([]); })

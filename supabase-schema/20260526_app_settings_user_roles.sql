@@ -24,6 +24,10 @@ BEGIN
     END IF;
 END $$;
 
+-- Drop existing triggers first (before adding columns)
+DROP TRIGGER IF EXISTS update_app_settings_updated_at ON app_settings;
+DROP TRIGGER IF EXISTS update_user_roles_updated_at ON user_roles;
+
 -- Add columns if they don't exist (safe migration)
 DO $$ 
 BEGIN
@@ -41,6 +45,14 @@ BEGIN
     
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'app_settings' AND column_name = 'primary_color') THEN
         ALTER TABLE app_settings ADD COLUMN primary_color TEXT NOT NULL DEFAULT '#2563eb';
+    END IF;
+    
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'app_settings' AND column_name = 'created_at') THEN
+        ALTER TABLE app_settings ADD COLUMN created_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+    END IF;
+    
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'app_settings' AND column_name = 'updated_at') THEN
+        ALTER TABLE app_settings ADD COLUMN updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
     END IF;
 END $$;
 
@@ -68,73 +80,17 @@ CREATE INDEX IF NOT EXISTS idx_user_roles_role ON user_roles(role);
 
 -- ── RLS Policies ────────────────────────────────────────────────────────────
 
--- Enable RLS
-ALTER TABLE app_settings ENABLE ROW LEVEL SECURITY;
-ALTER TABLE user_roles ENABLE ROW LEVEL SECURITY;
+-- DISABLE RLS (aplikasi lain yang pakai database yang sama akan error jika RLS enabled)
+ALTER TABLE app_settings DISABLE ROW LEVEL SECURITY;
+ALTER TABLE user_roles DISABLE ROW LEVEL SECURITY;
 
--- Drop existing policies if they exist (safe migration)
+-- Drop existing policies if they exist (cleanup)
 DROP POLICY IF EXISTS "Anyone can read app settings" ON app_settings;
 DROP POLICY IF EXISTS "Only super_admin can update app settings" ON app_settings;
 DROP POLICY IF EXISTS "Only super_admin can insert app settings" ON app_settings;
 DROP POLICY IF EXISTS "Users can read their own role" ON user_roles;
 DROP POLICY IF EXISTS "Super admin can read all roles" ON user_roles;
 DROP POLICY IF EXISTS "Only super_admin can manage roles" ON user_roles;
-
--- App Settings: Anyone authenticated can read, only super_admin can update
-CREATE POLICY "Anyone can read app settings"
-    ON app_settings FOR SELECT
-    TO authenticated
-    USING (true);
-
-CREATE POLICY "Only super_admin can update app settings"
-    ON app_settings FOR UPDATE
-    TO authenticated
-    USING (
-        EXISTS (
-            SELECT 1 FROM user_roles
-            WHERE user_roles.user_id = auth.uid()
-            AND user_roles.role = 'super_admin'
-        )
-    );
-
-CREATE POLICY "Only super_admin can insert app settings"
-    ON app_settings FOR INSERT
-    TO authenticated
-    WITH CHECK (
-        EXISTS (
-            SELECT 1 FROM user_roles
-            WHERE user_roles.user_id = auth.uid()
-            AND user_roles.role = 'super_admin'
-        )
-    );
-
--- User Roles: Users can read their own role, super_admin can manage all
-CREATE POLICY "Users can read their own role"
-    ON user_roles FOR SELECT
-    TO authenticated
-    USING (user_id = auth.uid());
-
-CREATE POLICY "Super admin can read all roles"
-    ON user_roles FOR SELECT
-    TO authenticated
-    USING (
-        EXISTS (
-            SELECT 1 FROM user_roles ur
-            WHERE ur.user_id = auth.uid()
-            AND ur.role = 'super_admin'
-        )
-    );
-
-CREATE POLICY "Only super_admin can manage roles"
-    ON user_roles FOR ALL
-    TO authenticated
-    USING (
-        EXISTS (
-            SELECT 1 FROM user_roles ur
-            WHERE ur.user_id = auth.uid()
-            AND ur.role = 'super_admin'
-        )
-    );
 
 -- ── Triggers ────────────────────────────────────────────────────────────────
 

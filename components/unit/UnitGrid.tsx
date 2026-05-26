@@ -2,9 +2,9 @@
 
 import { useState } from 'react';
 import { User, CheckCircle } from 'lucide-react';
-import type { UnitItem, UnitDateFilter } from '@/app/unit/actions';
+import type { UnitItem, UnitDateFilter } from '@/app/(dashboard)/unit/actions';
 import RoomDetailModal from '@/components/shared/RoomDetailModal';
-import type { DateFilter } from '@/app/laporan/actions';
+import type { DateFilter } from '@/app/(dashboard)/laporan/actions';
 
 interface UnitGridProps {
     units: UnitItem[];

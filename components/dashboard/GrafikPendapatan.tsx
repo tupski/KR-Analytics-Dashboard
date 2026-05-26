@@ -43,7 +43,7 @@ export default function GrafikPendapatan({ initialData, initialFilter }: GrafikP
         startTransition(async () => {
             try {
                 // Import server action dynamically to avoid bundling server code
-                const { fetchRevenueData } = await import('@/app/dashboard/actions');
+                const { fetchRevenueData } = await import('@/app/(dashboard)/dashboard/actions');
                 const newData = await fetchRevenueData(newFilter);
                 setData(newData);
             } catch (error) {

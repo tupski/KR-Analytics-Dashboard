@@ -2,7 +2,7 @@
 
 import { useRouter } from 'next/navigation';
 import { Calendar, MapPin } from 'lucide-react';
-import type { UnitDateFilter } from '@/app/unit/actions';
+import type { UnitDateFilter } from '@/app/(dashboard)/unit/actions';
 
 interface Props {
     locations: string[];

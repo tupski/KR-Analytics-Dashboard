@@ -16,7 +16,7 @@ import {
     ChevronLeft,
     ChevronRight,
 } from 'lucide-react';
-import type { LaporanData, RoomDetail, DateFilter } from '@/app/laporan/actions';
+import type { LaporanData, RoomDetail, DateFilter } from '@/app/(dashboard)/laporan/actions';
 import ExpenseCategoryModal from './ExpenseCategoryModal';
 
 interface LaporanClientProps {
@@ -54,7 +54,7 @@ export default function LaporanClient({ data, highOccupancy }: LaporanClientProp
         setSelectedRoom({ location, room });
         setLoadingDetails(true);
         try {
-            const { fetchRoomDetails } = await import('@/app/laporan/actions');
+            const { fetchRoomDetails } = await import('@/app/(dashboard)/laporan/actions');
             const details = await fetchRoomDetails(location, room, data.filter);
             setRoomDetails(details);
         } catch {
