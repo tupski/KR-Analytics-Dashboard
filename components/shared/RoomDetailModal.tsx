@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { X, Clock, User, Loader2 } from 'lucide-react';
 import type { RoomDetail, DateFilter } from '@/app/(dashboard)/laporan/actions';
 import { formatDuration } from '@/lib/utils/formatDuration';
+import { formatCurrency } from '@/lib/utils/format';
 
 interface Props {
     location: string;
@@ -11,8 +12,6 @@ interface Props {
     filter: DateFilter;
     onClose: () => void;
 }
-
-const fmt = (v: number) => `Rp ${v.toLocaleString('id-ID')}`;
 
 export default function RoomDetailModal({ location, room, filter, onClose }: Props) {
     const [details, setDetails] = useState<RoomDetail[]>([]);
@@ -57,7 +56,7 @@ export default function RoomDetailModal({ location, room, filter, onClose }: Pro
                     ) : (
                         <>
                             <div className="bg-slate-50 rounded-lg px-4 py-2 text-sm">
-                                Transaksi: <strong>{details.length}</strong> · Pendapatan: <strong className="text-green-700">{fmt(totalRevenue)}</strong>
+                                Transaksi: <strong>{details.length}</strong> · Pendapatan: <strong className="text-green-700">{formatCurrency(totalRevenue)}</strong>
                             </div>
                             {details.map(detail => (
                                 <div key={detail.id} className="border border-gray-200 rounded-xl p-4 space-y-2">
@@ -79,7 +78,7 @@ export default function RoomDetailModal({ location, room, filter, onClose }: Pro
                                     {detail.marketingName && (
                                         <p className="text-sm text-gray-600">
                                             Marketing: {detail.marketingName}
-                                            {detail.marketingFee > 0 && <span className="text-orange-600"> · Komisi: {fmt(detail.marketingFee)}</span>}
+                                            {detail.marketingFee > 0 && <span className="text-orange-600"> · Komisi: {formatCurrency(detail.marketingFee)}</span>}
                                             {detail.marketingFee === 0 && <span className="text-green-600"> · Rp 0 (Tanpa komisi)</span>}
                                         </p>
                                     )}
@@ -89,13 +88,13 @@ export default function RoomDetailModal({ location, room, filter, onClose }: Pro
                                     </div>
                                     <div className="bg-slate-50 rounded-lg p-3 mt-2">
                                         <p className="text-xs text-gray-500 uppercase font-semibold mb-1">Pembayaran</p>
-                                        {detail.cashAmount > 0 && <p className="text-sm">Tunai: <strong>{fmt(detail.cashAmount)}</strong></p>}
+                                        {detail.cashAmount > 0 && <p className="text-sm">Tunai: <strong>{formatCurrency(detail.cashAmount)}</strong></p>}
                                         {detail.transferAmount > 0 && (
-                                            <p className="text-sm">Transfer: <strong className="text-blue-700">{fmt(detail.transferAmount)}</strong>
+                                            <p className="text-sm">Transfer: <strong className="text-blue-700">{formatCurrency(detail.transferAmount)}</strong>
                                                 {detail.transferTo && <span className="text-gray-500"> → {detail.transferTo}</span>}
                                             </p>
                                         )}
-                                        <p className="text-sm font-bold mt-1">Total: {fmt(detail.cashAmount + detail.transferAmount)}</p>
+                                        <p className="text-sm font-bold mt-1">Total: {formatCurrency(detail.cashAmount + detail.transferAmount)}</p>
                                     </div>
                                     {detail.inputBy && (
                                         <p className="text-xs text-gray-400 italic">Diinput oleh: {detail.inputBy} (shift: {detail.shift || '-'})</p>

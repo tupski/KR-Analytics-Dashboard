@@ -1,6 +1,8 @@
 'use server';
 
 import { createServerClient } from '@/lib/supabase/server';
+import { getHotelDayRange } from '@/lib/services/date-range';
+import { getLiveOccupancy } from '@/lib/services/occupancy';
 import { format, subDays, subWeeks, subMonths, subYears, startOfWeek, startOfMonth, startOfYear } from 'date-fns';
 import { id as idLocale } from 'date-fns/locale';
 import { toZonedTime } from 'date-fns-tz';
@@ -16,72 +18,16 @@ import type {
 } from '@/types/dashboard';
 
 /**
- * Get normal day range for "today": 00:00 WIB today → 23:59:59 WIB today.
- * Returns ISO strings in Asia/Jakarta local time (no offset suffix, matches DB storage).
- */
-function getHotelDayRange() {
-    const timezone = 'Asia/Jakarta';
-    const now = toZonedTime(new Date(), timezone);
-    const todayStr = format(now, 'yyyy-MM-dd');
-    return {
-        start: `${todayStr}T00:00:00`,
-        end: `${todayStr}T23:59:59`,
-        dateStr: todayStr,
-    };
-}
-
-/**
- * Fetches unit status summary derived from lokasi_apartemen and today's transactions.
- * Since there is no dedicated unit_apartemen table, we derive status from:
- * - Total rooms from lokasi_apartemen
- * - Occupied rooms from today's active transactions
- * 
+ * Fetches unit status summary via the occupancy service.
+ *
  * @returns Promise<UnitStatusCounts> Object containing counts for each unit status
- * 
  */
 export async function fetchUnitStatus(): Promise<UnitStatusCounts> {
-    const supabase = createServerClient();
-
-    try {
-        // Get total rooms from nomor_kamar table
-        const { count: totalRoomCount } = await supabase
-            .from('nomor_kamar')
-            .select('id', { count: 'exact', head: true });
-
-        const totalRooms = totalRoomCount || 0;
-
-        // Get distinct rooms currently occupied (checkin <= now AND checkout >= now)
-        const now = new Date().toISOString();
-        const { data: occupiedData, error: occError } = await supabase
-            .from('transactions')
-            .select('room_number, apartment_location')
-            .lte('checkin_at', now)
-            .gte('checkout_at', now);
-
-        if (occError) {
-            console.error('Error fetching occupied rooms:', occError);
-        }
-
-        // Count unique occupied rooms
-        const occupiedRooms = new Set(
-            occupiedData?.map((t: any) => `${t.apartment_location}-${t.room_number}`) || []
-        ).size;
-
-        // Derive status counts
-        const statusCounts: UnitStatusCounts = {
-            tersedia: Math.max(0, totalRooms - occupiedRooms),
-            ditempati: occupiedRooms,
-        };
-
-        return statusCounts;
-    } catch (error) {
-        console.error('Error in fetchUnitStatus:', error);
-        // Return zeros instead of throwing to prevent dashboard from crashing
-        return {
-            tersedia: 0,
-            ditempati: 0,
-        };
-    }
+    const result = await getLiveOccupancy();
+    return {
+        tersedia: result.tersedia,
+        ditempati: result.ditempati,
+    };
 }
 
 /**

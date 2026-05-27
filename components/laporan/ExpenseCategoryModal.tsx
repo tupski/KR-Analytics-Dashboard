@@ -9,14 +9,13 @@ import {
     type ExpenseSortKey,
     type SortDirection,
 } from '@/app/(dashboard)/laporan/actions';
+import { formatCurrency } from '@/lib/utils/format';
 
 interface Props {
     category: string;
     filter: DateFilter;
     onClose: () => void;
 }
-
-const fmt = (v: number) => `Rp ${v.toLocaleString('id-ID')}`;
 
 const formatDate = (d: string) => {
     try {
@@ -147,7 +146,7 @@ export default function ExpenseCategoryModal({ category, filter, onClose }: Prop
                                             {r.apartmentLocation || <span className="text-gray-400">—</span>}
                                             {r.roomNumber && <span className="text-xs text-gray-400"> · {r.roomNumber}</span>}
                                         </td>
-                                        <td className="px-4 py-2.5 text-right font-semibold text-red-700 whitespace-nowrap">{fmt(r.jumlah)}</td>
+                                        <td className="px-4 py-2.5 text-right font-semibold text-red-700 whitespace-nowrap">{formatCurrency(r.jumlah)}</td>
                                     </tr>
                                 ))}
                             </tbody>
@@ -155,7 +154,7 @@ export default function ExpenseCategoryModal({ category, filter, onClose }: Prop
                                 <tfoot>
                                     <tr className="border-t-2 border-gray-200 bg-slate-50">
                                         <td colSpan={3} className="px-4 py-2.5 text-right text-xs text-gray-500 uppercase font-semibold">Subtotal halaman</td>
-                                        <td className="px-4 py-2.5 text-right font-bold text-gray-900">{fmt(totalPageJumlah)}</td>
+                                        <td className="px-4 py-2.5 text-right font-bold text-gray-900">{formatCurrency(totalPageJumlah)}</td>
                                     </tr>
                                 </tfoot>
                             )}

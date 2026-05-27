@@ -1,8 +1,8 @@
 'use server';
 
 import { createServerClient } from '@/lib/supabase/server';
-import { format, subDays } from 'date-fns';
-import { toZonedTime } from 'date-fns-tz';
+import { getDateRange } from '@/lib/services/date-range';
+import { getLocations } from '@/lib/services/location';
 
 export type UnitDateFilter = 'today' | 'yesterday' | '7days' | 'month' | 'year';
 
@@ -34,57 +34,6 @@ export interface UnitPageData {
 }
 
 /**
- * Build date range based on filter (Asia/Jakarta, normal day = 00:00-23:59 WIB).
- * Returns ISO timestamps for transaction.checkin_at filtering.
- */
-function getUnitDateRange(filter: UnitDateFilter) {
-    const timezone = 'Asia/Jakarta';
-    const now = toZonedTime(new Date(), timezone);
-    const todayStr = format(now, 'yyyy-MM-dd');
-
-    switch (filter) {
-        case 'today': {
-            const start = `${todayStr}T00:00:00`;
-            const end = `${todayStr}T23:59:59`;
-            return { start, end, label: 'Hari Ini' };
-        }
-        case 'yesterday': {
-            const yesterday = subDays(now, 1);
-            const yesterdayStr = format(yesterday, 'yyyy-MM-dd');
-            return {
-                start: `${yesterdayStr}T00:00:00`,
-                end: `${yesterdayStr}T23:59:59`,
-                label: 'Kemarin',
-            };
-        }
-        case '7days': {
-            const weekAgo = subDays(now, 6);
-            return {
-                start: `${format(weekAgo, 'yyyy-MM-dd')}T00:00:00`,
-                end: `${todayStr}T23:59:59`,
-                label: '7 Hari Terakhir',
-            };
-        }
-        case 'month': {
-            const monthStart = format(now, 'yyyy-MM-01');
-            return {
-                start: `${monthStart}T00:00:00`,
-                end: `${todayStr}T23:59:59`,
-                label: 'Bulan Ini',
-            };
-        }
-        case 'year': {
-            const yearStart = format(now, 'yyyy-01-01');
-            return {
-                start: `${yearStart}T00:00:00`,
-                end: `${todayStr}T23:59:59`,
-                label: 'Tahun Ini',
-            };
-        }
-    }
-}
-
-/**
  * Fetch all units with their occupancy status for a given period.
  * - When filter = 'today': occupied = active right now (checkin <= now <= checkout).
  * - Other filters: occupied = had any transaction in the period.
@@ -111,7 +60,7 @@ export async function fetchUnits(locationFilter?: string, dateFilter: UnitDateFi
             throw new Error('Failed to fetch rooms');
         }
 
-        const range = getUnitDateRange(dateFilter);
+        const range = getDateRange(dateFilter);
 
         // For "today" filter, occupancy = active right now (existing behavior)
         // For other filters, occupancy = had at least one transaction in period
@@ -203,21 +152,6 @@ export async function fetchUnits(locationFilter?: string, dateFilter: UnitDateFi
  * READ ONLY
  */
 export async function fetchUnitLocations(): Promise<string[]> {
-    const supabase = createServerClient();
-
-    try {
-        const { data, error } = await supabase
-            .from('lokasi_apartemen')
-            .select('name')
-            .order('name');
-
-        if (error) {
-            console.error('Error fetching locations:', error);
-            return [];
-        }
-
-        return (data || []).map((loc: any) => loc.name);
-    } catch (error) {
-        return [];
-    }
+    const locations = await getLocations();
+    return locations.map(loc => loc.name);
 }

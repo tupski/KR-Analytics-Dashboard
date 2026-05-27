@@ -1,6 +1,7 @@
 'use server';
 
 import { createServerClient } from '@/lib/supabase/server';
+import { getLocations } from '@/lib/services/location';
 import { format } from 'date-fns';
 import { toZonedTime } from 'date-fns-tz';
 
@@ -121,24 +122,8 @@ export async function fetchBookings(filters: BookingFilters = {}): Promise<Booki
  * READ ONLY
  */
 export async function fetchLocations(): Promise<string[]> {
-    const supabase = createServerClient();
-
-    try {
-        const { data, error } = await supabase
-            .from('lokasi_apartemen')
-            .select('name')
-            .order('name');
-
-        if (error) {
-            console.error('Error fetching locations:', error);
-            return [];
-        }
-
-        return (data || []).map((loc: any) => loc.name);
-    } catch (error) {
-        console.error('Error in fetchLocations:', error);
-        return [];
-    }
+    const locations = await getLocations();
+    return locations.map(loc => loc.name);
 }
 
 /**
