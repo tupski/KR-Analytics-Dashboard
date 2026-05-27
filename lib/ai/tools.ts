@@ -195,6 +195,129 @@ async function fetchUnitInventory(location?: string) {
     };
 }
 
+// ── New helper functions ─────────────────────────────────────────────────────
+
+/**
+ * get_daily_summary — snap summary of today (and yesterday for comparison).
+ * No parameters needed — uses system clock in Asia/Jakarta timezone.
+ */
+async function fetchDailySummary(): Promise<any> {
+    const { format, subDays } = await import('date-fns');
+    const { toZonedTime } = await import('date-fns-tz');
+    const tz = 'Asia/Jakarta';
+    const today = toZonedTime(new Date(), tz);
+    const todayStr = format(today, 'yyyy-MM-dd');
+    const yesterdayStr = format(subDays(today, 1), 'yyyy-MM-dd');
+
+    const [todayData, yesterdayData] = await Promise.all([
+        fetchPeriodSummary(todayStr, todayStr),
+        fetchPeriodSummary(yesterdayStr, yesterdayStr),
+    ]);
+
+    return {
+        today: { date: todayStr, ...todayData },
+        yesterday: { date: yesterdayStr, ...yesterdayData },
+        comparison: {
+            revenue_change: todayData.revenue - yesterdayData.revenue,
+            transaction_change: todayData.transactions - yesterdayData.transactions,
+        },
+    };
+}
+
+/**
+ * get_revenue_trend — daily revenue data points for a range (useful for charts/trends).
+ */
+async function fetchRevenueTrend(start: string, end: string, location?: string): Promise<any> {
+    const { startIso } = validateDateRange(start, end);
+    const supabase = createServerClient();
+
+    // Get distinct dates with revenue aggregated per day
+    let q = supabase
+        .from('transactions')
+        .select('checkin_at, cash_amount, transfer_amount')
+        .gte('checkin_at', `${start}T00:00:00`)
+        .lte('checkin_at', `${end}T23:59:59`);
+
+    if (location) q = q.eq('apartment_location', location);
+
+    const { data } = await q;
+    if (!data || data.length === 0) {
+        return { period: { start_date: start, end_date: end }, daily_revenue: [], total_revenue: 0 };
+    }
+
+    // Aggregate by date
+    const byDate: Record<string, number> = {};
+    for (const t of data) {
+        const day = (t.checkin_at as string).slice(0, 10); // "YYYY-MM-DD"
+        byDate[day] = (byDate[day] || 0) + (t.cash_amount || 0) + (t.transfer_amount || 0);
+    }
+
+    const daily = Object.entries(byDate)
+        .map(([date, revenue]) => ({ date, revenue: Math.round(revenue) }))
+        .sort((a, b) => a.date.localeCompare(b.date));
+
+    return {
+        period: { start_date: start, end_date: end, location: location || null },
+        total_revenue: daily.reduce((s, d) => s + d.revenue, 0),
+        days: daily.length,
+        daily_revenue: daily,
+        avg_per_day: daily.length > 0 ? Math.round(daily.reduce((s, d) => s + d.revenue, 0) / daily.length) : 0,
+        max_day: daily.length > 0 ? daily.reduce((a, b) => a.revenue > b.revenue ? a : b) : null,
+        min_day: daily.length > 0 ? daily.reduce((a, b) => a.revenue < b.revenue ? a : b) : null,
+    };
+}
+
+/**
+ * get_latest_status — real-time snapshot of today's operations.
+ * Equivalent to the dashboard "Ringkasan Hari Ini" card.
+ */
+async function fetchLatestStatus(): Promise<any> {
+    const { format } = await import('date-fns');
+    const { toZonedTime } = await import('date-fns-tz');
+    const tz = 'Asia/Jakarta';
+    const now = toZonedTime(new Date(), tz);
+    const today = format(now, 'yyyy-MM-dd');
+
+    const supabase = createServerClient();
+
+    // Today's transactions (checked-in today)
+    const { data: todayTx, count: txCount } = await supabase
+        .from('transactions')
+        .select('cash_amount, transfer_amount, status', { count: 'exact' })
+        .gte('checkin_at', `${today}T00:00:00`)
+        .lte('checkin_at', `${today}T23:59:59`);
+
+    // Active stays (currently checked-in)
+    const nowIso = now.toISOString();
+    const { count: activeStays } = await supabase
+        .from('transactions')
+        .select('*', { count: 'exact', head: true })
+        .lte('checkin_at', nowIso)
+        .gte('checkout_at', nowIso);
+
+    // Checkouts today
+    const { count: checkoutToday } = await supabase
+        .from('transactions')
+        .select('*', { count: 'exact', head: true })
+        .gte('checkout_at', `${today}T00:00:00`)
+        .lte('checkout_at', `${today}T23:59:59`);
+
+    const revenueToday = (todayTx || []).reduce(
+        (s: number, t: any) => s + (t.cash_amount || 0) + (t.transfer_amount || 0), 0
+    );
+
+    return {
+        snapshot_time: format(now, 'yyyy-MM-dd HH:mm:ss'),
+        today: {
+            date: today,
+            checkin_count: txCount || 0,
+            checkout_count: checkoutToday || 0,
+            revenue: Math.round(revenueToday),
+            active_stays: activeStays || 0,
+        },
+    };
+}
+
 // =====================================================
 // Public exports
 // =====================================================
@@ -206,6 +329,33 @@ export interface ToolCall {
 
 /** OpenAI / DeepSeek / openai-compatible function-calling schema. */
 export const OPENAI_TOOLS = [
+    // ── HARI INI (fast, no params) ─────────────────────────────────────────
+    {
+        type: 'function',
+        function: {
+            name: 'get_daily_summary',
+            description:
+                'RINGKASAN HARI INI vs kemarin — revenue, transaksi, expense, lokasi. TANPA PARAMETER. Cepat. Gunakan untuk jawab "gimana kondisi hari ini?", "berapa revenue hari ini?", "ada berapa transaksi?".',
+            parameters: {
+                type: 'object',
+                properties: {},
+            },
+        },
+    },
+    {
+        type: 'function',
+        function: {
+            name: 'get_latest_status',
+            description:
+                'STATUS REAL-TIME — total checkin hari ini, checkout, revenue, dan tamu yang sedang menginap sekarang. TANPA PARAMETER. Cocok untuk: "siapa yang lagi nginep?", "berapa checkin hari ini?", "status sekarang?".',
+            parameters: {
+                type: 'object',
+                properties: {},
+            },
+        },
+    },
+
+    // ── PERIODE ─────────────────────────────────────────────────────────────
     {
         type: 'function',
         function: {
@@ -218,6 +368,23 @@ export const OPENAI_TOOLS = [
                     start_date: { type: 'string', description: 'Tanggal mulai YYYY-MM-DD (inclusive)' },
                     end_date: { type: 'string', description: 'Tanggal akhir YYYY-MM-DD (inclusive)' },
                     location: { type: 'string', description: 'Filter apartment_location (opsional)' },
+                },
+                required: ['start_date', 'end_date'],
+            },
+        },
+    },
+    {
+        type: 'function',
+        function: {
+            name: 'get_revenue_trend',
+            description:
+                'DATA TREN REVENUE HARIAN — dapatkan revenue per hari dalam rentang tertentu. Output array harian + rata-rata + hari maksimum/minimum. Berguna untuk: "gimana tren 7 hari terakhir?", "chart revenue", "hari apa revenue tertinggi?".',
+            parameters: {
+                type: 'object',
+                properties: {
+                    start_date: { type: 'string', description: 'Tanggal mulai YYYY-MM-DD (inclusive)' },
+                    end_date: { type: 'string', description: 'Tanggal akhir YYYY-MM-DD (inclusive)' },
+                    location: { type: 'string', description: 'Filter lokasi (opsional)' },
                 },
                 required: ['start_date', 'end_date'],
             },
@@ -242,6 +409,8 @@ export const OPENAI_TOOLS = [
             },
         },
     },
+
+    // ── LOKASI & PELANGGAN ─────────────────────────────────────────────────
     {
         type: 'function',
         function: {
@@ -274,6 +443,8 @@ export const OPENAI_TOOLS = [
             },
         },
     },
+
+    // ── TAGIHAN & INVENTARIS ────────────────────────────────────────────────
     {
         type: 'function',
         function: {
@@ -356,6 +527,19 @@ export async function executeTool(call: ToolCall): Promise<any> {
                     call.arguments.start_date,
                     call.arguments.end_date,
                     call.arguments.limit || 10,
+                );
+
+            case 'get_daily_summary':
+                return await fetchDailySummary();
+
+            case 'get_latest_status':
+                return await fetchLatestStatus();
+
+            case 'get_revenue_trend':
+                return await fetchRevenueTrend(
+                    call.arguments.start_date,
+                    call.arguments.end_date,
+                    call.arguments.location,
                 );
 
             case 'get_outstanding_bills':
