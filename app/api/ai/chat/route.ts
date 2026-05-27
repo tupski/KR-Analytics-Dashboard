@@ -3,6 +3,8 @@ import { createServerClient } from '@/lib/supabase/server';
 import { format, subDays } from 'date-fns';
 import { toZonedTime } from 'date-fns-tz';
 import { OPENAI_TOOLS, ANTHROPIC_TOOLS, executeTool, type ToolCall } from '@/lib/ai/tools';
+import { parseAIResponse } from '@/lib/ai/responseParser';
+import { getHeaderSafeTitle } from '@/lib/utils/headerSafe';
 
 /**
  * AI Chat API Route — TOOL-CALLING enabled.
@@ -19,9 +21,38 @@ interface AIConfig {
     apiKey: string;
     model: string;
     baseUrl?: string;
+    /** Label for logging/error messages */
+    label?: string;
 }
 
 const MAX_TOOL_ITERATIONS = 5;
+
+/** Priority ranking for auto-routing. Lower = tried first. */
+const PROVIDER_PRIORITY: Record<string, number> = {
+    deepseek: 1,
+    gemini: 2,
+    groq: 3,
+    openai: 4,
+    anthropic: 5,
+    openrouter: 6,
+    kiro: 7,
+    'openai-compatible': 8,
+};
+
+/** Within a provider, model priority (lower = tried first) */
+const MODEL_PRIORITY: Record<string, Record<string, number>> = {
+    deepseek: {
+        'deepseek-v4-flash': 1,
+        'deepseek-v4-pro': 2,
+        'deepseek-chat': 3,
+        'deepseek-reasoner': 4,
+    },
+    // For other providers, use alphabetical + price
+};
+
+function getModelPriority(provider: string, model: string): number {
+    return MODEL_PRIORITY[provider]?.[model] ?? 50;
+}
 
 /** Tiny snapshot to include in the system message so the AI knows what date "today" is. */
 async function getQuickContext(): Promise<string> {
@@ -59,11 +90,11 @@ async function getQuickContext(): Promise<string> {
 - Lokasi: ${locationDescriptors}
 
 ATURAN TOOLS:
-- Gunakan tools untuk semua data — jangan mengarang angka.
+- Gunakan tools untuk semua data - jangan mengarang angka.
 - Untuk perbandingan periode, pakai compare_periods (langsung dapat delta otomatis).
 - "Minggu lalu" = window (today-13) s/d (today-7). "Bulan lalu" = 30 hari sebelum window sekarang.
 - Tanggal SELALU format YYYY-MM-DD.
-- Jika tools error, sebutkan data tidak tersedia — jangan asumsikan.`;
+- Jika tools error, sebutkan data tidak tersedia - jangan asumsikan.`;
 }
 
 // =========================================================
@@ -75,11 +106,12 @@ async function runOpenAILoop(
     model: string,
     systemContent: string,
     userMessages: any[],
-): Promise<string> {
+): Promise<{ message: string; usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number } }> {
     const conversation: any[] = [
         { role: 'system', content: systemContent },
         ...userMessages.map((m: any) => ({ role: m.role, content: m.content })),
     ];
+    let totalUsage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
 
     for (let iter = 0; iter < MAX_TOOL_ITERATIONS; iter++) {
         const body = {
@@ -88,7 +120,7 @@ async function runOpenAILoop(
             tools: OPENAI_TOOLS,
             tool_choice: 'auto',
             temperature: 0.7,
-            max_tokens: 2000,
+            max_tokens: 4096,
         };
 
         const res = await fetch(apiUrl, {
@@ -102,14 +134,23 @@ async function runOpenAILoop(
             throw new Error(`AI API error: ${res.status} ${res.statusText} - ${errorText.substring(0, 300)}`);
         }
 
-        const data = await res.json();
+        // Parse response - supports both JSON and SSE formats
+        const rawText = await res.text();
+        const data = parseAIResponse(rawText);
         const choice = data.choices?.[0];
         const message = choice?.message;
         if (!message) throw new Error('Respons AI kosong.');
 
+        // Accumulate token usage
+        if (data.usage) {
+            totalUsage.prompt_tokens += data.usage.prompt_tokens || 0;
+            totalUsage.completion_tokens += data.usage.completion_tokens || 0;
+            totalUsage.total_tokens += data.usage.total_tokens || 0;
+        }
+
         const toolCalls = message.tool_calls;
         if (!toolCalls || toolCalls.length === 0) {
-            return message.content || 'Tidak ada respons.';
+            return { message: message.content || 'Tidak ada respons.', usage: totalUsage };
         }
 
         // Append assistant message + tool results, then loop
@@ -140,7 +181,7 @@ async function runOpenAILoop(
         }
     }
 
-    return 'Maaf, saya butuh terlalu banyak tool calls untuk menjawab. Coba persempit pertanyaan.';
+    return { message: 'Maaf, saya butuh terlalu banyak tool calls untuk menjawab. Coba persempit pertanyaan.', usage: totalUsage };
 }
 
 // =========================================================
@@ -152,16 +193,17 @@ async function runAnthropicLoop(
     model: string,
     systemContent: string,
     userMessages: any[],
-): Promise<string> {
+): Promise<{ message: string; usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number } }> {
     let conversation: any[] = userMessages.map((m: any) => ({
         role: m.role,
         content: m.content,
     }));
+    let totalUsage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
 
     for (let iter = 0; iter < MAX_TOOL_ITERATIONS; iter++) {
         const body = {
             model,
-            max_tokens: 2000,
+            max_tokens: 4096,
             system: systemContent,
             tools: ANTHROPIC_TOOLS,
             messages: conversation,
@@ -178,15 +220,30 @@ async function runAnthropicLoop(
             throw new Error(`AI API error: ${res.status} - ${errorText.substring(0, 300)}`);
         }
 
-        const data = await res.json();
+        // Parse response as text first (Anthropic uses standard JSON, not SSE)
+        const rawText = await res.text();
+        let data: any;
+        try {
+            data = JSON.parse(rawText);
+        } catch (error) {
+            const preview = rawText.substring(0, 500);
+            throw new Error(`Failed to parse Anthropic response. Preview: ${preview}`);
+        }
         const blocks = data.content || [];
         const stopReason = data.stop_reason;
+
+        // Accumulate token usage
+        if (data.usage) {
+            totalUsage.prompt_tokens += data.usage.input_tokens || 0;
+            totalUsage.completion_tokens += data.usage.output_tokens || 0;
+            totalUsage.total_tokens = totalUsage.prompt_tokens + totalUsage.completion_tokens;
+        }
 
         const textBlocks = blocks.filter((b: any) => b.type === 'text');
         const toolUseBlocks = blocks.filter((b: any) => b.type === 'tool_use');
 
         if (stopReason !== 'tool_use' || toolUseBlocks.length === 0) {
-            return textBlocks.map((b: any) => b.text).join('\n').trim() || 'Tidak ada respons.';
+            return { message: textBlocks.map((b: any) => b.text).join('\n').trim() || 'Tidak ada respons.', usage: totalUsage };
         }
 
         conversation.push({ role: 'assistant', content: blocks });
@@ -204,7 +261,7 @@ async function runAnthropicLoop(
         conversation.push({ role: 'user', content: toolResults });
     }
 
-    return 'Maaf, saya butuh terlalu banyak tool calls untuk menjawab. Coba persempit pertanyaan.';
+    return { message: 'Maaf, saya butuh terlalu banyak tool calls untuk menjawab. Coba persempit pertanyaan.', usage: totalUsage };
 }
 
 export async function POST(request: NextRequest) {
@@ -216,36 +273,106 @@ export async function POST(request: NextRequest) {
             thinkingMode?: 'auto' | 'instant' | 'thinking';
         };
 
-        const resolvedConfig: AIConfig = {
-            provider: config?.provider || process.env.AI_PROVIDER || 'deepseek',
-            apiKey: config?.apiKey || process.env.AI_API_KEY || '',
-            model: config?.model || process.env.AI_MODEL || 'deepseek-chat',
-            baseUrl: config?.baseUrl || process.env.AI_BASE_URL || undefined,
-        };
+        // AUTO-FALLBACK ROUTING
+        //
+        // Client sends config.provider = provider ID or 'auto', and config.model = model ID or 'auto'.
+        // When 'auto', we build a prioritized candidate list from ALL DB-configured providers,
+        // sorted by provider priority then model priority. DeepSeek V4 Flash is always #1.
+        //
+        // If a candidate returns 429 (rate-limited) or 5xx (server error), we fall through
+        // to the next candidate. Only auth errors (401/403) and client errors (4xx except 429)
+        // are treated as fatal (won't retry).
+        //
+        // API keys are ALWAYS loaded from Supabase DB (decrypted) — client sends masked keys
+        // with bullet chars that break HTTP headers.
 
-        // If no API key in request, try loading from Supabase global config
-        if (!resolvedConfig.apiKey) {
-            try {
-                const { loadAllProviderConfigs } = await import('@/lib/ai/configServer');
-                const dbConfigs = await loadAllProviderConfigs();
-                // Find active provider first, then fallback to first configured
-                const active = dbConfigs.find(c => c.isActive) || dbConfigs[0];
-                if (active) {
-                    resolvedConfig.provider = active.providerId;
-                    resolvedConfig.apiKey = active.apiKey;
-                    resolvedConfig.model = active.model || resolvedConfig.model;
-                    resolvedConfig.baseUrl = active.baseUrl;
+        const isAuto = !config?.provider || config.provider === 'auto' || !config?.model || config.model === 'auto';
+
+        let candidates: AIConfig[] = [];
+
+        // ── Build candidate list from DB ──────────────────────────────────────
+        try {
+            const { loadAllProviderConfigs } = await import('@/lib/ai/configServer');
+            const dbConfigs = await loadAllProviderConfigs();
+
+            if (isAuto) {
+                // Expand ALL configured providers → their models → candidate list
+                const { PROVIDERS } = await import('@/lib/ai/models');
+                const expanded: AIConfig[] = [];
+
+                for (const db of dbConfigs) {
+                    const providerInfo = PROVIDERS.find(p => p.id === db.providerId);
+                    const models = providerInfo?.models || [];
+                    const providerPriority = PROVIDER_PRIORITY[db.providerId] ?? 50;
+
+                    // Sort models by priority (lower first), then by price
+                    const sortedModels = [...models].sort((a, b) => {
+                        const pa = getModelPriority(db.providerId, a.id);
+                        const pb = getModelPriority(db.providerId, b.id);
+                        if (pa !== pb) return pa - pb;
+                        return a.inputPrice - b.inputPrice;
+                    });
+
+                    for (const m of sortedModels) {
+                        // Filter by capability if thinkingMode requires reasoning
+                        if (thinkingMode === 'thinking' && m.capabilities.reasoning === false) continue;
+                        if (thinkingMode === 'instant' && m.capabilities.fast === false) continue;
+
+                        expanded.push({
+                            provider: db.providerId,
+                            apiKey: db.apiKey,
+                            model: m.id,
+                            baseUrl: db.baseUrl,
+                            label: `${providerInfo?.name || db.providerId} / ${m.label}`,
+                        });
+                    }
                 }
-            } catch (dbErr) {
-                // Silently fail - config not available from DB
+
+                // Sort by provider priority, then model priority
+                candidates = expanded.sort((a, b) => {
+                    const ppA = PROVIDER_PRIORITY[a.provider] ?? 50;
+                    const ppB = PROVIDER_PRIORITY[b.provider] ?? 50;
+                    if (ppA !== ppB) return ppA - ppB;
+                    return getModelPriority(a.provider, a.model) - getModelPriority(b.provider, b.model);
+                });
+            } else {
+                // Explicit provider+model selected — use exact match from DB
+                const match = dbConfigs.find(c => c.providerId === config.provider);
+                if (match) {
+                    candidates = [{
+                        provider: match.providerId,
+                        apiKey: match.apiKey,
+                        model: config.model || match.model || 'deepseek-v4-flash',
+                        baseUrl: config.baseUrl || match.baseUrl,
+                        label: `${match.providerId} / ${config.model || match.model}`,
+                    }];
+                }
             }
+        } catch (dbErr) {
+            // DB unavailable — single candidate from client-supplied key or env
+            candidates = [];
         }
 
-        if (!resolvedConfig.apiKey) {
-            return NextResponse.json(
-                { error: 'API key belum dikonfigurasi. Atur di halaman Pengaturan atau buka KR·AI Chat.' },
-                { status: 400 },
-            );
+        // ── Fallback: no DB config → client-supplied key or env ──────────────
+        if (candidates.length === 0) {
+            const fallbackApiKey = config?.apiKey || process.env.AI_API_KEY || '';
+            const fallbackProvider = config?.provider || process.env.AI_PROVIDER || 'deepseek';
+            const fallbackModel = config?.model || process.env.AI_MODEL || 'deepseek-chat';
+            const fallbackBaseUrl = config?.baseUrl || process.env.AI_BASE_URL || undefined;
+
+            if (!fallbackApiKey) {
+                return NextResponse.json(
+                    { error: 'API key belum dikonfigurasi. Atur di halaman Pengaturan atau buka KR·AI Chat.' },
+                    { status: 400 },
+                );
+            }
+            candidates = [{
+                provider: fallbackProvider,
+                apiKey: fallbackApiKey,
+                model: fallbackModel,
+                baseUrl: fallbackBaseUrl,
+                label: `${fallbackProvider} / ${fallbackModel}`,
+            }];
         }
 
         const quickContext = await getQuickContext();
@@ -260,19 +387,19 @@ Owner ingin jawaban cepat dan langsung. Berikan ringkas, fokus pada angka kunci 
         } else if (thinkingMode === 'thinking') {
             thinkingInstruction = `## Mode: DEEP THINKING
 Owner ingin analisis mendalam. Ambil waktu untuk:
-1. Pikirkan dahulu — pakai tools secara strategis untuk dapat data lengkap
+1. Pikirkan dahulu - pakai tools secara strategis untuk dapat data lengkap
 2. Cari 3-5 angle analisis yang berbeda
 3. Identifikasi pola tersembunyi dan korelasi antar metrik
-4. Berikan struktur lengkap: Executive Summary → Analisis → Insight → Risiko → Rekomendasi
+4. Berikan struktur lengkap: Executive Summary -> Analisis -> Insight -> Risiko -> Rekomendasi
 5. Sertakan visualisasi hint jika cocok`;
         }
         // 'auto' → no special instruction, default behavior
 
         const systemContent = [
-            // ── IDENTITY & ROLE ──────────────────────────────────────────────
-            `# KR·AI — AI Business Copilot Kakarama Room
+            // IDENTITY & ROLE
+            `# KRAI - AI Business Copilot Kakarama Room
 
-Kamu adalah KR·AI, AI Business Copilot untuk Kakarama Room (bisnis penyewaan apartemen & kamar harian di Indonesia).
+Kamu adalah KRAI, AI Business Copilot untuk Kakarama Room (bisnis penyewaan apartemen & kamar harian di Indonesia).
 
 Kamu berperan sebagai:
 - Business Intelligence Analyst
@@ -280,10 +407,22 @@ Kamu berperan sebagai:
 - Operations Advisor
 - Property Performance Consultant
 
-Kamu PUNYA AKSES ke database via tools. Selalu gunakan tools untuk mengambil angka aktual — jangan pernah mengarang data.`,
+Kamu PUNYA AKSES ke database via tools. Selalu gunakan tools untuk mengambil angka aktual - jangan pernah mengarang data.`,
 
-            // ── TUJUAN ───────────────────────────────────────────────────────
-            `## Tujuan KR·AI
+            // MEMORI
+            `## Memori KRAI
+
+KRAI memiliki sistem memori yang menyimpan fakta penting dari percakapan sebelumnya.
+Memori ini disuntikkan ke dalam konteks sistem dan HARUS digunakan untuk:
+- Mengingat preferensi owner (lokasi fokus, metrik prioritas, target bisnis)
+- Menghindari pertanyaan berulang yang sudah pernah dijawab
+- Memberikan analisis yang lebih personal dan kontekstual
+- Merujuk ke insight sebelumnya saat relevan ("Seperti yang kita bahas minggu lalu...")
+
+Gunakan memori secara natural - jangan sebutkan "berdasarkan memori saya", cukup gunakan faktanya.`,
+
+            // TUJUAN
+            `## Tujuan KRAI
 
 Bantu owner memahami kondisi bisnis dengan:
 - Menemukan insight penting dari data
@@ -292,14 +431,14 @@ Bantu owner memahami kondisi bisnis dengan:
 - Memberi rekomendasi actionable berbasis data nyata
 - Menjelaskan arti bisnis dari angka, bukan hanya menampilkan angka`,
 
-            // ── PRINSIP ANALISIS ─────────────────────────────────────────────
+            // PRINSIP ANALISIS
             `## Prinsip Analisis
 
-- Jangan hanya menampilkan angka — selalu jelaskan makna bisnisnya.
+- Jangan hanya menampilkan angka - selalu jelaskan makna bisnisnya.
 - Cari hubungan antar metrik (revenue, transaksi, tamu unik, okupansi, fee, pengeluaran).
 - Prioritaskan insight dengan dampak bisnis terbesar.
 - Fokus pada: revenue, okupansi, utilisasi unit, efisiensi operasional, lokasi underperform.
-- Hindari rekomendasi generik — semua rekomendasi harus spesifik berdasarkan data aktual.
+- Hindari rekomendasi generik - semua rekomendasi harus spesifik berdasarkan data aktual.
 - Jika data tidak tersedia, katakan dengan jelas tanpa mengarang.`,
 
             // ── SEVERITY ─────────────────────────────────────────────────────
@@ -318,7 +457,7 @@ Contoh penerapan:
 - Revenue naik 25% → 📈 Growth
 - Satu lokasi kosong total → 🚨 Critical`,
 
-            // ── NATURAL LANGUAGE KPI ─────────────────────────────────────────
+            // NATURAL LANGUAGE KPI
             `## Natural Language KPI
 
 Jangan hanya menyebut angka mentah. Ubah menjadi kalimat bisnis:
@@ -327,25 +466,25 @@ Jangan hanya menyebut angka mentah. Ubah menjadi kalimat bisnis:
 ✅ "Okupansi **25%**, artinya hanya 1 dari 4 kamar terisi."
 
 ❌ "Revenue turun 39%"
-✅ "Revenue turun **39%** — penurunan signifikan yang membutuhkan perhatian segera. 🚨"
+✅ "Revenue turun **39%** - penurunan signifikan yang membutuhkan perhatian segera. 🚨"
 
 ❌ "12 transaksi hari ini"
 ✅ "**12 transaksi** hari ini, rata-rata **Rp X** per transaksi."
 
 Selalu kontekstualisasikan angka dengan kapasitas bisnis aktual.`,
 
-            // ── CROSS-METRIC CORRELATION ─────────────────────────────────────
+            // CROSS-METRIC CORRELATION
             `## Cross-Metric Correlation
 
 Selalu cari dan jelaskan hubungan antar metrik, misalnya:
-- Revenue turun + transaksi turun → demand drop, bukan hanya harga
-- Okupansi rendah + inventory tinggi → utilisasi buruk, perlu promo
-- Marketing fee turun + revenue turun → kemungkinan channel marketing bermasalah
-- Pelanggan unik turun + transaksi stabil → pelanggan repeat lebih aktif
-- Lokasi inventory besar + okupansi rendah → underperforming asset
-- Revenue naik + transaksi stabil → kenaikan harga atau durasi lebih panjang`,
+- Revenue turun + transaksi turun -> demand drop, bukan hanya harga
+- Okupansi rendah + inventory tinggi -> utilisasi buruk, perlu promo
+- Marketing fee turun + revenue turun -> kemungkinan channel marketing bermasalah
+- Pelanggan unik turun + transaksi stabil -> pelanggan repeat lebih aktif
+- Lokasi inventory besar + okupansi rendah -> underperforming asset
+- Revenue naik + transaksi stabil -> kenaikan harga atau durasi lebih panjang`,
 
-            // ── STRUKTUR JAWABAN ─────────────────────────────────────────────
+            // STRUKTUR JAWABAN
             `## Struktur Jawaban
 
 Untuk analisis bisnis, gunakan struktur ini (sesuaikan dengan relevansi):
@@ -357,7 +496,7 @@ Ringkasan 2-3 kalimat kondisi bisnis saat ini.
 Data utama dengan konteks bisnis dan severity label.
 
 ### 3. Insight Penting
-Temuan yang tidak obvious — hubungan antar metrik, anomali, peluang.
+Temuan yang tidak obvious - hubungan antar metrik, anomali, peluang.
 
 ### 4. Risiko / Warning
 Hal yang perlu diperhatikan segera.
@@ -365,7 +504,7 @@ Hal yang perlu diperhatikan segera.
 ### 5. Rekomendasi Actionable
 1-3 tindakan spesifik yang bisa langsung dieksekusi.`,
 
-            // ── REKOMENDASI ──────────────────────────────────────────────────
+            // REKOMENDASI
             `## Rekomendasi Actionable
 
 Setiap jawaban analitik wajib memiliki minimal 1-3 rekomendasi spesifik. Bukan generik.
@@ -375,14 +514,14 @@ Contoh rekomendasi buruk (generik):
 - "Optimalkan operasional"
 
 Contoh rekomendasi baik (spesifik):
-- 💡 "Lokasi **[nama]** punya **8 kamar** tapi okupansi hanya **12%** — fokuskan promo weekday ke lokasi ini."
-- 💡 "Revenue turun karena transaksi drop **40%** minggu ini vs minggu lalu — cek apakah ada masalah listing atau channel OTA."
+- 💡 "Lokasi **[nama]** punya **8 kamar** tapi okupansi hanya **12%** - fokuskan promo weekday ke lokasi ini."
+- 💡 "Revenue turun karena transaksi drop **40%** minggu ini vs minggu lalu - cek apakah ada masalah listing atau channel OTA."
 - 💡 "Terapkan early-check-in fee di **[lokasi]** yang sering checkin sebelum 12:00 WIB."`,
 
-            // ── FORMAT ───────────────────────────────────────────────────────
+            // FORMAT
             `## Format Jawaban
 
-- **Bahasa**: WAJIB Bahasa Indonesia. Hindari kata bahasa Inggris jika sudah ada padanan Indonesia (gunakan "pendapatan" bukan "revenue", "tingkat hunian" bukan "occupancy", "tamu" bukan "guest", "tren" bukan "trend"). Jika TERPAKSA harus pakai istilah asing, bungkus dengan tanda asterisk satu untuk italic — contoh: *occupancy rate*, *cross-selling*, *property*. Singkatan teknis universal seperti KPI, ID, OTA tidak perlu di-italic.
+- **Bahasa**: WAJIB Bahasa Indonesia. Hindari kata bahasa Inggris jika sudah ada padanan Indonesia (gunakan "pendapatan" bukan "revenue", "tingkat hunian" bukan "occupancy", "tamu" bukan "guest", "tren" bukan "trend"). Jika TERPAKSA harus pakai istilah asing, bungkus dengan tanda asterisk satu untuk italic - contoh: *occupancy rate*, *cross-selling*, *property*. Singkatan teknis universal seperti KPI, ID, OTA tidak perlu di-italic.
 - **Style**: Seperti business consultant, bukan technical report
 - **Markdown**: Gunakan heading ##/###, tabel, bold, list dengan emoji prefix
 - **Angka penting**: Selalu **bold**
@@ -390,7 +529,7 @@ Contoh rekomendasi baik (spesifik):
 - **Emoji prefix list**: ✅ positif, ❌ masalah, ⚠️ warning, 💡 rekomendasi, 📌 penting, 🏆 terbaik, 🚨 critical
 - **Callout blockquote**: Gunakan > ⚠️ ..., > ✅ ..., > 💡 ..., > 🚨 ... untuk highlight penting
 - **Tabel**: Gunakan untuk perbandingan lokasi, periode, atau metrik ganda
-- **Panjang**: Proporsional — pertanyaan singkat → jawaban singkat. Analisis mendalam → jawaban lengkap terstruktur.`,
+- **Panjang**: Proporsional - pertanyaan singkat -> jawaban singkat. Analisis mendalam -> jawaban lengkap terstruktur.`,
 
             // ── VISUALIZATION HINT ───────────────────────────────────────────
             `## Visualization Hint (Opsional)
@@ -411,167 +550,142 @@ Hanya tampilkan jika benar-benar relevan dan menambah nilai.`,
             thinkingInstruction,
         ].filter(Boolean).join('\n\n');
 
-        let assistantMessage: string;
+        // ── Retry loop over candidates with fallback on 429/5xx ─────────────
+        let lastError: Error | null = null;
 
-        switch (resolvedConfig.provider) {
-            case 'openai': {
-                const apiUrl = resolvedConfig.baseUrl || 'https://api.openai.com/v1/chat/completions';
-                const headers = {
-                    'Content-Type': 'application/json',
-                    Authorization: `Bearer ${resolvedConfig.apiKey}`,
-                };
-                assistantMessage = await runOpenAILoop(
-                    apiUrl,
-                    headers,
-                    resolvedConfig.model || 'gpt-4o-mini',
-                    systemContent,
-                    messages,
-                );
-                break;
-            }
-            case 'deepseek': {
-                const apiUrl = resolvedConfig.baseUrl || 'https://api.deepseek.com/v1/chat/completions';
-                const headers = {
-                    'Content-Type': 'application/json',
-                    Authorization: `Bearer ${resolvedConfig.apiKey}`,
-                };
-                assistantMessage = await runOpenAILoop(
-                    apiUrl,
-                    headers,
-                    resolvedConfig.model || 'deepseek-chat',
-                    systemContent,
-                    messages,
-                );
-                break;
-            }
-            case 'openai-compatible': {
-                // For openai-compatible, base URL should be the full endpoint
-                // If it ends with /v1, append /chat/completions
-                // If it already includes /chat/completions, use as-is
-                let apiUrl = resolvedConfig.baseUrl || 'https://api.openai.com/v1/chat/completions';
-                if (apiUrl.endsWith('/v1')) {
-                    apiUrl = `${apiUrl}/chat/completions`;
-                } else if (!apiUrl.includes('/chat/completions')) {
-                    // If base URL doesn't end with /v1 and doesn't include /chat/completions,
-                    // assume it's a custom endpoint and use as-is
-                }
-                const headers = {
-                    'Content-Type': 'application/json',
-                    Authorization: `Bearer ${resolvedConfig.apiKey}`,
-                };
-                assistantMessage = await runOpenAILoop(
-                    apiUrl,
-                    headers,
-                    resolvedConfig.model || 'gpt-4o-mini',
-                    systemContent,
-                    messages,
-                );
-                break;
-            }
-            case 'anthropic': {
-                const apiUrl = resolvedConfig.baseUrl || 'https://api.anthropic.com/v1/messages';
-                const headers = {
-                    'Content-Type': 'application/json',
-                    'x-api-key': resolvedConfig.apiKey,
-                    'anthropic-version': '2023-06-01',
-                };
-                assistantMessage = await runAnthropicLoop(
-                    apiUrl,
-                    headers,
-                    resolvedConfig.model || 'claude-haiku-4-20250514',
-                    systemContent,
-                    messages,
-                );
-                break;
-            }
-            case 'gemini': {
-                // Gemini uses OpenAI-compatible endpoint via official compatibility URL
-                const apiUrl = resolvedConfig.baseUrl || 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions';
-                const headers = {
-                    'Content-Type': 'application/json',
-                    Authorization: `Bearer ${resolvedConfig.apiKey}`,
-                };
-                assistantMessage = await runOpenAILoop(
-                    apiUrl,
-                    headers,
-                    resolvedConfig.model || 'gemini-2.0-flash',
-                    systemContent,
-                    messages,
-                );
-                break;
-            }
-            case 'groq': {
-                const apiUrl = resolvedConfig.baseUrl || 'https://api.groq.com/openai/v1/chat/completions';
-                const headers = {
-                    'Content-Type': 'application/json',
-                    Authorization: `Bearer ${resolvedConfig.apiKey}`,
-                };
-                assistantMessage = await runOpenAILoop(
-                    apiUrl,
-                    headers,
-                    resolvedConfig.model || 'llama-3.3-70b-versatile',
-                    systemContent,
-                    messages,
-                );
-                break;
-            }
-            case 'openrouter': {
-                // OpenRouter and compatible proxies (like 9router)
-                // Base URL should be full endpoint or end with /v1
-                let apiUrl = resolvedConfig.baseUrl || 'https://openrouter.ai/api/v1/chat/completions';
-                if (apiUrl.endsWith('/v1')) {
-                    apiUrl = `${apiUrl}/chat/completions`;
-                } else if (!apiUrl.includes('/chat/completions')) {
-                    // Assume it's already a full endpoint
-                }
-                const headers: Record<string, string> = {
-                    'Content-Type': 'application/json',
-                    Authorization: `Bearer ${resolvedConfig.apiKey}`,
-                    'HTTP-Referer': 'https://kakarama.com',
-                    'X-Title': 'Kakarama Room Analytics',
-                };
+        for (const cand of candidates) {
+            try {
+                const result = await callProvider(cand, systemContent, messages);
+                return NextResponse.json({
+                    message: result.message,
+                    model: cand.model,
+                    provider: cand.provider,
+                    usage: result.usage,
+                });
+            } catch (error: any) {
+                lastError = error;
+                const statusMatch = String(error.message || '').match(/AI API error: (\d+)/);
+                const status = statusMatch ? parseInt(statusMatch[1]) : 0;
 
-                assistantMessage = await runOpenAILoop(
-                    apiUrl,
-                    headers,
-                    resolvedConfig.model || 'meta-llama/llama-3.3-70b-instruct:free',
-                    systemContent,
-                    messages,
-                );
-                break;
-            }
-            case 'kiro': {
-                // Kiro uses an OpenAI-compatible proxy — base URL is required
-                const apiUrl = resolvedConfig.baseUrl || '';
-                if (!apiUrl) {
-                    return NextResponse.json({ error: 'Base URL Kiro belum dikonfigurasi.' }, { status: 400 });
+                // 429 (rate-limited) or 5xx (server error) → try next candidate
+                if (status === 429 || (status >= 500 && status < 600)) {
+                    const nextLabel = candidates.indexOf(cand) + 1 < candidates.length
+                        ? candidates[candidates.indexOf(cand) + 1].label
+                        : null;
+                    if (nextLabel) {
+                        console.warn(`[KR·AI] ${cand.label} failed with ${status}, falling back to ${nextLabel}`);
+                    }
+                    continue;
                 }
-                const headers = {
-                    'Content-Type': 'application/json',
-                    Authorization: `Bearer ${resolvedConfig.apiKey}`,
-                };
-                assistantMessage = await runOpenAILoop(
-                    apiUrl,
-                    headers,
-                    resolvedConfig.model || 'kiro-claude-sonnet-4',
-                    systemContent,
-                    messages,
-                );
-                break;
+                // 401/403 = auth error (fatal, don't retry with other keys for same endpoint)
+                if (status === 401 || status === 403) {
+                    throw new Error(`${cand.label}: Auth error — periksa API key di Pengaturan.`);
+                }
+                // Other errors (4xx, parsing errors, etc.) → also try next unless it's the last candidate
+                if (candidates.indexOf(cand) + 1 < candidates.length) continue;
+                throw error;
             }
-            default:
-                return NextResponse.json({ error: `Provider "${resolvedConfig.provider}" tidak didukung` }, { status: 400 });
         }
 
-        return NextResponse.json({
-            message: assistantMessage,
-            model: resolvedConfig.model,
-            provider: resolvedConfig.provider,
-        });
+        // All candidates exhausted
+        throw new Error(
+            lastError
+                ? `Gagal menghubungi AI: ${lastError.message}`
+                : 'Tidak ada provider AI yang tersedia.',
+        );
     } catch (error: any) {
         return NextResponse.json(
             { error: `Gagal menghubungi AI: ${error.message}` },
             { status: 500 },
         );
+    }
+}
+
+/** Execute a single provider+model call. Extracted for the retry loop. */
+async function callProvider(
+    cfg: AIConfig,
+    systemContent: string,
+    messages: any[],
+): Promise<{ message: string; usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number } }> {
+    switch (cfg.provider) {
+        case 'openai':
+            return runOpenAILoop(
+                cfg.baseUrl || 'https://api.openai.com/v1/chat/completions',
+                { 'Content-Type': 'application/json', Authorization: `Bearer ${cfg.apiKey}` },
+                cfg.model || 'gpt-4o-mini',
+                systemContent,
+                messages,
+            );
+        case 'deepseek':
+            return runOpenAILoop(
+                cfg.baseUrl || 'https://api.deepseek.com/v1/chat/completions',
+                { 'Content-Type': 'application/json', Authorization: `Bearer ${cfg.apiKey}` },
+                cfg.model || 'deepseek-chat',
+                systemContent,
+                messages,
+            );
+        case 'gemini':
+            return runOpenAILoop(
+                cfg.baseUrl || 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
+                { 'Content-Type': 'application/json', Authorization: `Bearer ${cfg.apiKey}` },
+                cfg.model || 'gemini-2.0-flash',
+                systemContent,
+                messages,
+            );
+        case 'groq':
+            return runOpenAILoop(
+                cfg.baseUrl || 'https://api.groq.com/openai/v1/chat/completions',
+                { 'Content-Type': 'application/json', Authorization: `Bearer ${cfg.apiKey}` },
+                cfg.model || 'llama-3.3-70b-versatile',
+                systemContent,
+                messages,
+            );
+        case 'openrouter': {
+            let apiUrl = cfg.baseUrl || 'https://openrouter.ai/api/v1/chat/completions';
+            if (apiUrl.endsWith('/v1')) apiUrl = `${apiUrl}/chat/completions`;
+            return runOpenAILoop(
+                apiUrl,
+                {
+                    'Content-Type': 'application/json',
+                    Authorization: `Bearer ${cfg.apiKey}`,
+                    'HTTP-Referer': 'https://kakarama.com',
+                    'X-Title': getHeaderSafeTitle('Analytics'),
+                },
+                cfg.model || 'meta-llama/llama-3.3-70b-instruct:free',
+                systemContent,
+                messages,
+            );
+        }
+        case 'kiro': {
+            if (!cfg.baseUrl) throw new Error('Base URL Kiro belum dikonfigurasi.');
+            return runOpenAILoop(
+                cfg.baseUrl,
+                { 'Content-Type': 'application/json', Authorization: `Bearer ${cfg.apiKey}` },
+                cfg.model || 'kiro-claude-sonnet-4',
+                systemContent,
+                messages,
+            );
+        }
+        case 'anthropic':
+            return runAnthropicLoop(
+                cfg.baseUrl || 'https://api.anthropic.com/v1/messages',
+                { 'Content-Type': 'application/json', 'x-api-key': cfg.apiKey, 'anthropic-version': '2023-06-01' },
+                cfg.model || 'claude-haiku-4-20250514',
+                systemContent,
+                messages,
+            );
+        case 'openai-compatible': {
+            let apiUrl = cfg.baseUrl || 'https://api.openai.com/v1/chat/completions';
+            if (apiUrl.endsWith('/v1')) apiUrl = `${apiUrl}/chat/completions`;
+            return runOpenAILoop(
+                apiUrl,
+                { 'Content-Type': 'application/json', Authorization: `Bearer ${cfg.apiKey}` },
+                cfg.model || 'gpt-4o-mini',
+                systemContent,
+                messages,
+            );
+        }
+        default:
+            throw new Error(`Provider "${cfg.provider}" tidak didukung`);
     }
 }

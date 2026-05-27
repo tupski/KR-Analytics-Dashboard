@@ -221,3 +221,109 @@ export async function getConfiguredProviderIds(): Promise<ProviderId[]> {
     const config = await loadConfigFromDb();
     return config.providers.map(p => p.providerId);
 }
+
+/**
+ * Resolve which (provider, model) to use for a given request.
+ * Database version of resolveActive from config.ts
+ * 
+ * - If activeProvider is a real provider, use that.
+ * - If activeProvider is 'auto' or activeModel is 'auto', pick the cheapest configured
+ *   provider+model that matches the requested capability (e.g., reasoning for 'thinking' mode).
+ */
+export async function resolveActiveFromDb(
+    thinkingMode: 'auto' | 'instant' | 'thinking' = 'auto',
+    needVision: boolean = false,
+): Promise<{ providerId: ProviderId; apiKey: string; modelId: string; baseUrl?: string } | null> {
+    const config = await loadConfigFromDb();
+    
+    // No providers configured
+    if (config.providers.length === 0) return null;
+    
+    // Explicit provider+model selection
+    if (config.activeProvider !== 'auto' && config.activeModel !== 'auto') {
+        const provider = config.providers.find(p => p.providerId === config.activeProvider);
+        if (provider && provider.apiKeySet) {
+            // Need to fetch the actual API key from server
+            const res = await fetch(`/api/ai/config?provider=${config.activeProvider}`);
+            if (res.ok) {
+                const data = await res.json();
+                const fullConfig = data.configs?.find((c: any) => c.providerId === config.activeProvider);
+                if (fullConfig?.apiKey) {
+                    return {
+                        providerId: config.activeProvider as ProviderId,
+                        apiKey: fullConfig.apiKey,
+                        modelId: config.activeModel,
+                        baseUrl: provider.baseUrl,
+                    };
+                }
+            }
+        }
+    }
+    
+    // Auto mode: pick best matching model from configured providers
+    // Import models dynamically to avoid circular dependency
+    const { getProvider } = await import('./models');
+    
+    const candidates = await Promise.all(
+        config.providers
+            .filter(p => p.apiKeySet)
+            .map(async (providerConfig) => {
+                const provider = getProvider(providerConfig.providerId);
+                if (!provider) return [];
+                
+                // Fetch actual API key
+                const res = await fetch(`/api/ai/config?provider=${providerConfig.providerId}`);
+                let apiKey = '';
+                if (res.ok) {
+                    const data = await res.json();
+                    const fullConfig = data.configs?.find((c: any) => c.providerId === providerConfig.providerId);
+                    apiKey = fullConfig?.apiKey || '';
+                }
+                
+                return provider.models.map(m => ({
+                    providerId: providerConfig.providerId,
+                    modelId: m.id,
+                    model: m,
+                    apiKey,
+                    baseUrl: providerConfig.baseUrl,
+                }));
+            })
+    );
+    
+    const flatCandidates = candidates.flat();
+    
+    // Filter by capability requirements
+    let filtered = flatCandidates;
+    if (needVision) {
+        filtered = filtered.filter(c => c.model.capabilities.vision);
+    }
+    if (thinkingMode === 'thinking') {
+        const reasoning = filtered.filter(c => c.model.capabilities.reasoning);
+        if (reasoning.length > 0) filtered = reasoning;
+    } else if (thinkingMode === 'instant') {
+        const fast = filtered.filter(c => c.model.capabilities.fast);
+        if (fast.length > 0) filtered = fast;
+    }
+    
+    if (filtered.length === 0) {
+        // Fallback to first available
+        const first = flatCandidates[0];
+        if (!first) return null;
+        return {
+            providerId: first.providerId,
+            apiKey: first.apiKey,
+            modelId: first.modelId,
+            baseUrl: first.baseUrl,
+        };
+    }
+    
+    // Pick cheapest among filtered
+    filtered.sort((a, b) => a.model.inputPrice - b.model.inputPrice);
+    const best = filtered[0];
+    return {
+        providerId: best.providerId,
+        apiKey: best.apiKey,
+        modelId: best.modelId,
+        baseUrl: best.baseUrl,
+    };
+}

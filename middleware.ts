@@ -42,11 +42,11 @@ export async function middleware(request: NextRequest) {
         },
     );
 
-    // Get session
-    const { data: { session } } = await supabase.auth.getSession();
+    // Get user (secure - authenticates with Supabase Auth server)
+    const { data: { user }, error } = await supabase.auth.getUser();
 
     // Not authenticated → redirect to login
-    if (!session) {
+    if (error || !user) {
         const loginUrl = new URL('/login', request.url);
         loginUrl.searchParams.set('redirect', pathname);
         return NextResponse.redirect(loginUrl);
@@ -72,7 +72,7 @@ export async function middleware(request: NextRequest) {
     const { data: roleData } = await adminSupabase
         .from('user_roles')
         .select('role')
-        .eq('user_id', session.user.id)
+        .eq('user_id', user.id)
         .limit(1)
         .single();
 

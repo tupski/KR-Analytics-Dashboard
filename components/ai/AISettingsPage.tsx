@@ -17,6 +17,13 @@ import { saveAIConfig, loadAIConfig } from '@/app/(dashboard)/pengaturan/ai-acti
 
 const fmtPrice = (v: number) => v === 0 ? 'Gratis' : `$${v.toFixed(2)}`;
 
+/** Sanitize input to remove non-ASCII characters that cause ByteString errors */
+function sanitizeInput(text: string): string {
+    // Remove non-ASCII characters (including bullet points, smart quotes, etc.)
+    // Keep only printable ASCII characters (32-126)
+    return text.replace(/[^\x20-\x7E]/g, '').trim();
+}
+
 /** Capability badges for a model */
 function CapabilityBadges({ caps, size = 'sm' }: { caps: ModelInfo['capabilities']; size?: 'xs' | 'sm' }) {
     const sz = size === 'xs' ? 'w-3 h-3' : 'w-3.5 h-3.5';
@@ -143,11 +150,16 @@ export default function AISettingsPage() {
     const handleSave = async () => {
         if (!draftKey.trim()) return;
         try {
+            // Sanitize inputs to prevent ByteString errors
+            const sanitizedKey = sanitizeInput(draftKey);
+            const sanitizedBaseUrl = draftBaseUrl ? sanitizeInput(draftBaseUrl) : undefined;
+            const sanitizedModel = sanitizeInput(draftModel || provider.models[0]?.id || '');
+            
             await saveProviderConfigToDb(
                 activeProviderId,
-                draftKey.trim(),
-                draftModel || provider.models[0]?.id || '',
-                draftBaseUrl.trim() || undefined,
+                sanitizedKey,
+                sanitizedModel,
+                sanitizedBaseUrl,
                 false
             );
             // Reload config from database
@@ -190,6 +202,11 @@ export default function AISettingsPage() {
         setTesting(true);
         setTestResult(null);
         try {
+            // Sanitize inputs to prevent ByteString errors
+            const sanitizedKey = sanitizeInput(draftKey);
+            const sanitizedBaseUrl = draftBaseUrl ? sanitizeInput(draftBaseUrl) : undefined;
+            const sanitizedModel = sanitizeInput(draftModel);
+            
             const res = await fetch('/api/ai/chat', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -197,9 +214,9 @@ export default function AISettingsPage() {
                     messages: [{ role: 'user', content: 'Halo, balas singkat dengan satu kalimat saja.' }],
                     config: {
                         provider: activeProviderId,
-                        apiKey: draftKey.trim(),
-                        model: draftModel,
-                        baseUrl: draftBaseUrl.trim() || undefined,
+                        apiKey: sanitizedKey,
+                        model: sanitizedModel,
+                        baseUrl: sanitizedBaseUrl,
                     },
                 }),
             });
@@ -238,6 +255,11 @@ export default function AISettingsPage() {
         setTestingCustom(true);
         setTestResult(null);
         try {
+            // Sanitize inputs to prevent ByteString errors
+            const sanitizedKey = sanitizeInput(draftKey);
+            const sanitizedBaseUrl = draftBaseUrl ? sanitizeInput(draftBaseUrl) : undefined;
+            const sanitizedModelName = sanitizeInput(customModelName);
+            
             const res = await fetch('/api/ai/chat', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -245,9 +267,9 @@ export default function AISettingsPage() {
                     messages: [{ role: 'user', content: 'Halo, balas singkat dengan satu kalimat saja.' }],
                     config: {
                         provider: activeProviderId,
-                        apiKey: draftKey.trim(),
-                        model: customModelName.trim(),
-                        baseUrl: draftBaseUrl.trim() || undefined,
+                        apiKey: sanitizedKey,
+                        model: sanitizedModelName,
+                        baseUrl: sanitizedBaseUrl,
                     },
                 }),
             });
@@ -616,6 +638,8 @@ export default function AISettingsPage() {
                                 value={retentionDays}
                                 onChange={e => setRetentionDays(Number(e.target.value))}
                                 className="flex-1 accent-blue-600"
+                                aria-label="Durasi penyimpanan riwayat chat dalam hari"
+                                title="Geser untuk mengatur berapa lama riwayat chat disimpan"
                             />
                             <span className="text-sm font-semibold text-gray-900 w-20 text-right">
                                 {retentionDays} hari

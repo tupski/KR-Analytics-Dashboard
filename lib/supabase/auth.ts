@@ -33,13 +33,15 @@ export async function createAuthClient() {
 }
 
 /**
- * Get the current session and user from Supabase Auth.
+ * Get the current user from Supabase Auth (secure - authenticates with server).
  * Returns null if not authenticated.
  */
 export async function getSession() {
     const supabase = await createAuthClient();
-    const { data: { session } } = await supabase.auth.getSession();
-    return session;
+    const { data: { user }, error } = await supabase.auth.getUser();
+    if (error || !user) return null;
+    // Return a session-like object for backward compatibility
+    return { user };
 }
 
 /**

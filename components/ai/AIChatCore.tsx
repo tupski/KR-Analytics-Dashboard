@@ -16,7 +16,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { Send, Bot, Brain, X, ChevronRight, Copy, Check, AlertTriangle, Eye, Lightbulb, Wrench, Zap, ChevronDown } from 'lucide-react';
 import MarkdownRenderer from './MarkdownRenderer';
-import { loadMemory, addMemory, deleteMemory, getMemoryContext, type MemoryEntry } from '@/lib/ai/memory';
+import { loadMemory, addMemory, deleteMemory, getMemoryContext, extractMemoryFromConversation, type MemoryEntry } from '@/lib/ai/memory';
 import KraiLogo from '@/components/shared/KraiLogo';
 import {
     loadConfig,
@@ -24,8 +24,14 @@ import {
     setThinkingMode as persistThinkingMode,
     type ThinkingMode,
     type MultiAIConfig,
-    resolveActive,
 } from '@/lib/ai/config';
+import {
+    loadConfigFromDb,
+    setActiveProviderInDb,
+    setThinkingModeInDb,
+    resolveActiveFromDb,
+    type MultiAIConfig as DbMultiAIConfig,
+} from '@/lib/ai/configClient';
 import { PROVIDERS, getModel, type ProviderId } from '@/lib/ai/models';
 
 export interface ChatMessage {
@@ -40,6 +46,12 @@ export interface ChatMessage {
     provider?: string;
     /** Optional image data URL (user message only) */
     imageDataUrl?: string;
+    /** Token usage information (assistant only) */
+    usage?: {
+        prompt_tokens: number;
+        completion_tokens: number;
+        total_tokens: number;
+    };
 }
 
 // ── Loading indicator — pure CSS dots, zero JS state ────────────────────────
@@ -65,7 +77,6 @@ function LoadingBubble({ thinking }: { thinking?: boolean }) {
     );
 }
 
-// ── Opsi A: Direct render with CSS fade-in, zero animation overhead ─────────
 // No typing loop, no rAF, no setInterval.
 // Response appears instantly with a subtle fade-in — same as Claude/Gemini.
 
@@ -84,8 +95,8 @@ async function sendChat(
     memoryContext: string,
     thinkingMode: ThinkingMode,
     needVision: boolean,
-): Promise<{ message: string; model?: string; provider?: string }> {
-    const resolved = resolveActive(thinkingMode, needVision);
+): Promise<{ message: string; model?: string; provider?: string; usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number } }> {
+    const resolved = await resolveActiveFromDb(thinkingMode, needVision);
     if (!resolved) {
         throw new Error('Belum ada provider AI yang dikonfigurasi. Buka Pengaturan > Konfigurasi AI.');
     }
@@ -96,9 +107,9 @@ async function sendChat(
             messages: apiMessages,
             config: {
                 provider: resolved.providerId,
-                apiKey: resolved.conf.apiKey,
+                apiKey: resolved.apiKey,
                 model: resolved.modelId,
-                baseUrl: resolved.conf.baseUrl,
+                baseUrl: resolved.baseUrl,
             },
             memoryContext,
             thinkingMode,
@@ -116,7 +127,7 @@ async function fetchFollowUpSuggestions(
     aiAnswer: string,
 ): Promise<string[]> {
     try {
-        const resolved = resolveActive('instant', false);
+        const resolved = await resolveActiveFromDb('instant', false);
         if (!resolved) return [];
         const prompt = `Kamu adalah KR·AI. Berdasarkan konteks berikut, hasilkan TEPAT 2 pertanyaan lanjutan yang spesifik dan relevan untuk membantu owner mendapat insight bisnis. Kembalikan HANYA 2 baris teks tanpa nomor/bullet.
 
@@ -132,9 +143,9 @@ Jawaban: ${aiAnswer.slice(0, 400)}
                 messages: [{ role: 'user', content: prompt }],
                 config: {
                     provider: resolved.providerId,
-                    apiKey: resolved.conf.apiKey,
+                    apiKey: resolved.apiKey,
                     model: resolved.modelId,
-                    baseUrl: resolved.conf.baseUrl,
+                    baseUrl: resolved.baseUrl,
                 },
                 memoryContext: '',
             }),
@@ -273,9 +284,38 @@ export default function AIChatCore({
     // The parent (AIChatFullscreen) uses `key={activeConv?.id}` to remount on switch,
     // so initialMessages will be fresh on every switch.
 
-    // Load config + listen for changes
+    // Load config from database + listen for changes
     useEffect(() => {
-        const refresh = () => {
+        const refresh = async () => {
+            try {
+                // Try loading from database first
+                const dbConfig = await loadConfigFromDb();
+                if (dbConfig.providers.length > 0) {
+                    // Convert DB config to local config format
+                    const localConfig: MultiAIConfig = {
+                        activeProvider: dbConfig.activeProvider,
+                        activeModel: dbConfig.activeModel,
+                        providers: Object.fromEntries(
+                            dbConfig.providers.map(p => [
+                                p.providerId,
+                                {
+                                    apiKey: p.apiKey,
+                                    model: p.model,
+                                    baseUrl: p.baseUrl,
+                                }
+                            ])
+                        ),
+                        thinkingMode: dbConfig.thinkingMode,
+                    };
+                    setConfig(localConfig);
+                    setThinkingModeState(dbConfig.thinkingMode);
+                    return;
+                }
+            } catch (err) {
+                console.warn('Failed to load config from DB, falling back to localStorage:', err);
+            }
+            
+            // Fallback to localStorage
             const c = loadConfig();
             setConfig(c);
             setThinkingModeState(c.thinkingMode);
@@ -379,9 +419,17 @@ export default function AIChatCore({
                 timestamp: Date.now(),
                 model: result.model,
                 provider: result.provider,
+                usage: result.usage,
             };
             setMessages([...newMessages, assistantMsg]);
             setTimeout(() => addSuggestions(msg, result.message), 300);
+
+            // Auto-extract memory from this conversation (fire-and-forget, don't block UI)
+            extractMemoryFromConversation(
+                msg,
+                result.message,
+                async (msgs, mode) => sendChat(msgs, '', (mode as ThinkingMode) || 'instant', false),
+            ).catch(() => { /* silent */ });
         } catch (err: any) {
             setError(err.message || 'Gagal menghubungi KR·AI');
         } finally {
@@ -445,14 +493,32 @@ export default function AIChatCore({
     };
     const [copiedIdx, setCopiedIdx] = useState<number | null>(null);
 
-    const handleThinkingChange = (mode: ThinkingMode) => {
+    const handleThinkingChange = async (mode: ThinkingMode) => {
         setThinkingModeState(mode);
-        persistThinkingMode(mode);
+        try {
+            // Try saving to database first
+            if (config && config.activeProvider !== 'auto') {
+                await setThinkingModeInDb(config.activeProvider as ProviderId, mode);
+            }
+        } catch (err) {
+            // Fallback to localStorage
+            persistThinkingMode(mode);
+        }
     };
 
-    const handleSelectModel = (providerId: ProviderId | 'auto', modelId: string) => {
-        setActive(providerId, modelId);
+    const handleSelectModel = async (providerId: ProviderId | 'auto', modelId: string) => {
+        try {
+            // Try saving to database first
+            if (providerId !== 'auto') {
+                await setActiveProviderInDb(providerId, modelId);
+            }
+        } catch (err) {
+            // Fallback to localStorage
+            setActive(providerId, modelId);
+        }
         setShowModelPicker(false);
+        // Trigger config reload
+        window.dispatchEvent(new Event('kr-ai-config-changed'));
     };
 
     const isFloat = mode === 'float';
@@ -470,53 +536,16 @@ export default function AIChatCore({
         <div className="flex flex-col h-full">
             {showMemory && <MemoryPanel onClose={() => setShowMemory(false)} />}
 
-            {/* Top bar — model selector + thinking mode */}
-            {showTopBar && (
-                <div className={`flex items-center justify-between gap-2 border-b border-gray-100 bg-white ${isFloat ? 'px-2 py-1.5' : 'px-3 py-2'}`}>
-                    {/* Model picker button */}
-                    <div className="relative flex-1 min-w-0">
-                        <button
-                            onClick={() => setShowModelPicker(v => !v)}
-                            className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] text-gray-700 hover:bg-gray-100 transition-colors max-w-full"
-                        >
-                            <Brain className="w-3 h-3 text-blue-600 flex-shrink-0" />
-                            <span className="truncate">{activeModelLabel}</span>
-                            <ChevronDown className="w-3 h-3 flex-shrink-0" />
-                        </button>
-                        {showModelPicker && config && (
-                            <ModelPickerDropdown
-                                config={config}
-                                onSelect={handleSelectModel}
-                                onClose={() => setShowModelPicker(false)}
-                            />
-                        )}
-                    </div>
-
-                    {/* Thinking mode pills */}
-                    <div className="flex items-center gap-0.5 bg-gray-100 rounded-md p-0.5 flex-shrink-0">
-                        {(['auto', 'instant', 'thinking'] as ThinkingMode[]).map(m => (
-                            <button
-                                key={m}
-                                onClick={() => handleThinkingChange(m)}
-                                className={`px-1.5 py-0.5 rounded text-[10px] font-medium transition-colors capitalize ${thinkingMode === m ? 'bg-white text-blue-700 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
-                                title={m === 'auto' ? 'Otomatis pilih mode' : m === 'instant' ? 'Cepat & murah' : 'Reasoning mendalam'}
-                            >
-                                {m}
-                            </button>
-                        ))}
-                    </div>
-                </div>
-            )}
-
             {/* Message list */}
             <div className={`flex-1 overflow-y-auto ${isFloat ? 'p-3 space-y-3 bg-slate-50' : 'px-4 py-4 space-y-4 bg-slate-50/50'}`}>
-                {messages.length === 0 && !loading && (
-                    <div className={`text-center ${isFloat ? 'py-6' : 'py-8'}`}>
-                        <div className={`bg-gradient-to-br from-blue-600 to-blue-400 rounded-2xl flex items-center justify-center mx-auto mb-3 ${isFloat ? 'w-10 h-10' : 'w-14 h-14'}`}>
-                            <Bot className={`text-white ${isFloat ? 'w-5 h-5' : 'w-7 h-7'}`} />
+                {/* Only show greeting in float mode - full mode has its own welcome screen */}
+                {messages.length === 0 && !loading && isFloat && (
+                    <div className="text-center py-6">
+                        <div className="bg-gradient-to-br from-blue-600 to-blue-400 rounded-2xl flex items-center justify-center mx-auto mb-3 w-10 h-10">
+                            <Bot className="text-white w-5 h-5" />
                         </div>
-                        <p className={`font-semibold text-gray-800 ${isFull ? 'text-base' : 'text-sm'}`}>
-                            Halo, saya <KraiLogo size={isFull ? 'base' : 'sm'} />
+                        <p className="font-semibold text-gray-800 text-sm">
+                            Halo, saya <KraiLogo size="sm" />
                         </p>
                         <p className="mt-1 text-gray-500 text-xs">Asisten AI analitik Kakarama Room. Tanyakan apa saja tentang data bisnis.</p>
                     </div>
@@ -549,24 +578,45 @@ export default function AIChatCore({
                                     )}
                                 </div>
 
-                                {/* Footer: timestamp + model + copy (assistant) */}
+                                {/* Footer: token usage + timestamp + model + copy (assistant) */}
                                 {msg.role === 'assistant' && msg.typed && (
-                                    <div className="flex items-center gap-2 px-1 text-[10px] text-gray-400">
-                                        {msg.timestamp && <span>{formatTimestamp(msg.timestamp)}</span>}
-                                        {msg.model && (
-                                            <span className="inline-flex items-center gap-0.5 bg-gray-100 px-1.5 py-0.5 rounded text-gray-600">
-                                                <Brain className="w-2.5 h-2.5" />
-                                                {msg.model}
-                                            </span>
+                                    <div className="flex flex-col gap-1 px-1">
+                                        {/* Token usage info - centered */}
+                                        {msg.usage && (
+                                            <div className="flex items-center justify-center gap-2 text-[9px] text-gray-400 bg-gray-50 px-2 py-1 rounded border border-gray-100">
+                                                <span className="font-mono">
+                                                    <span className="text-gray-500">In:</span> <span className="font-semibold text-gray-700">{msg.usage.prompt_tokens.toLocaleString()}</span>
+                                                </span>
+                                                <span className="text-gray-300">•</span>
+                                                <span className="font-mono">
+                                                    <span className="text-gray-500">Out:</span> <span className="font-semibold text-gray-700">{msg.usage.completion_tokens.toLocaleString()}</span>
+                                                </span>
+                                                <span className="text-gray-300">•</span>
+                                                <span className="font-mono">
+                                                    <span className="text-gray-500">Total:</span> <span className="font-semibold text-blue-600">{msg.usage.total_tokens.toLocaleString()}</span> <span className="text-gray-400">tokens</span>
+                                                </span>
+                                            </div>
                                         )}
-                                        <button
-                                            onClick={() => handleCopy(msg.content, idx)}
-                                            className="inline-flex items-center gap-0.5 hover:text-blue-600 transition-colors"
-                                            title="Salin teks"
-                                        >
-                                            {copiedIdx === idx ? <Check className="w-3 h-3 text-emerald-500" /> : <Copy className="w-3 h-3" />}
-                                            <span>{copiedIdx === idx ? 'Tersalin' : 'Salin'}</span>
-                                        </button>
+                                        {/* Model name, timestamp, and copy button */}
+                                        <div className="flex items-center justify-between gap-2 text-[10px] text-gray-400">
+                                            <div className="flex items-center gap-2">
+                                                {msg.timestamp && <span>{formatTimestamp(msg.timestamp)}</span>}
+                                                {msg.model && (
+                                                    <span className="inline-flex items-center gap-0.5 bg-gray-100 px-1.5 py-0.5 rounded text-gray-600">
+                                                        <Brain className="w-2.5 h-2.5" />
+                                                        {msg.model}
+                                                    </span>
+                                                )}
+                                            </div>
+                                            <button
+                                                onClick={() => handleCopy(msg.content, idx)}
+                                                className="inline-flex items-center gap-0.5 hover:text-blue-600 transition-colors"
+                                                title="Salin teks"
+                                            >
+                                                {copiedIdx === idx ? <Check className="w-3 h-3 text-emerald-500" /> : <Copy className="w-3 h-3" />}
+                                                <span>{copiedIdx === idx ? 'Tersalin' : 'Salin'}</span>
+                                            </button>
+                                        </div>
                                     </div>
                                 )}
 
@@ -620,59 +670,109 @@ export default function AIChatCore({
                                 <p className="text-[10px] text-amber-600 truncate">⚠️ Model aktif tidak support gambar — pilih model dengan vision.</p>
                             )}
                         </div>
-                        <button onClick={() => setPendingImage(null)} className="p-1 hover:bg-gray-100 rounded">
+                        <button 
+                            onClick={() => setPendingImage(null)} 
+                            className="p-1 hover:bg-gray-100 rounded"
+                            aria-label="Hapus gambar"
+                        >
                             <X className="w-3.5 h-3.5 text-gray-500" />
                         </button>
                     </div>
                 </div>
             )}
 
-            {/* Input bar */}
-            <div className={`border-t border-gray-100 bg-white ${isFloat ? 'p-2.5' : 'px-4 py-3'}`}>
-                {showMemoryButton && (
-                    <div className={`flex justify-end mb-2 ${isFull ? 'max-w-3xl mx-auto' : ''}`}>
+            {/* Input bar - Modern ChatGPT/Claude style */}
+            <div className={`border-t border-gray-200 bg-white ${isFloat ? 'p-2.5' : 'px-4 py-3'}`}>
+                <div className={`space-y-2.5 ${isFull ? 'max-w-3xl mx-auto' : ''}`}>
+                    {/* Main input area with send button */}
+                    <div className="flex gap-2 items-end">
+                        {isFull ? (
+                            <textarea
+                                ref={inputRef as React.RefObject<HTMLTextAreaElement>}
+                                value={input}
+                                onChange={e => setInput(e.target.value)}
+                                onKeyDown={handleKeyDown}
+                                onPaste={handlePaste}
+                                placeholder="Tanya KR·AI..."
+                                disabled={loading}
+                                rows={1}
+                                className="flex-1 px-4 py-3 border border-gray-300 rounded-2xl text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none disabled:opacity-50 resize-none bg-white shadow-sm hover:border-gray-400 transition-colors min-h-[44px] max-h-[200px]"
+                                style={{ fieldSizing: 'content' } as any}
+                            />
+                        ) : (
+                            <input
+                                ref={inputRef as React.RefObject<HTMLInputElement>}
+                                type="text"
+                                value={input}
+                                onChange={e => setInput(e.target.value)}
+                                onKeyDown={handleKeyDown}
+                                onPaste={handlePaste}
+                                placeholder="Tanya KR·AI..."
+                                disabled={loading}
+                                className="flex-1 px-4 py-2.5 border border-gray-300 rounded-2xl text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none disabled:opacity-50 bg-white shadow-sm hover:border-gray-400 transition-colors"
+                            />
+                        )}
                         <button
-                            onClick={() => setShowMemory(true)}
-                            className="flex items-center gap-1 text-[11px] text-gray-500 hover:text-blue-600 hover:bg-blue-50 px-2 py-1 rounded-md transition-colors"
+                            onClick={() => handleSend()}
+                            disabled={loading || (!input.trim() && !pendingImage)}
+                            className="bg-blue-600 text-white rounded-full hover:bg-blue-700 active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex-shrink-0 p-2.5 shadow-md hover:shadow-lg"
+                            aria-label="Kirim pesan"
                         >
-                            <Brain className="w-3 h-3" />
-                            Memori
+                            <Send className="w-5 h-5" />
                         </button>
                     </div>
-                )}
-                <div className={`flex gap-2 ${isFull ? 'max-w-3xl mx-auto' : ''}`}>
-                    {isFull ? (
-                        <textarea
-                            ref={inputRef as React.RefObject<HTMLTextAreaElement>}
-                            value={input}
-                            onChange={e => setInput(e.target.value)}
-                            onKeyDown={handleKeyDown}
-                            onPaste={handlePaste}
-                            placeholder="Tanya KR·AI... (Enter kirim, Shift+Enter baris baru, paste gambar didukung untuk model vision)"
-                            disabled={loading}
-                            rows={2}
-                            className="flex-1 px-3 py-2 border border-gray-300 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none disabled:opacity-50 resize-none bg-white"
-                        />
-                    ) : (
-                        <input
-                            ref={inputRef as React.RefObject<HTMLInputElement>}
-                            type="text"
-                            value={input}
-                            onChange={e => setInput(e.target.value)}
-                            onKeyDown={handleKeyDown}
-                            onPaste={handlePaste}
-                            placeholder="Tanya KR·AI..."
-                            disabled={loading}
-                            className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none disabled:opacity-50 bg-white"
-                        />
+
+                    {/* Model selector and Mode dropdown - Below input */}
+                    {showTopBar && (
+                        <div className="flex items-center justify-between gap-3 pt-1">
+                            {/* Model selector */}
+                            <div className="relative flex-1 min-w-0">
+                                <button
+                                    onClick={() => setShowModelPicker(v => !v)}
+                                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs text-gray-600 hover:bg-gray-100 transition-colors w-full max-w-[200px] border border-gray-200"
+                                    aria-label="Pilih model AI"
+                                >
+                                    <Brain className="w-3.5 h-3.5 text-blue-600 flex-shrink-0" />
+                                    <span className="truncate flex-1 text-left">{activeModelLabel}</span>
+                                    <ChevronDown className="w-3.5 h-3.5 flex-shrink-0" />
+                                </button>
+                                {showModelPicker && config && (
+                                    <ModelPickerDropdown
+                                        config={config}
+                                        onSelect={handleSelectModel}
+                                        onClose={() => setShowModelPicker(false)}
+                                    />
+                                )}
+                            </div>
+
+                            {/* Mode dropdown */}
+                            <div className="relative">
+                                <select
+                                    value={thinkingMode}
+                                    onChange={(e) => handleThinkingChange(e.target.value as ThinkingMode)}
+                                    className="px-3 py-1.5 pr-8 rounded-lg text-xs text-gray-600 hover:bg-gray-100 transition-colors border border-gray-200 bg-white cursor-pointer appearance-none"
+                                    style={{ backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3E%3Cpath stroke='%236b7280' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3E%3C/svg%3E")`, backgroundPosition: 'right 0.5rem center', backgroundRepeat: 'no-repeat', backgroundSize: '1.25rem 1.25rem' }}
+                                    aria-label="Pilih mode AI"
+                                >
+                                    <option value="auto">⚡ Auto</option>
+                                    <option value="instant">🚀 Instant</option>
+                                    <option value="thinking">🧠 Thinking</option>
+                                </select>
+                            </div>
+
+                            {/* Memory button */}
+                            {showMemoryButton && (
+                                <button
+                                    onClick={() => setShowMemory(true)}
+                                    className="flex items-center gap-1 px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-100 rounded-lg transition-colors border border-gray-200"
+                                    aria-label="Buka memori"
+                                >
+                                    <Brain className="w-3.5 h-3.5" />
+                                    <span className="hidden sm:inline">Memori</span>
+                                </button>
+                            )}
+                        </div>
                     )}
-                    <button
-                        onClick={() => handleSend()}
-                        disabled={loading || (!input.trim() && !pendingImage)}
-                        className={`bg-blue-600 text-white rounded-xl hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex-shrink-0 ${isFull ? 'px-4 py-2' : 'p-2 rounded-lg'}`}
-                    >
-                        <Send className="w-4 h-4" />
-                    </button>
                 </div>
             </div>
         </div>
@@ -702,7 +802,7 @@ function ModelPickerDropdown({
     const configuredProviders = PROVIDERS.filter(p => config.providers[p.id]?.apiKey);
 
     return (
-        <div ref={ref} className="absolute top-full left-0 mt-1 z-50 bg-white border border-gray-200 rounded-xl shadow-xl w-72 max-h-80 overflow-y-auto">
+        <div ref={ref} className="absolute bottom-full left-0 mb-1 z-50 bg-white border border-gray-200 rounded-xl shadow-xl w-72 max-h-80 overflow-y-auto">
             <div className="p-1">
                 {/* Auto option */}
                 <button

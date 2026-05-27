@@ -198,8 +198,7 @@ export function createConversation(customId?: string, initialTitle?: string): Co
     store.conversations = [conv, ...store.conversations];
     store.activeId = conv.id;
     saveStore(store);
-    // Sync new (empty) conversation to Supabase
-    syncUpsert(conv);
+    // JANGAN sync percakapan kosong ke Supabase — sync hanya saat ada pesan (updateConversationMessages)
     return conv;
 }
 

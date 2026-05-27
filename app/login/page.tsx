@@ -116,7 +116,7 @@ function LoginForm() {
 
             {/* Footer */}
             <p className="text-center text-xs text-gray-500 mt-6">
-                © 2024 Kakarama Room Analytics. All rights reserved.
+                © 2026 Kakarama Room Analytics. All rights reserved.
             </p>
         </>
     );

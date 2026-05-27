@@ -39,6 +39,8 @@ export interface ModelInfo {
     capabilities: ModelCapabilities;
     /** Notes shown in UI */
     notes?: string;
+    /** Lower = higher priority in auto-routing fallback (1 = highest) */
+    priority?: number;
 }
 
 export interface ProviderInfo {
@@ -70,10 +72,10 @@ export const PROVIDERS: ProviderInfo[] = [
         hasBaseUrl: false,
         signupUrl: 'https://api.deepseek.com/v1',
         models: [
-            { id: 'deepseek-chat', label: 'DeepSeek V4 Flash', inputPrice: 0.14, outputPrice: 0.28, capabilities: cap({ tools: true, fast: true }), notes: 'Non-thinking mode' },
-            { id: 'deepseek-reasoner', label: 'DeepSeek V4 Flash Reasoner', inputPrice: 0.14, outputPrice: 0.28, capabilities: cap({ reasoning: true, tools: true }), notes: 'Thinking mode' },
+            { id: 'deepseek-chat', label: 'DeepSeek Chat (V3)', inputPrice: 0.14, outputPrice: 0.28, capabilities: cap({ tools: true, fast: true }), notes: 'Legacy endpoint, non-thinking mode' },
+            { id: 'deepseek-reasoner', label: 'DeepSeek Reasoner', inputPrice: 0.14, outputPrice: 0.28, capabilities: cap({ reasoning: true, tools: true }), notes: 'Thinking mode enabled' },
             { id: 'deepseek-v4-pro', label: 'DeepSeek V4 Pro', inputPrice: 0.435, outputPrice: 0.87, capabilities: cap({ reasoning: true, tools: true }), notes: 'Higher quality, official DeepSeek API' },
-            { id: 'deepseek-v4-flash', label: 'DeepSeek V4 Flash', inputPrice: 0.14, outputPrice: 0.28, capabilities: cap({ tools: true, fast: true }), notes: 'Fast & low-cost official DeepSeek API' },
+            { id: 'deepseek-v4-flash', label: 'DeepSeek V4 Flash', inputPrice: 0.14, outputPrice: 0.28, capabilities: cap({ tools: true, fast: true }), notes: 'Fast & low-cost, official DeepSeek API' },
         ],
     },
     {
