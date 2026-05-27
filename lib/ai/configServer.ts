@@ -161,3 +161,143 @@ export async function setThinkingModeDb(providerId: ProviderId, mode: string): P
         .eq('scope', SCOPE)
         .eq('provider_id', providerId);
 }
+
+// ── API Key Preview & Validation Helpers (PART 2, 6, 7) ──────────────────────
+
+/**
+ * Generate a masked preview of an API key for safe display in the browser.
+ * Server-side only — frontend MUST never compute previews from full keys.
+ *
+ * Rules:
+ * - key <= 12 chars: first 4 + "***" + last 4
+ * - key > 12 chars:  first 8 + "***" + last 4
+ *
+ * Example: "sk-aKdsu2h88k1234" → "sk-aKdsu***1234"
+ */
+export function maskApiKeyForPreview(apiKey: string): string | null {
+    if (!apiKey) return null;
+
+    if (apiKey.length <= 12) {
+        return apiKey.slice(0, 4) + '***' + apiKey.slice(-4);
+    }
+
+    return apiKey.slice(0, 8) + '***' + apiKey.slice(-4);
+}
+
+/**
+ * Detect if a value looks like a masked/obfuscated key (user pasted preview).
+ * Reject values containing ***, ••, or ...
+ */
+export function isMaskedApiKey(value: string): boolean {
+    return (
+        value.includes('***') ||
+        value.includes('••') ||
+        value.includes('...')
+    );
+}
+
+// ── Safe client-facing config (PART 3) ───────────────────────────────────────
+
+/** Safe config shape sent to the browser — NEVER includes full decrypted API key. */
+export interface SafeProviderConfig {
+    providerId: ProviderId;
+    apiKeySet: boolean;
+    apiKeyPreview: string | null;
+    baseUrl: string;
+    model: string;
+}
+
+/**
+ * Load provider configs for client consumption.
+ * Returns ONLY apiKeySet + apiKeyPreview — never the full decrypted key.
+ */
+export async function loadConfigForClient(): Promise<SafeProviderConfig[]> {
+    const supabase = createServerClient();
+    const { data, error } = await supabase
+        .from('ai_provider_configs')
+        .select('provider_id, api_key_enc, api_key_iv, model, base_url')
+        .eq('scope', SCOPE);
+
+    if (error || !data) return [];
+
+    return data.map((row: any) => {
+        let decrypted = '';
+        try {
+            decrypted = decryptApiKey(row.api_key_enc, row.api_key_iv);
+        } catch {
+            // Decryption failure — key will appear as not set
+        }
+        return {
+            providerId: row.provider_id as ProviderId,
+            apiKeySet: !!decrypted,
+            apiKeyPreview: maskApiKeyForPreview(decrypted),
+            baseUrl: row.base_url || '',
+            model: row.model || '',
+        };
+    });
+}
+
+// ── Upsert with empty-key protection (PART 5) ────────────────────────────────
+
+/**
+ * Upsert provider config. If apiKey is empty/falsy, keep the existing
+ * encrypted key unchanged (only update model/baseUrl/isActive).
+ */
+export async function upsertProviderConfigSafe(conf: {
+    providerId: ProviderId;
+    apiKey: string;
+    model: string;
+    baseUrl?: string;
+    isActive?: boolean;
+}): Promise<void> {
+    const supabase = createServerClient();
+
+    // Reject masked keys
+    if (conf.apiKey && isMaskedApiKey(conf.apiKey)) {
+        throw new Error('API key tidak valid — terdeteksi karakter masking (***, ••, ...). Masukkan key asli.');
+    }
+
+    const hasNewKey = conf.apiKey && conf.apiKey.trim();
+
+    if (hasNewKey) {
+        // Full upsert with new encrypted key
+        const { enc, iv } = encryptApiKey(conf.apiKey.trim());
+        const { error } = await supabase
+            .from('ai_provider_configs')
+            .upsert({
+                scope: SCOPE,
+                provider_id: conf.providerId,
+                api_key_enc: enc,
+                api_key_iv: iv,
+                model: conf.model,
+                base_url: conf.baseUrl || null,
+                is_active: conf.isActive ?? false,
+            }, { onConflict: 'scope,provider_id' });
+
+        if (error) throw new Error(`Failed to save AI config: ${error.message}`);
+    } else {
+        // No new key — update only non-key fields if row exists
+        const { data: existing } = await supabase
+            .from('ai_provider_configs')
+            .select('id')
+            .eq('scope', SCOPE)
+            .eq('provider_id', conf.providerId)
+            .single();
+
+        if (!existing) {
+            throw new Error('API key wajib diisi untuk konfigurasi baru.');
+        }
+
+        const { error } = await supabase
+            .from('ai_provider_configs')
+            .update({
+                model: conf.model,
+                base_url: conf.baseUrl || null,
+                is_active: conf.isActive ?? false,
+            })
+            .eq('scope', SCOPE)
+            .eq('provider_id', conf.providerId);
+
+        if (error) throw new Error(`Failed to save AI config: ${error.message}`);
+    }
+}

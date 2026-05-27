@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import {
     loadAllProviderConfigs,
-    upsertProviderConfig,
+    loadConfigForClient,
+    upsertProviderConfigSafe,
     deleteProviderConfig,
     setActiveProvider,
     setThinkingModeDb,
@@ -10,20 +11,23 @@ import type { ProviderId } from '@/lib/ai/models';
 
 /**
  * GET /api/ai/config
- * Returns all configured providers (api keys are masked).
+ * Returns safe config WITHOUT full decrypted API keys.
+ * Only apiKeySet + apiKeyPreview — never the full key.
  */
-export async function GET() {
+export async function GET(request: NextRequest) {
     try {
-        const configs = await loadAllProviderConfigs();
-        // Mask API keys before sending to client — only send first 4 + last 4 chars
-        const masked = configs.map(c => ({
-            ...c,
-            apiKey: c.apiKey.length > 8
-                ? c.apiKey.slice(0, 4) + '••••••••' + c.apiKey.slice(-4)
-                : '••••••••',
-            apiKeySet: true,
-        }));
-        return NextResponse.json({ configs: masked });
+        // If ?provider=X is passed, return configs for a specific provider
+        // (used by resolveActiveFromDb — server-side only, but still safe)
+        const providerFilter = request.nextUrl.searchParams.get('provider');
+
+        const configs = await loadConfigForClient();
+
+        if (providerFilter) {
+            const filtered = configs.filter(c => c.providerId === providerFilter);
+            return NextResponse.json({ configs: filtered });
+        }
+
+        return NextResponse.json({ configs });
     } catch (err: any) {
         return NextResponse.json({ error: err.message }, { status: 500 });
     }
@@ -41,10 +45,15 @@ export async function POST(request: NextRequest) {
         switch (action) {
             case 'upsert': {
                 const { providerId, apiKey, model, baseUrl, isActive } = body;
-                if (!providerId || !apiKey) {
-                    return NextResponse.json({ error: 'providerId and apiKey are required' }, { status: 400 });
+                if (!providerId) {
+                    return NextResponse.json({ error: 'providerId is required' }, { status: 400 });
                 }
-                await upsertProviderConfig({ providerId, apiKey, model, baseUrl, isActive });
+                // apiKey can be empty to keep existing key (PART 5)
+                // model is required for DB row
+                if (!model) {
+                    return NextResponse.json({ error: 'model is required' }, { status: 400 });
+                }
+                await upsertProviderConfigSafe({ providerId, apiKey: apiKey || '', model, baseUrl, isActive });
                 return NextResponse.json({ ok: true });
             }
             case 'delete': {
@@ -80,11 +89,8 @@ export async function POST(request: NextRequest) {
 }
 
 /**
- * GET /api/ai/config/resolve
- * Returns the actual (decrypted) active config for use in the chat route.
- * Only called server-side from the API route.
+ * HEAD /api/ai/config — health check
  */
 export async function HEAD() {
-    // Used as health check
     return new NextResponse(null, { status: 200 });
 }

@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { X, Clock, User, Loader2 } from 'lucide-react';
 import type { RoomDetail, DateFilter } from '@/app/(dashboard)/laporan/actions';
+import { formatDuration } from '@/lib/utils/formatDuration';
 
 interface Props {
     location: string;
@@ -84,7 +85,7 @@ export default function RoomDetailModal({ location, room, filter, onClose }: Pro
                                     )}
                                     <div className="flex items-center gap-2 text-sm text-gray-600">
                                         <Clock className="w-3.5 h-3.5" />
-                                        <span>Durasi: <strong>{detail.rentalDuration} JAM</strong></span>
+                                        <span>Durasi: <strong>{formatDuration(detail.rentalDuration)}</strong></span>
                                     </div>
                                     <div className="bg-slate-50 rounded-lg p-3 mt-2">
                                         <p className="text-xs text-gray-500 uppercase font-semibold mb-1">Pembayaran</p>

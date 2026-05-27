@@ -14,7 +14,7 @@
  */
 
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { Send, Bot, Brain, X, ChevronRight, Copy, Check, AlertTriangle, Eye, Lightbulb, Wrench, Zap, ChevronDown } from 'lucide-react';
+import { Send, Bot, Brain, X, ChevronRight, Copy, Check, AlertTriangle, Eye, Lightbulb, Wrench, Zap, ChevronDown, RotateCw, Pencil } from 'lucide-react';
 import MarkdownRenderer from './MarkdownRenderer';
 import { loadMemory, addMemory, deleteMemory, getMemoryContext, extractMemoryFromConversation, type MemoryEntry } from '@/lib/ai/memory';
 import KraiLogo from '@/components/shared/KraiLogo';
@@ -29,7 +29,6 @@ import {
     loadConfigFromDb,
     setActiveProviderInDb,
     setThinkingModeInDb,
-    resolveActiveFromDb,
     type MultiAIConfig as DbMultiAIConfig,
 } from '@/lib/ai/configClient';
 import { PROVIDERS, getModel, type ProviderId } from '@/lib/ai/models';
@@ -95,24 +94,21 @@ async function sendChat(
     memoryContext: string,
     thinkingMode: ThinkingMode,
     needVision: boolean,
+    activeProvider: ProviderId | 'auto',
+    activeModel: string,
 ): Promise<{ message: string; model?: string; provider?: string; usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number } }> {
-    const resolved = await resolveActiveFromDb(thinkingMode, needVision);
-    if (!resolved) {
-        throw new Error('Belum ada provider AI yang dikonfigurasi. Buka Pengaturan > Konfigurasi AI.');
-    }
+    // API keys are loaded server-side from DB — client never sends full keys
     const res = await fetch('/api/ai/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
             messages: apiMessages,
             config: {
-                provider: resolved.providerId,
-                apiKey: resolved.apiKey,
-                model: resolved.modelId,
-                baseUrl: resolved.baseUrl,
+                provider: activeProvider,
+                model: activeModel,
             },
-            memoryContext,
             thinkingMode,
+            memoryContext,
         }),
     });
     if (!res.ok) {
@@ -125,10 +121,10 @@ async function sendChat(
 async function fetchFollowUpSuggestions(
     userQuestion: string,
     aiAnswer: string,
+    activeProvider: ProviderId | 'auto',
+    activeModel: string,
 ): Promise<string[]> {
     try {
-        const resolved = await resolveActiveFromDb('instant', false);
-        if (!resolved) return [];
         const prompt = `Kamu adalah KR·AI. Berdasarkan konteks berikut, hasilkan TEPAT 2 pertanyaan lanjutan yang spesifik dan relevan untuk membantu owner mendapat insight bisnis. Kembalikan HANYA 2 baris teks tanpa nomor/bullet.
 
 Pertanyaan: ${userQuestion.slice(0, 200)}
@@ -142,10 +138,8 @@ Jawaban: ${aiAnswer.slice(0, 400)}
             body: JSON.stringify({
                 messages: [{ role: 'user', content: prompt }],
                 config: {
-                    provider: resolved.providerId,
-                    apiKey: resolved.apiKey,
-                    model: resolved.modelId,
-                    baseUrl: resolved.baseUrl,
+                    provider: activeProvider,
+                    model: activeModel,
                 },
                 memoryContext: '',
             }),
@@ -275,6 +269,8 @@ export default function AIChatCore({
     const [config, setConfig] = useState<MultiAIConfig | null>(null);
     const [thinkingMode, setThinkingModeState] = useState<ThinkingMode>('auto');
     const [showModelPicker, setShowModelPicker] = useState(false);
+    const [retryingIdx, setRetryingIdx] = useState<number | null>(null);
+    const [editingIdx, setEditingIdx] = useState<number | null>(null);
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const inputRef = useRef<HTMLInputElement | HTMLTextAreaElement>(null);
     const onMessagesChangeRef = useRef(onMessagesChange);
@@ -291,17 +287,18 @@ export default function AIChatCore({
                 // Try loading from database first
                 const dbConfig = await loadConfigFromDb();
                 if (dbConfig.providers.length > 0) {
-                    // Convert DB config to local config format
+                    // Convert DB config to local config format (no full keys in client)
+                    // apiKeySet is used instead of actual key — chat route loads keys server-side
                     const localConfig: MultiAIConfig = {
                         activeProvider: dbConfig.activeProvider,
                         activeModel: dbConfig.activeModel,
                         providers: Object.fromEntries(
-                            dbConfig.providers.map(p => [
+                            dbConfig.providers.filter(p => p.apiKeySet).map(p => [
                                 p.providerId,
                                 {
-                                    apiKey: p.apiKey,
+                                    apiKey: '', // Never available client-side
                                     model: p.model,
-                                    baseUrl: p.baseUrl,
+                                    baseUrl: p.baseUrl || '',
                                 }
                             ])
                         ),
@@ -337,8 +334,26 @@ export default function AIChatCore({
         // No-op: typing animation removed (Opsi A — direct render)
     }, []);
 
+    // ── Derive active provider/model from config ──────────────────────────────
+    const activeProviderId: ProviderId | 'auto' = config?.activeProvider ?? 'auto';
+    const activeModelId = config?.activeModel ?? 'auto';
+
+    // ── Determine if active model supports vision ─────────────────────────────
+    const visionCapable: boolean = (() => {
+        if (!config) return false;
+        if (activeProviderId === 'auto' || activeModelId === 'auto') {
+            return Object.entries(config.providers).some(([pid, c]) => {
+                if (!c?.apiKey) return false;
+                const provider = PROVIDERS.find(p => p.id === pid);
+                return provider?.models.some(m => m.capabilities.vision);
+            });
+        }
+        const m = getModel(activeProviderId as ProviderId, activeModelId);
+        return m?.capabilities.vision ?? false;
+    })();
+
     const addSuggestions = useCallback((userQ: string, aiAnswer: string) => {
-        fetchFollowUpSuggestions(userQ, aiAnswer).then(suggestions => {
+        fetchFollowUpSuggestions(userQ, aiAnswer, activeProviderId, activeModelId).then(suggestions => {
             if (suggestions.length === 0) return;
             setMessages(prev => {
                 const updated = [...prev];
@@ -351,24 +366,7 @@ export default function AIChatCore({
                 return updated;
             });
         });
-    }, []);
-
-    // ── Determine if active model supports vision ─────────────────────────────
-    const activeProviderId: ProviderId | 'auto' = config?.activeProvider ?? 'auto';
-    const activeModelId = config?.activeModel ?? 'auto';
-    const visionCapable: boolean = (() => {
-        if (!config) return false;
-        if (activeProviderId === 'auto' || activeModelId === 'auto') {
-            // Check if any configured provider has any vision-capable model
-            return Object.entries(config.providers).some(([pid, c]) => {
-                if (!c?.apiKey) return false;
-                const provider = PROVIDERS.find(p => p.id === pid);
-                return provider?.models.some(m => m.capabilities.vision);
-            });
-        }
-        const m = getModel(activeProviderId as ProviderId, activeModelId);
-        return m?.capabilities.vision ?? false;
-    })();
+    }, [activeProviderId, activeModelId]);
 
     const handleSend = useCallback(async (text?: string) => {
         const msg = (text || input).trim();
@@ -411,7 +409,7 @@ export default function AIChatCore({
                 return { role: m.role, content: m.content };
             });
 
-            const result = await sendChat(apiMessages, memCtx, thinkingMode, !!pendingImage);
+            const result = await sendChat(apiMessages, memCtx, thinkingMode, !!pendingImage, activeProviderId, activeModelId);
             const assistantMsg: ChatMessage = {
                 role: 'assistant',
                 content: result.message,
@@ -428,14 +426,14 @@ export default function AIChatCore({
             extractMemoryFromConversation(
                 msg,
                 result.message,
-                async (msgs, mode) => sendChat(msgs, '', (mode as ThinkingMode) || 'instant', false),
+                async (msgs, mode) => sendChat(msgs, '', (mode as ThinkingMode) || 'instant', false, activeProviderId, activeModelId),
             ).catch(() => { /* silent */ });
         } catch (err: any) {
             setError(err.message || 'Gagal menghubungi KR·AI');
         } finally {
             setLoading(false);
         }
-    }, [input, pendingImage, loading, messages, thinkingMode, visionCapable, addSuggestions]);
+    }, [input, pendingImage, loading, messages, thinkingMode, visionCapable, addSuggestions, activeProviderId, activeModelId]);
 
     /** Fill input instead of sending — used by template/suggestion buttons */
     const handleFillInput = useCallback((text: string) => {
@@ -620,9 +618,30 @@ export default function AIChatCore({
                                     </div>
                                 )}
 
-                                {/* Timestamp for user message */}
+                                {/* Timestamp + Edit for user message */}
                                 {msg.role === 'user' && msg.timestamp && (
-                                    <span className="text-[10px] text-gray-400 px-1">{formatTimestamp(msg.timestamp)}</span>
+                                    <div className="flex items-center gap-2 px-1">
+                                        <span className="text-[10px] text-gray-400">{formatTimestamp(msg.timestamp)}</span>
+                                        <button
+                                            onClick={() => {
+                                                setInput(msg.content);
+                                                setShowModelPicker(true);
+                                                if (inputRef.current) {
+                                                    inputRef.current.focus();
+                                                    const len = msg.content.length;
+                                                    if ('setSelectionRange' in inputRef.current) {
+                                                        inputRef.current.setSelectionRange(len, len);
+                                                    }
+                                                }
+                                            }}
+                                            disabled={loading}
+                                            className="opacity-0 group-hover:opacity-100 inline-flex items-center gap-0.5 text-[10px] text-gray-400 hover:text-blue-600 transition-colors"
+                                            title="Edit pesan"
+                                        >
+                                            <Pencil className="w-3 h-3" />
+                                            Edit
+                                        </button>
+                                    </div>
                                 )}
                             </div>
                         </div>
@@ -649,9 +668,47 @@ export default function AIChatCore({
                 {loading && <LoadingBubble thinking={thinkingMode === 'thinking'} />}
 
                 {error && (
-                    <div className="text-xs text-red-700 bg-red-50 px-3 py-2 rounded-lg border border-red-200 flex items-start gap-2">
-                        <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
-                        <span>{error}</span>
+                    <div className="space-y-2">
+                        <div className="text-xs text-red-700 bg-red-50 px-3 py-2 rounded-lg border border-red-200 flex items-start gap-2">
+                            <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+                            <span className="flex-1">{error}</span>
+                        </div>
+                        <div className="flex items-center gap-2 pl-2">
+                            <button
+                                onClick={() => {
+                                    const lastUser = [...messages].reverse().find(m => m.role === 'user');
+                                    if (lastUser) handleSend(lastUser.content);
+                                }}
+                                disabled={loading}
+                                className="inline-flex items-center gap-1 px-2.5 py-1 text-xs text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                            >
+                                <RotateCw className="w-3 h-3" />
+                                Retry (model sama)
+                            </button>
+                            <button
+                                onClick={() => setShowModelPicker(v => !v)}
+                                className="inline-flex items-center gap-1 px-2.5 py-1 text-xs text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
+                            >
+                                <Brain className="w-3 h-3" />
+                                Ganti model
+                            </button>
+                            {showModelPicker && config && (
+                                <div className="absolute z-50 mt-8">
+                                    <ModelPickerDropdown
+                                        config={config}
+                                        onSelect={(pid, mid) => {
+                                            handleSelectModel(pid, mid);
+                                            setShowModelPicker(false);
+                                            setTimeout(() => {
+                                                const lastUser = [...messages].reverse().find(m => m.role === 'user');
+                                                if (lastUser) handleSend(lastUser.content);
+                                            }, 200);
+                                        }}
+                                        onClose={() => setShowModelPicker(false)}
+                                    />
+                                </div>
+                            )}
+                        </div>
                     </div>
                 )}
 

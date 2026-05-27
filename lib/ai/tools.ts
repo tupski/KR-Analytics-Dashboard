@@ -318,6 +318,103 @@ async function fetchLatestStatus(): Promise<any> {
     };
 }
 
+// ── New Tool Implementations (2026-05-27) ────────────────────────────────────
+
+async function fetchSearchTransactions(query: string, startDate?: string, endDate?: string, location?: string, limit: number = 20): Promise<any> {
+    const supabase = createServerClient();
+    const { data, error } = await supabase.rpc('search_transactions', {
+        p_query: query,
+        p_start_date: startDate || null,
+        p_end_date: endDate || null,
+        p_location: location || null,
+        p_limit: Math.min(limit, 100),
+    });
+    if (error) throw error;
+    return { query, results: data || [], total_count: data?.[0]?.total_count || 0 };
+}
+
+async function fetchSearchExpenses(query: string, startDate?: string, endDate?: string, location?: string, category?: string, limit: number = 20): Promise<any> {
+    const supabase = createServerClient();
+    const { data, error } = await supabase.rpc('search_expenses', {
+        p_query: query,
+        p_start_date: startDate || null,
+        p_end_date: endDate || null,
+        p_location: location || null,
+        p_category: category || null,
+        p_limit: Math.min(limit, 100),
+    });
+    if (error) throw error;
+    return { query, results: data || [], total_count: data?.[0]?.total_count || 0 };
+}
+
+async function fetchLiveCheckins(location?: string, limit: number = 50): Promise<any> {
+    const supabase = createServerClient();
+    const { data, error } = await supabase.rpc('get_live_checkins', {
+        p_location: location || null,
+        p_limit: Math.min(limit, 100),
+    });
+    if (error) throw error;
+    return { snapshot_time: new Date().toISOString(), location: location || 'Semua Lokasi', active_guests: data || [], total_count: data?.[0]?.total_count || 0 };
+}
+
+async function fetchIdleUnits(daysThreshold: number = 7, location?: string, limit: number = 50): Promise<any> {
+    const supabase = createServerClient();
+    const { data, error } = await supabase.rpc('detect_idle_units', {
+        p_days_threshold: daysThreshold,
+        p_location: location || null,
+        p_limit: Math.min(limit, 100),
+    });
+    if (error) throw error;
+    return { threshold_days: daysThreshold, location: location || 'Semua Lokasi', idle_units: data || [], total_count: data?.[0]?.total_count || 0 };
+}
+
+async function fetchUnderperformingUnits(startDate: string, endDate: string, location?: string, threshold: number = 50, limit: number = 20): Promise<any> {
+    validateDateRange(startDate, endDate);
+    const supabase = createServerClient();
+    const { data, error } = await supabase.rpc('get_underperforming_units', {
+        p_start_date: startDate,
+        p_end_date: endDate,
+        p_location: location || null,
+        p_threshold: threshold,
+        p_limit: Math.min(limit, 100),
+    });
+    if (error) throw error;
+    return { period: { start_date: startDate, end_date: endDate }, threshold_occupancy: threshold, location: location || 'Semua Lokasi', underperforming_units: data || [], total_count: data?.[0]?.total_count || 0 };
+}
+
+async function fetchWeekendVsWeekday(startDate: string, endDate: string, location?: string): Promise<any> {
+    validateDateRange(startDate, endDate);
+    const supabase = createServerClient();
+    const { data, error } = await supabase.rpc('get_weekend_vs_weekday_analysis', {
+        p_start_date: startDate,
+        p_end_date: endDate,
+        p_location: location || null,
+    });
+    if (error) throw error;
+    return { period: { start_date: startDate, end_date: endDate }, location: location || 'Semua Lokasi', analysis: data || [] };
+}
+
+async function fetchMonthEndEstimate(year?: number, month?: number, location?: string): Promise<any> {
+    const supabase = createServerClient();
+    const { data, error } = await supabase.rpc('estimate_month_end_revenue', {
+        p_year: year || null,
+        p_month: month || null,
+        p_location: location || null,
+    });
+    if (error) throw error;
+    return data?.[0] || { error: 'No data returned' };
+}
+
+async function fetchUnpaidBillsDetail(location?: string, limit: number = 50): Promise<any> {
+    const supabase = createServerClient();
+    const { data, error } = await supabase.rpc('get_unpaid_bills_detail', {
+        p_location: location || null,
+        p_limit: Math.min(limit, 100),
+    });
+    if (error) throw error;
+    return { location: location || 'Semua Lokasi', unpaid_bills: data || [], total_count: data?.[0]?.total_count || 0, total_amount: data?.[0]?.total_amount || 0 };
+}
+
 // =====================================================
 // Public exports
 // =====================================================
@@ -471,6 +568,141 @@ export const OPENAI_TOOLS = [
             },
         },
     },
+
+    // ── SEARCH & DISCOVERY (NEW) ────────────────────────────────────────────
+    {
+        type: 'function',
+        function: {
+            name: 'search_transactions',
+            description: 'CARI TRANSAKSI — cari transaksi berdasarkan nama customer, nomor kamar, lokasi, atau ID. Pattern matching fleksibel. Berguna untuk: "cari transaksi atas nama X", "transaksi kamar 101", "siapa yang booking kemarin?".',
+            parameters: {
+                type: 'object',
+                properties: {
+                    query: { type: 'string', description: 'Kata kunci pencarian (nama, kamar, lokasi, ID)' },
+                    start_date: { type: 'string', description: 'Filter tanggal mulai YYYY-MM-DD (opsional)' },
+                    end_date: { type: 'string', description: 'Filter tanggal akhir YYYY-MM-DD (opsional)' },
+                    location: { type: 'string', description: 'Filter lokasi (opsional)' },
+                    limit: { type: 'number', description: 'Jumlah hasil, default 20, max 100' },
+                },
+                required: ['query'],
+            },
+        },
+    },
+    {
+        type: 'function',
+        function: {
+            name: 'search_expenses',
+            description: 'CARI PENGELUARAN — cari pengeluaran berdasarkan deskripsi, kategori, atau ID. Berguna untuk: "cari pengeluaran listrik", "expense bulan lalu kategori maintenance".',
+            parameters: {
+                type: 'object',
+                properties: {
+                    query: { type: 'string', description: 'Kata kunci pencarian (deskripsi, kategori, ID)' },
+                    start_date: { type: 'string', description: 'Filter tanggal mulai YYYY-MM-DD (opsional)' },
+                    end_date: { type: 'string', description: 'Filter tanggal akhir YYYY-MM-DD (opsional)' },
+                    location: { type: 'string', description: 'Filter lokasi (opsional)' },
+                    category: { type: 'string', description: 'Filter kategori (opsional)' },
+                    limit: { type: 'number', description: 'Jumlah hasil, default 20, max 100' },
+                },
+                required: ['query'],
+            },
+        },
+    },
+
+    // ── REALTIME & MONITORING (NEW) ─────────────────────────────────────────
+    {
+        type: 'function',
+        function: {
+            name: 'get_live_checkins',
+            description: 'TAMU YANG SEDANG MENGINAP — daftar realtime tamu yang sedang check-in sekarang. Berguna untuk: "siapa yang lagi nginep?", "berapa tamu aktif sekarang?", "kamar mana yang terisi?".',
+            parameters: {
+                type: 'object',
+                properties: {
+                    location: { type: 'string', description: 'Filter lokasi (opsional)' },
+                    limit: { type: 'number', description: 'Jumlah hasil, default 50, max 100' },
+                },
+            },
+        },
+    },
+    {
+        type: 'function',
+        function: {
+            name: 'detect_idle_units',
+            description: 'DETEKSI UNIT IDLE — unit yang tidak ada transaksi dalam X hari terakhir. Berguna untuk: "kamar mana yang kosong lama?", "unit idle 7 hari", "deteksi unit tidak produktif".',
+            parameters: {
+                type: 'object',
+                properties: {
+                    days_threshold: { type: 'number', description: 'Threshold hari idle, default 7' },
+                    location: { type: 'string', description: 'Filter lokasi (opsional)' },
+                    limit: { type: 'number', description: 'Jumlah hasil, default 50, max 100' },
+                },
+            },
+        },
+    },
+
+    // ── ANALYTICS & INSIGHTS (NEW) ──────────────────────────────────────────
+    {
+        type: 'function',
+        function: {
+            name: 'get_underperforming_units',
+            description: 'UNIT UNDERPERFORMING — deteksi unit dengan occupancy rate atau revenue di bawah rata-rata. Berguna untuk: "unit mana yang performa buruk?", "kamar dengan revenue rendah", "analisis unit tidak optimal".',
+            parameters: {
+                type: 'object',
+                properties: {
+                    start_date: { type: 'string', description: 'Tanggal mulai YYYY-MM-DD' },
+                    end_date: { type: 'string', description: 'Tanggal akhir YYYY-MM-DD' },
+                    location: { type: 'string', description: 'Filter lokasi (opsional)' },
+                    threshold: { type: 'number', description: 'Threshold occupancy rate %, default 50' },
+                    limit: { type: 'number', description: 'Jumlah hasil, default 20, max 100' },
+                },
+                required: ['start_date', 'end_date'],
+            },
+        },
+    },
+    {
+        type: 'function',
+        function: {
+            name: 'get_weekend_vs_weekday_analysis',
+            description: 'ANALISIS WEEKEND VS WEEKDAY — perbandingan performa weekend (Sabtu-Minggu) vs weekday (Senin-Jumat). Berguna untuk: "lebih ramai weekend atau weekday?", "analisis pola hari", "revenue weekend vs weekday".',
+            parameters: {
+                type: 'object',
+                properties: {
+                    start_date: { type: 'string', description: 'Tanggal mulai YYYY-MM-DD' },
+                    end_date: { type: 'string', description: 'Tanggal akhir YYYY-MM-DD' },
+                    location: { type: 'string', description: 'Filter lokasi (opsional)' },
+                },
+                required: ['start_date', 'end_date'],
+            },
+        },
+    },
+    {
+        type: 'function',
+        function: {
+            name: 'estimate_month_end_revenue',
+            description: 'PREDIKSI REVENUE AKHIR BULAN — estimasi revenue akhir bulan berdasarkan trend harian saat ini. Berguna untuk: "prediksi revenue bulan ini", "estimasi pendapatan akhir bulan", "proyeksi revenue".',
+            parameters: {
+                type: 'object',
+                properties: {
+                    year: { type: 'number', description: 'Tahun (opsional, default tahun ini)' },
+                    month: { type: 'number', description: 'Bulan 1-12 (opsional, default bulan ini)' },
+                    location: { type: 'string', description: 'Filter lokasi (opsional)' },
+                },
+            },
+        },
+    },
+    {
+        type: 'function',
+        function: {
+            name: 'get_unpaid_bills_detail',
+            description: 'DETAIL TAGIHAN UNPAID — daftar detail tagihan yang belum dibayar dengan aging analysis (0-30, 31-60, 61-90, 90+ hari). Berguna untuk: "tagihan yang belum dibayar", "aging analysis piutang", "overdue bills".',
+            parameters: {
+                type: 'object',
+                properties: {
+                    location: { type: 'string', description: 'Filter lokasi (opsional)' },
+                    limit: { type: 'number', description: 'Jumlah hasil, default 50, max 100' },
+                },
+            },
+        },
+    },
 ];
 
 /** Anthropic Messages tool schema (compatible). */
@@ -547,6 +779,68 @@ export async function executeTool(call: ToolCall): Promise<any> {
 
             case 'get_unit_inventory':
                 return await fetchUnitInventory(call.arguments.location);
+
+            // ── NEW TOOLS (2026-05-27) ──────────────────────────────────────────
+            case 'search_transactions':
+                return await fetchSearchTransactions(
+                    call.arguments.query,
+                    call.arguments.start_date,
+                    call.arguments.end_date,
+                    call.arguments.location,
+                    call.arguments.limit || 20,
+                );
+
+            case 'search_expenses':
+                return await fetchSearchExpenses(
+                    call.arguments.query,
+                    call.arguments.start_date,
+                    call.arguments.end_date,
+                    call.arguments.location,
+                    call.arguments.category,
+                    call.arguments.limit || 20,
+                );
+
+            case 'get_live_checkins':
+                return await fetchLiveCheckins(
+                    call.arguments.location,
+                    call.arguments.limit || 50,
+                );
+
+            case 'detect_idle_units':
+                return await fetchIdleUnits(
+                    call.arguments.days_threshold || 7,
+                    call.arguments.location,
+                    call.arguments.limit || 50,
+                );
+
+            case 'get_underperforming_units':
+                return await fetchUnderperformingUnits(
+                    call.arguments.start_date,
+                    call.arguments.end_date,
+                    call.arguments.location,
+                    call.arguments.threshold || 50,
+                    call.arguments.limit || 20,
+                );
+
+            case 'get_weekend_vs_weekday_analysis':
+                return await fetchWeekendVsWeekday(
+                    call.arguments.start_date,
+                    call.arguments.end_date,
+                    call.arguments.location,
+                );
+
+            case 'estimate_month_end_revenue':
+                return await fetchMonthEndEstimate(
+                    call.arguments.year,
+                    call.arguments.month,
+                    call.arguments.location,
+                );
+
+            case 'get_unpaid_bills_detail':
+                return await fetchUnpaidBillsDetail(
+                    call.arguments.location,
+                    call.arguments.limit || 50,
+                );
 
             default:
                 return { error: `Unknown tool: ${call.name}` };

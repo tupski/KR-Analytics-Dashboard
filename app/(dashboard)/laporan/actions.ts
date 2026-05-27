@@ -9,41 +9,37 @@ export type DateFilter = 'today' | 'yesterday' | '7days' | 'month' | 'year';
 function getDateRange(filter: DateFilter) {
     const timezone = 'Asia/Jakarta';
     const now = toZonedTime(new Date(), timezone);
-    // Hotel day starts at 12:00 WIB
-    const hotelDayStart = new Date(now);
-    hotelDayStart.setHours(12, 0, 0, 0);
-    if (now < hotelDayStart) hotelDayStart.setDate(hotelDayStart.getDate() - 1);
-
-    const todayStr = format(hotelDayStart, 'yyyy-MM-dd');
+    const todayStr = format(now, 'yyyy-MM-dd');
 
     switch (filter) {
         case 'today': {
-            const start = `${todayStr}T12:00:00`;
-            const end = `${format(new Date(hotelDayStart.getTime() + 86400000), 'yyyy-MM-dd')}T11:59:59`;
+            const start = `${todayStr}T00:00:00`;
+            const end = `${todayStr}T23:59:59`;
             return { start, end, label: 'Hari Ini' };
         }
         case 'yesterday': {
-            const yesterday = new Date(hotelDayStart.getTime() - 86400000);
-            const start = `${format(yesterday, 'yyyy-MM-dd')}T12:00:00`;
-            const end = `${todayStr}T11:59:59`;
+            const yesterday = subDays(now, 1);
+            const yesterdayStr = format(yesterday, 'yyyy-MM-dd');
+            const start = `${yesterdayStr}T00:00:00`;
+            const end = `${yesterdayStr}T23:59:59`;
             return { start, end, label: 'Kemarin' };
         }
         case '7days': {
-            const weekAgo = new Date(hotelDayStart.getTime() - 7 * 86400000);
-            const start = `${format(weekAgo, 'yyyy-MM-dd')}T12:00:00`;
-            const end = `${format(new Date(hotelDayStart.getTime() + 86400000), 'yyyy-MM-dd')}T11:59:59`;
+            const weekAgo = subDays(now, 6);
+            const start = `${format(weekAgo, 'yyyy-MM-dd')}T00:00:00`;
+            const end = `${todayStr}T23:59:59`;
             return { start, end, label: '7 Hari Terakhir' };
         }
         case 'month': {
             const monthStart = format(now, 'yyyy-MM-01');
-            const start = `${monthStart}T12:00:00`;
-            const end = `${format(new Date(hotelDayStart.getTime() + 86400000), 'yyyy-MM-dd')}T11:59:59`;
+            const start = `${monthStart}T00:00:00`;
+            const end = `${todayStr}T23:59:59`;
             return { start, end, label: 'Bulan Ini' };
         }
         case 'year': {
             const yearStart = format(now, 'yyyy-01-01');
-            const start = `${yearStart}T12:00:00`;
-            const end = `${format(new Date(hotelDayStart.getTime() + 86400000), 'yyyy-MM-dd')}T11:59:59`;
+            const start = `${yearStart}T00:00:00`;
+            const end = `${todayStr}T23:59:59`;
             return { start, end, label: 'Tahun Ini' };
         }
     }
@@ -52,9 +48,6 @@ function getDateRange(filter: DateFilter) {
 function getPreviousDateRange(filter: DateFilter) {
     const timezone = 'Asia/Jakarta';
     const now = toZonedTime(new Date(), timezone);
-    const hotelDayStart = new Date(now);
-    hotelDayStart.setHours(12, 0, 0, 0);
-    if (now < hotelDayStart) hotelDayStart.setDate(hotelDayStart.getDate() - 1);
 
     switch (filter) {
         case 'today': {
@@ -64,41 +57,43 @@ function getPreviousDateRange(filter: DateFilter) {
         }
         case 'yesterday': {
             // Compare to day before yesterday
-            const dayBefore = new Date(hotelDayStart.getTime() - 2 * 86400000);
-            const yesterday = new Date(hotelDayStart.getTime() - 86400000);
+            const dayBefore = subDays(now, 2);
+            const dayBeforeStr = format(dayBefore, 'yyyy-MM-dd');
             return {
-                start: `${format(dayBefore, 'yyyy-MM-dd')}T12:00:00`,
-                end: `${format(yesterday, 'yyyy-MM-dd')}T11:59:59`,
+                start: `${dayBeforeStr}T00:00:00`,
+                end: `${dayBeforeStr}T23:59:59`,
                 label: 'H-2',
             };
         }
         case '7days': {
             // Previous 7 days (8-14 days ago)
-            const start14 = new Date(hotelDayStart.getTime() - 14 * 86400000);
-            const end7 = new Date(hotelDayStart.getTime() - 7 * 86400000);
+            const start14 = subDays(now, 13);
+            const end7 = subDays(now, 7);
             return {
-                start: `${format(start14, 'yyyy-MM-dd')}T12:00:00`,
-                end: `${format(end7, 'yyyy-MM-dd')}T11:59:59`,
+                start: `${format(start14, 'yyyy-MM-dd')}T00:00:00`,
+                end: `${format(end7, 'yyyy-MM-dd')}T23:59:59`,
                 label: '7 Hari Sebelumnya',
             };
         }
         case 'month': {
             // Previous month: from 1st last month to last day last month
             const firstThisMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+            const lastDayLastMonth = subDays(firstThisMonth, 1);
             const firstLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
             return {
-                start: `${format(firstLastMonth, 'yyyy-MM-dd')}T12:00:00`,
-                end: `${format(firstThisMonth, 'yyyy-MM-dd')}T11:59:59`,
+                start: `${format(firstLastMonth, 'yyyy-MM-dd')}T00:00:00`,
+                end: `${format(lastDayLastMonth, 'yyyy-MM-dd')}T23:59:59`,
                 label: 'Bulan Lalu',
             };
         }
         case 'year': {
             // Previous year
             const firstThisYear = new Date(now.getFullYear(), 0, 1);
+            const lastDayLastYear = subDays(firstThisYear, 1);
             const firstLastYear = new Date(now.getFullYear() - 1, 0, 1);
             return {
-                start: `${format(firstLastYear, 'yyyy-MM-dd')}T12:00:00`,
-                end: `${format(firstThisYear, 'yyyy-MM-dd')}T11:59:59`,
+                start: `${format(firstLastYear, 'yyyy-MM-dd')}T00:00:00`,
+                end: `${format(lastDayLastYear, 'yyyy-MM-dd')}T23:59:59`,
                 label: 'Tahun Lalu',
             };
         }
@@ -260,9 +255,11 @@ export async function fetchLaporanData(filter: DateFilter = 'today'): Promise<La
         expMap[cat].total += e.jumlah || 0;
         expMap[cat].count++;
 
-        // Group by location if available
+        // Group by location only for expenses WITHOUT room_number (apartment-level)
+        // Expenses with room_number will be shown per-unit in the room detail modal
         const loc = e.apartment_location;
-        if (loc) {
+        const hasRoom = !!(e.room_number);
+        if (loc && !hasRoom) {
             if (!expPerLocation[loc]) expPerLocation[loc] = [];
             const existing = expPerLocation[loc].find(x => x.category === cat);
             if (existing) { existing.total += e.jumlah || 0; existing.count++; }
@@ -373,6 +370,35 @@ export async function fetchRoomDetails(location: string, roomNumber: string, fil
         marketingFee: t.marketing_fee || 0,
         inputBy: t.input_by,
         shift: t.shift,
+    }));
+}
+
+/**
+ * Fetch expenses for a specific room/unit in the given date filter range.
+ * Used to show per-unit expenses inside the room detail modal.
+ */
+export async function fetchRoomExpenses(location: string, roomNumber: string, filter: DateFilter = 'today'): Promise<ExpenseDetail[]> {
+    const supabase = createServerClient();
+    const { start, end } = getDateRange(filter);
+
+    const { data } = await supabase
+        .from('pengeluaran')
+        .select('id, nama_pengeluaran, jumlah, tanggal, keterangan, apartment_location, room_number')
+        .eq('apartment_location', location)
+        .eq('room_number', roomNumber)
+        .gte('tanggal', start.split('T')[0])
+        .lte('tanggal', end.split('T')[0])
+        .order('tanggal', { ascending: false })
+        .order('id', { ascending: false });
+
+    return (data || []).map((e: any) => ({
+        id: e.id,
+        namaPengeluaran: e.nama_pengeluaran,
+        jumlah: e.jumlah || 0,
+        tanggal: e.tanggal,
+        keterangan: e.keterangan,
+        apartmentLocation: e.apartment_location,
+        roomNumber: e.room_number,
     }));
 }
 

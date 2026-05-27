@@ -3,6 +3,7 @@
 import { useRouter, useSearchParams } from 'next/navigation';
 import { MapPin, Clock, ChevronLeft, ChevronRight } from 'lucide-react';
 import type { BookingItem } from '@/app/(dashboard)/booking/actions';
+import { formatDuration } from '@/lib/utils/formatDuration';
 
 interface BookingTableProps {
     items: BookingItem[];
@@ -41,14 +42,6 @@ export default function BookingTable({
             hour: '2-digit',
             minute: '2-digit',
         }).format(date);
-    };
-
-    const formatDuration = (hours: number) => {
-        if (hours < 24) return `${hours} jam`;
-        const days = Math.floor(hours / 24);
-        const remainingHours = hours % 24;
-        if (remainingHours === 0) return `${days} malam`;
-        return `${days} malam ${remainingHours} jam`;
     };
 
     const goToPage = (newPage: number) => {

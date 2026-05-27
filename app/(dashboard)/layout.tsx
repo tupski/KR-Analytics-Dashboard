@@ -1,3 +1,4 @@
+import { AppSettingsProvider } from '@/lib/contexts/AppSettingsContext';
 import MobileNavController from '@/components/layout/MobileNavController';
 import ContentWrapper from '@/components/layout/ContentWrapper';
 import AIChatFloat from '@/components/ai/AIChatFloat';
@@ -14,7 +15,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
     }
 
     return (
-        <>
+        <AppSettingsProvider>
             <div className="flex h-screen overflow-hidden">
                 <MobileNavController userEmail={userEmail} />
                 <ContentWrapper>
@@ -23,6 +24,6 @@ export default async function DashboardLayout({ children }: { children: React.Re
             </div>
             <AIChatFloat />
             <ScrollToTop />
-        </>
+        </AppSettingsProvider>
     );
 }

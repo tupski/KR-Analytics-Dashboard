@@ -16,8 +16,9 @@ import {
     ChevronLeft,
     ChevronRight,
 } from 'lucide-react';
-import type { LaporanData, RoomDetail, DateFilter } from '@/app/(dashboard)/laporan/actions';
+import type { LaporanData, RoomDetail, DateFilter, ExpenseDetail } from '@/app/(dashboard)/laporan/actions';
 import ExpenseCategoryModal from './ExpenseCategoryModal';
+import { formatDuration } from '@/lib/utils/formatDuration';
 
 interface LaporanClientProps {
     data: LaporanData;
@@ -38,6 +39,7 @@ export default function LaporanClient({ data, highOccupancy }: LaporanClientProp
     const router = useRouter();
     const [selectedRoom, setSelectedRoom] = useState<{ location: string; room: string } | null>(null);
     const [roomDetails, setRoomDetails] = useState<RoomDetail[]>([]);
+    const [roomExpenses, setRoomExpenses] = useState<ExpenseDetail[]>([]);
     const [loadingDetails, setLoadingDetails] = useState(false);
     const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
     const locationRefs = useRef<Record<string, HTMLDivElement | null>>({});
@@ -53,12 +55,19 @@ export default function LaporanClient({ data, highOccupancy }: LaporanClientProp
     const openRoomDetail = async (location: string, room: string) => {
         setSelectedRoom({ location, room });
         setLoadingDetails(true);
+        setRoomDetails([]);
+        setRoomExpenses([]);
         try {
-            const { fetchRoomDetails } = await import('@/app/(dashboard)/laporan/actions');
-            const details = await fetchRoomDetails(location, room, data.filter);
+            const { fetchRoomDetails, fetchRoomExpenses } = await import('@/app/(dashboard)/laporan/actions');
+            const [details, expenses] = await Promise.all([
+                fetchRoomDetails(location, room, data.filter),
+                fetchRoomExpenses(location, room, data.filter),
+            ]);
             setRoomDetails(details);
+            setRoomExpenses(expenses);
         } catch {
             setRoomDetails([]);
+            setRoomExpenses([]);
         } finally {
             setLoadingDetails(false);
         }
@@ -338,7 +347,7 @@ export default function LaporanClient({ data, highOccupancy }: LaporanClientProp
                                     <div className="w-8 h-8 border-2 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto"></div>
                                     <p className="text-sm text-gray-500 mt-2">Memuat data...</p>
                                 </div>
-                            ) : roomDetails.length === 0 ? (
+                            ) : roomDetails.length === 0 && roomExpenses.length === 0 ? (
                                 <p className="text-center text-gray-500 py-8">Tidak ada transaksi di periode ini.</p>
                             ) : (
                                 <>
@@ -347,6 +356,39 @@ export default function LaporanClient({ data, highOccupancy }: LaporanClientProp
                                             {fmt(roomDetails.reduce((s, d) => s + d.cashAmount + d.transferAmount, 0))}
                                         </strong>
                                     </div>
+
+                                    {/* Room-level expenses */}
+                                    {roomExpenses.length > 0 && (
+                                        <div className="bg-red-50/50 rounded-lg px-3 sm:px-4 py-3">
+                                            <p className="text-[10px] sm:text-xs font-semibold text-red-700 uppercase mb-2">Pengeluaran Unit Ini</p>
+                                            <div className="space-y-1.5">
+                                                {(() => {
+                                                    // Group expenses by category
+                                                    const catMap: Record<string, { total: number; count: number; items: typeof roomExpenses }> = {};
+                                                    roomExpenses.forEach(e => {
+                                                        const cat = e.namaPengeluaran || 'Lainnya';
+                                                        if (!catMap[cat]) catMap[cat] = { total: 0, count: 0, items: [] };
+                                                        catMap[cat].total += e.jumlah;
+                                                        catMap[cat].count++;
+                                                        catMap[cat].items.push(e);
+                                                    });
+                                                    return Object.entries(catMap)
+                                                        .sort((a, b) => b[1].total - a[1].total)
+                                                        .map(([cat, d]) => (
+                                                            <div key={cat} className="text-xs text-gray-700 border-b border-red-100 pb-1 last:border-0 last:pb-0">
+                                                                <span>{cat}: <strong className="text-red-700">{fmt(d.total)}</strong> ({d.count}x)</span>
+                                                                {d.items.map(item => (
+                                                                    <div key={item.id} className="ml-2 text-[11px] text-gray-500 flex justify-between">
+                                                                        <span>{new Date(item.tanggal + 'T00:00:00').toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' })}</span>
+                                                                        <span>{fmt(item.jumlah)}</span>
+                                                                    </div>
+                                                                ))}
+                                                            </div>
+                                                        ));
+                                                })()}
+                                            </div>
+                                        </div>
+                                    )}
                                     {roomDetails.map(detail => (
                                         <div key={detail.id} className="border border-gray-200 rounded-xl p-4 space-y-2">
                                             {/* Date */}
@@ -369,7 +411,7 @@ export default function LaporanClient({ data, highOccupancy }: LaporanClientProp
                                             {/* Time */}
                                             <div className="flex items-center gap-2 text-sm text-gray-600">
                                                 <Clock className="w-3.5 h-3.5" />
-                                                <span>Durasi: <strong>{detail.rentalDuration} JAM</strong></span>
+                                                <span>Durasi: <strong>{formatDuration(detail.rentalDuration)}</strong></span>
                                             </div>
                                             {/* Payment */}
                                             <div className="bg-slate-50 rounded-lg p-3 mt-2">

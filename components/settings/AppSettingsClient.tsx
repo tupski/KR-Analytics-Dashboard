@@ -3,6 +3,7 @@
 import { useState, useRef } from 'react';
 import { Save, Upload, X, Loader2, Check, AlertCircle } from 'lucide-react';
 import { updateAppSettings, uploadToCatbox, type AppSettings } from '@/app/(dashboard)/pengaturan/actions';
+import { useAppSettings } from '@/lib/contexts/AppSettingsContext';
 
 interface Props {
     initialSettings: AppSettings;
@@ -38,27 +39,22 @@ export default function AppSettingsClient({ initialSettings }: Props) {
         setMessage(null);
 
         try {
-            // Upload to Catbox
             const formData = new FormData();
             formData.append('reqtype', 'fileupload');
             formData.append('fileToUpload', file);
 
-            const response = await fetch('https://catbox.moe/user/api.php', {
+            const response = await fetch('/api/upload/catbox', {
                 method: 'POST',
                 body: formData,
             });
 
             if (!response.ok) {
-                throw new Error('Upload gagal');
+                const err = await response.json();
+                throw new Error(err.error || 'Upload gagal');
             }
 
-            const url = await response.text();
-
-            if (!url || !url.startsWith('https://files.catbox.moe/')) {
-                throw new Error('Response tidak valid dari Catbox');
-            }
-
-            setSettings(prev => ({ ...prev, logo_url: url.trim() }));
+            const data = await response.json();
+            setSettings(prev => ({ ...prev, logo_url: data.url }));
             setMessage({ type: 'success', text: 'Logo berhasil diupload' });
         } catch (error: any) {
             setMessage({ type: 'error', text: error.message || 'Gagal upload logo' });
@@ -86,25 +82,20 @@ export default function AppSettingsClient({ initialSettings }: Props) {
 
         try {
             const formData = new FormData();
-            formData.append('reqtype', 'fileupload');
             formData.append('fileToUpload', file);
 
-            const response = await fetch('https://catbox.moe/user/api.php', {
+            const response = await fetch('/api/upload/catbox', {
                 method: 'POST',
                 body: formData,
             });
 
             if (!response.ok) {
-                throw new Error('Upload gagal');
+                const err = await response.json();
+                throw new Error(err.error || 'Upload gagal');
             }
 
-            const url = await response.text();
-
-            if (!url || !url.startsWith('https://files.catbox.moe/')) {
-                throw new Error('Response tidak valid dari Catbox');
-            }
-
-            setSettings(prev => ({ ...prev, favicon_url: url.trim() }));
+            const data = await response.json();
+            setSettings(prev => ({ ...prev, favicon_url: data.url }));
             setMessage({ type: 'success', text: 'Favicon berhasil diupload' });
         } catch (error: any) {
             setMessage({ type: 'error', text: error.message || 'Gagal upload favicon' });
@@ -112,6 +103,8 @@ export default function AppSettingsClient({ initialSettings }: Props) {
             setUploadingFavicon(false);
         }
     };
+
+    const { refresh: refreshAppSettings } = useAppSettings();
 
     const handleSave = async () => {
         setSaving(true);
@@ -121,6 +114,7 @@ export default function AppSettingsClient({ initialSettings }: Props) {
             const result = await updateAppSettings(settings);
 
             if (result.success) {
+                refreshAppSettings(); // Update all components using context
                 setMessage({ type: 'success', text: 'Pengaturan berhasil disimpan' });
                 setTimeout(() => {
                     window.location.reload();

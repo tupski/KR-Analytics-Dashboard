@@ -16,15 +16,13 @@ export interface AppSettings {
 export async function fetchAppSettings(): Promise<AppSettings> {
     const supabase = createServerClient();
 
+    // app_settings uses key-value pairs (key, value, updated_at)
     const { data, error } = await supabase
         .from('app_settings')
-        .select('*')
-        .limit(1)
-        .single();
+        .select('key, value');
 
-    if (error) {
-        console.error('[fetchAppSettings] Error:', error);
-        // Return defaults if no settings exist yet
+    if (error || !data || data.length === 0) {
+        console.error('[fetchAppSettings] Error or empty:', error);
         return {
             app_name: 'Kakarama Room Analytics',
             logo_url: null,
@@ -33,11 +31,13 @@ export async function fetchAppSettings(): Promise<AppSettings> {
         };
     }
 
+    const map = Object.fromEntries(data.map((r: any) => [r.key, r.value]));
+
     return {
-        app_name: data.app_name || 'Kakarama Room Analytics',
-        logo_url: data.logo_url || null,
-        favicon_url: data.favicon_url || null,
-        primary_color: data.primary_color || '#2563eb',
+        app_name: map.app_name || 'Kakarama Room Analytics',
+        logo_url: map.logo_url || null,
+        favicon_url: map.favicon_url || null,
+        primary_color: map.primary_color || '#2563eb',
     };
 }
 
@@ -48,31 +48,27 @@ export async function updateAppSettings(settings: Partial<AppSettings>): Promise
     try {
         const supabase = createServerClient();
 
-        // Check if settings exist
-        const { data: existing } = await supabase
-            .from('app_settings')
-            .select('id')
-            .limit(1)
-            .single();
+        // app_settings uses key-value pairs (key, value, updated_at)
+        // Upsert each setting individually
+        const entries: { key: string; value: string }[] = [];
 
-        if (existing) {
-            // Update existing
+        if (settings.app_name !== undefined) {
+            entries.push({ key: 'app_name', value: settings.app_name });
+        }
+        if (settings.logo_url !== undefined) {
+            entries.push({ key: 'logo_url', value: settings.logo_url || '' });
+        }
+        if (settings.favicon_url !== undefined) {
+            entries.push({ key: 'favicon_url', value: settings.favicon_url || '' });
+        }
+        if (settings.primary_color !== undefined) {
+            entries.push({ key: 'primary_color', value: settings.primary_color });
+        }
+
+        for (const entry of entries) {
             const { error } = await supabase
                 .from('app_settings')
-                .update(settings)
-                .eq('id', existing.id);
-
-            if (error) throw error;
-        } else {
-            // Insert new
-            const { error } = await supabase
-                .from('app_settings')
-                .insert({
-                    app_name: settings.app_name || 'Kakarama Room Analytics',
-                    logo_url: settings.logo_url || null,
-                    favicon_url: settings.favicon_url || null,
-                    primary_color: settings.primary_color || '#2563eb',
-                });
+                .upsert(entry, { onConflict: 'key' });
 
             if (error) throw error;
         }

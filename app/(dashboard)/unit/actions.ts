@@ -1,7 +1,7 @@
 'use server';
 
 import { createServerClient } from '@/lib/supabase/server';
-import { format } from 'date-fns';
+import { format, subDays } from 'date-fns';
 import { toZonedTime } from 'date-fns-tz';
 
 export type UnitDateFilter = 'today' | 'yesterday' | '7days' | 'month' | 'year';
@@ -34,37 +34,34 @@ export interface UnitPageData {
 }
 
 /**
- * Build date range based on filter (Asia/Jakarta, hotel day = 12:00 WIB).
+ * Build date range based on filter (Asia/Jakarta, normal day = 00:00-23:59 WIB).
  * Returns ISO timestamps for transaction.checkin_at filtering.
  */
 function getUnitDateRange(filter: UnitDateFilter) {
     const timezone = 'Asia/Jakarta';
     const now = toZonedTime(new Date(), timezone);
-    const hotelDayStart = new Date(now);
-    hotelDayStart.setHours(12, 0, 0, 0);
-    if (now < hotelDayStart) hotelDayStart.setDate(hotelDayStart.getDate() - 1);
-
-    const todayStr = format(hotelDayStart, 'yyyy-MM-dd');
+    const todayStr = format(now, 'yyyy-MM-dd');
 
     switch (filter) {
         case 'today': {
-            const start = `${todayStr}T12:00:00`;
-            const end = `${format(new Date(hotelDayStart.getTime() + 86400000), 'yyyy-MM-dd')}T11:59:59`;
+            const start = `${todayStr}T00:00:00`;
+            const end = `${todayStr}T23:59:59`;
             return { start, end, label: 'Hari Ini' };
         }
         case 'yesterday': {
-            const yesterday = new Date(hotelDayStart.getTime() - 86400000);
+            const yesterday = subDays(now, 1);
+            const yesterdayStr = format(yesterday, 'yyyy-MM-dd');
             return {
-                start: `${format(yesterday, 'yyyy-MM-dd')}T12:00:00`,
-                end: `${todayStr}T11:59:59`,
+                start: `${yesterdayStr}T00:00:00`,
+                end: `${yesterdayStr}T23:59:59`,
                 label: 'Kemarin',
             };
         }
         case '7days': {
-            const weekAgo = new Date(hotelDayStart.getTime() - 7 * 86400000);
+            const weekAgo = subDays(now, 6);
             return {
-                start: `${format(weekAgo, 'yyyy-MM-dd')}T12:00:00`,
-                end: `${format(new Date(hotelDayStart.getTime() + 86400000), 'yyyy-MM-dd')}T11:59:59`,
+                start: `${format(weekAgo, 'yyyy-MM-dd')}T00:00:00`,
+                end: `${todayStr}T23:59:59`,
                 label: '7 Hari Terakhir',
             };
         }
@@ -72,7 +69,7 @@ function getUnitDateRange(filter: UnitDateFilter) {
             const monthStart = format(now, 'yyyy-MM-01');
             return {
                 start: `${monthStart}T00:00:00`,
-                end: `${format(new Date(hotelDayStart.getTime() + 86400000), 'yyyy-MM-dd')}T11:59:59`,
+                end: `${todayStr}T23:59:59`,
                 label: 'Bulan Ini',
             };
         }
@@ -80,7 +77,7 @@ function getUnitDateRange(filter: UnitDateFilter) {
             const yearStart = format(now, 'yyyy-01-01');
             return {
                 start: `${yearStart}T00:00:00`,
-                end: `${format(new Date(hotelDayStart.getTime() + 86400000), 'yyyy-MM-dd')}T11:59:59`,
+                end: `${todayStr}T23:59:59`,
                 label: 'Tahun Ini',
             };
         }

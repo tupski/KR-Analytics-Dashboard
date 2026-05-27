@@ -58,7 +58,7 @@ export default function GrafikOkupansi({ data, period = 30, isLoading = false }:
         return (
             <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4 sm:p-6">
                 <div className="flex items-center justify-between mb-4">
-                    <h2 className="text-base sm:text-lg font-semibold text-gray-900">Tingkat Hunian Harian</h2>
+                    <h2 className="text-base sm:text-lg font-semibold text-gray-900">Okupansi Harian</h2>
                     <span className="text-xs sm:text-sm text-gray-500">{period} hari terakhir</span>
                 </div>
                 <div className="flex items-center justify-center h-64 text-gray-400">
@@ -72,7 +72,7 @@ export default function GrafikOkupansi({ data, period = 30, isLoading = false }:
         <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4 sm:p-6">
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between mb-4 gap-2">
                 <div>
-                    <h2 className="text-base sm:text-lg font-semibold text-gray-900">Tingkat Hunian Harian</h2>
+                    <h2 className="text-base sm:text-lg font-semibold text-gray-900">Okupansi Harian</h2>
                     <p className="text-xs text-gray-500 mt-0.5">Persentase kamar yang terisi per hari</p>
                 </div>
                 <span className="text-xs text-gray-500">{period} hari terakhir</span>

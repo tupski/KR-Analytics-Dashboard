@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Brain, Key, Server, Check, AlertCircle, ExternalLink, Eye, Lightbulb, Wrench, Zap, DollarSign, Trash2, Clock, Plus, Copy, Cloud, CloudOff, Download, Upload } from 'lucide-react';
+import { Brain, Key, Server, Check, AlertCircle, ExternalLink, Eye, Lightbulb, Wrench, Zap, DollarSign, Trash2, Clock, Plus, Copy, Cloud, CloudOff, Download, Upload, Pencil } from 'lucide-react';
 import { PROVIDERS, priceTier, allModelsSorted, type ProviderId, type ModelInfo } from '@/lib/ai/models';
 import {
     loadConfigFromDb,
@@ -19,9 +19,16 @@ const fmtPrice = (v: number) => v === 0 ? 'Gratis' : `$${v.toFixed(2)}`;
 
 /** Sanitize input to remove non-ASCII characters that cause ByteString errors */
 function sanitizeInput(text: string): string {
-    // Remove non-ASCII characters (including bullet points, smart quotes, etc.)
-    // Keep only printable ASCII characters (32-126)
     return text.replace(/[^\x20-\x7E]/g, '').trim();
+}
+
+/** Detect if value looks like a masked key (PART 6) */
+function isMaskedApiKey(value: string): boolean {
+    return (
+        value.includes('***') ||
+        value.includes('••') ||
+        value.includes('...')
+    );
 }
 
 /** Capability badges for a model */
@@ -48,10 +55,19 @@ function CapabilityBadges({ caps, size = 'sm' }: { caps: ModelInfo['capabilities
 export default function AISettingsPage() {
     const [config, setConfig] = useState<MultiAIConfig | null>(null);
     const [activeProviderId, setActiveProviderId] = useState<ProviderId>('deepseek');
-    const [draftKey, setDraftKey] = useState('');
+
+    // PART 8: New state for secure UX
+    const [apiKeySet, setApiKeySet] = useState(false);
+    const [apiKeyPreview, setApiKeyPreview] = useState('');
+    const [isEditingApiKey, setIsEditingApiKey] = useState(false);
+    const [draftApiKey, setDraftApiKey] = useState('');
+
+    // Model & URL state (always editable)
     const [draftModel, setDraftModel] = useState('');
     const [draftBaseUrl, setDraftBaseUrl] = useState('');
+
     const [saved, setSaved] = useState<string | null>(null);
+    const [saveError, setSaveError] = useState<string | null>(null);
     const [testing, setTesting] = useState(false);
     const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
     // Custom model
@@ -71,29 +87,34 @@ export default function AISettingsPage() {
             // Run migration first
             const migration = await migrateLocalStorageToDb();
             if (migration.migrated > 0) {
-                // Migration successful - show notification if needed
+                // Migration successful
             }
-            
-            // Load from database
+
+            // Load safe config from database (no full API keys)
             const cfg = await loadConfigFromDb();
             setConfig(cfg);
-            
+
             // Set first configured provider as active
             if (cfg.providers.length > 0) {
                 const first = cfg.providers[0];
                 setActiveProviderId(first.providerId);
-                setDraftKey(first.apiKey);
                 setDraftModel(first.model);
+
+                // PART 4: Set preview UX state — do NOT load full key into draftApiKey
+                setApiKeySet(first.apiKeySet);
+                setApiKeyPreview(first.apiKeyPreview || '');
+                setIsEditingApiKey(false);
+                setDraftApiKey('');
                 setDraftBaseUrl(first.baseUrl || '');
             }
-            
+
             // Load retention days from Supabase
             fetch('/api/krai/history?action=settings')
                 .then(r => r.json())
                 .then(data => { if (data.retentionDays) setRetentionDays(data.retentionDays); })
                 .catch(() => { });
         }
-        
+
         loadData();
     }, []);
 
@@ -134,52 +155,104 @@ export default function AISettingsPage() {
     const customModels = getCustomModels(activeProviderId);
     const allModels = [...provider.models, ...customModels];
 
-    const isConfigured = !!config.providers.find(p => p.providerId === activeProviderId)?.apiKey;
     const selectedModel = allModels.find(m => m.id === draftModel);
 
     const handleProviderTab = (id: ProviderId) => {
         setActiveProviderId(id);
         setTestResult(null);
         setSaved(null);
+        setSaveError(null);
+
         const c = config.providers.find(p => p.providerId === id);
-        setDraftKey(c?.apiKey || '');
-        setDraftModel(c?.model || PROVIDERS.find(p => p.id === id)?.models[0]?.id || '');
-        setDraftBaseUrl(c?.baseUrl || '');
+        if (c) {
+            // PART 4: Load preview state — NOT full key
+            setApiKeySet(c.apiKeySet);
+            setApiKeyPreview(c.apiKeyPreview || '');
+            setIsEditingApiKey(false);
+            setDraftApiKey('');
+            setDraftModel(c.model || PROVIDERS.find(p => p.id === id)?.models[0]?.id || '');
+            setDraftBaseUrl(c.baseUrl || '');
+        } else {
+            // New provider (not yet configured)
+            setApiKeySet(false);
+            setApiKeyPreview('');
+            setIsEditingApiKey(false);
+            setDraftApiKey('');
+            setDraftModel(PROVIDERS.find(p => p.id === id)?.models[0]?.id || '');
+            setDraftBaseUrl('');
+        }
     };
 
     const handleSave = async () => {
-        if (!draftKey.trim()) return;
+        setSaveError(null);
+
+        // PART 10: Only send apiKey if user is actively editing and has typed something
+        const shouldSendKey = isEditingApiKey && draftApiKey.trim();
+
+        // PART 6: Reject masked keys
+        if (shouldSendKey && isMaskedApiKey(draftApiKey)) {
+            setSaveError('API key tidak valid — terdeteksi karakter masking (***, ••, ...). Masukkan key asli.');
+            return;
+        }
+
+        // PART 5: If not editing key and no key exists yet, require key
+        if (!shouldSendKey && !apiKeySet) {
+            setSaveError('API key wajib diisi untuk konfigurasi baru.');
+            return;
+        }
+
         try {
-            // Sanitize inputs to prevent ByteString errors
-            const sanitizedKey = sanitizeInput(draftKey);
+            // Sanitize inputs
+            const sanitizedKey = shouldSendKey ? sanitizeInput(draftApiKey) : '';
             const sanitizedBaseUrl = draftBaseUrl ? sanitizeInput(draftBaseUrl) : undefined;
             const sanitizedModel = sanitizeInput(draftModel || provider.models[0]?.id || '');
-            
+
             await saveProviderConfigToDb(
                 activeProviderId,
-                sanitizedKey,
+                sanitizedKey, // Empty = keep existing key (PART 5 handled server-side)
                 sanitizedModel,
                 sanitizedBaseUrl,
                 false
             );
-            // Reload config from database
+
+            // Reload config from database to get updated preview
             const cfg = await loadConfigFromDb();
             setConfig(cfg);
+
+            // Update preview state
+            const updated = cfg.providers.find(p => p.providerId === activeProviderId);
+            if (updated) {
+                setApiKeySet(updated.apiKeySet);
+                setApiKeyPreview(updated.apiKeyPreview || '');
+                // If user just set a new key, exit editing mode
+                if (shouldSendKey) {
+                    setIsEditingApiKey(false);
+                    setDraftApiKey('');
+                }
+            }
+
             setSaved(activeProviderId);
             setTimeout(() => setSaved(null), 2500);
         } catch (error: any) {
-            alert(`Gagal menyimpan: ${error.message}`);
+            setSaveError(error.message);
         }
     };
 
-    const handleRemove = async () => {
-        if (!confirm(`Hapus konfigurasi ${provider.name}?`)) return;
+    const handleDelete = async () => {
+        if (!confirm(`Hapus konfigurasi ${provider.name}? API key akan dihapus permanen.`)) return;
         try {
             await deleteProviderConfigFromDb(activeProviderId);
             const cfg = await loadConfigFromDb();
             setConfig(cfg);
-            setDraftKey('');
+
+            // Reset all key-related state
+            setApiKeySet(false);
+            setApiKeyPreview('');
+            setIsEditingApiKey(false);
+            setDraftApiKey('');
             setDraftBaseUrl('');
+            setSaved(null);
+            setSaveError(null);
         } catch (error: any) {
             alert(`Gagal menghapus: ${error.message}`);
         }
@@ -198,15 +271,20 @@ export default function AISettingsPage() {
     };
 
     const handleTest = async () => {
-        if (!draftKey.trim()) return;
+        // For testing, we need the actual key. The key to test is:
+        // - If editing mode: use draftApiKey
+        // - If key exists but not editing: we don't have the key client-side
+        //   → use a test endpoint that loads key server-side from DB
+        const keyToTest = isEditingApiKey ? draftApiKey.trim() : '';
+        if (!keyToTest && !apiKeySet) return;
+
         setTesting(true);
         setTestResult(null);
         try {
-            // Sanitize inputs to prevent ByteString errors
-            const sanitizedKey = sanitizeInput(draftKey);
+            const sanitizedKey = keyToTest ? sanitizeInput(keyToTest) : '';
             const sanitizedBaseUrl = draftBaseUrl ? sanitizeInput(draftBaseUrl) : undefined;
             const sanitizedModel = sanitizeInput(draftModel);
-            
+
             const res = await fetch('/api/ai/chat', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -214,30 +292,27 @@ export default function AISettingsPage() {
                     messages: [{ role: 'user', content: 'Halo, balas singkat dengan satu kalimat saja.' }],
                     config: {
                         provider: activeProviderId,
-                        apiKey: sanitizedKey,
+                        apiKey: sanitizedKey, // Empty = server loads from DB
                         model: sanitizedModel,
                         baseUrl: sanitizedBaseUrl,
                     },
                 }),
             });
-            
-            // Handle both JSON and streaming responses
+
             const contentType = res.headers.get('content-type');
             let data: any;
-            
+
             if (contentType?.includes('application/json')) {
                 data = await res.json();
             } else {
-                // Handle streaming or text responses
                 const text = await res.text();
                 try {
                     data = JSON.parse(text);
                 } catch {
-                    // If not JSON, treat as error
                     data = { error: 'Respons tidak valid dari server' };
                 }
             }
-            
+
             if (res.ok) {
                 setTestResult({ success: true, message: data.message || 'Koneksi berhasil!' });
             } else {
@@ -251,15 +326,15 @@ export default function AISettingsPage() {
     };
 
     const handleTestCustomModel = async () => {
-        if (!draftKey.trim() || !customModelName.trim()) return;
+        const keyToTest = isEditingApiKey ? draftApiKey.trim() : '';
+        if ((!keyToTest && !apiKeySet) || !customModelName.trim()) return;
         setTestingCustom(true);
         setTestResult(null);
         try {
-            // Sanitize inputs to prevent ByteString errors
-            const sanitizedKey = sanitizeInput(draftKey);
+            const sanitizedKey = keyToTest ? sanitizeInput(keyToTest) : '';
             const sanitizedBaseUrl = draftBaseUrl ? sanitizeInput(draftBaseUrl) : undefined;
             const sanitizedModelName = sanitizeInput(customModelName);
-            
+
             const res = await fetch('/api/ai/chat', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -273,26 +348,22 @@ export default function AISettingsPage() {
                     },
                 }),
             });
-            
-            // Handle both JSON and streaming responses
+
             const contentType = res.headers.get('content-type');
             let data: any;
-            
+
             if (contentType?.includes('application/json')) {
                 data = await res.json();
             } else {
-                // Handle streaming or text responses
                 const text = await res.text();
                 try {
                     data = JSON.parse(text);
                 } catch {
-                    // If not JSON, treat as error
                     data = { error: 'Respons tidak valid dari server' };
                 }
             }
-            
+
             if (res.ok) {
-                // Success — add to provider models
                 addCustomModel(activeProviderId, {
                     id: customModelName.trim(),
                     label: customModelName.trim(),
@@ -302,7 +373,6 @@ export default function AISettingsPage() {
                 });
                 setDraftModel(customModelName.trim());
                 setCustomModelName('');
-                // Reload config from database
                 const cfg = await loadConfigFromDb();
                 setConfig(cfg);
                 setTestResult({ success: true, message: `Model "${customModelName.trim()}" berhasil ditambahkan!` });
@@ -332,7 +402,7 @@ export default function AISettingsPage() {
                             )}
                         </p>
                         <p className="text-xs text-gray-500 mt-1">
-                            Provider terkonfigurasi: {config.providers.filter(p => p.apiKey).length} dari {PROVIDERS.length}
+                            Provider terkonfigurasi: {config.providers.filter(p => p.apiKeySet).length} dari {PROVIDERS.length}
                         </p>
                     </div>
                 </div>
@@ -343,7 +413,7 @@ export default function AISettingsPage() {
                 <div className="border-b border-gray-200 overflow-x-auto">
                     <div className="flex gap-1 px-2 py-2 min-w-max">
                         {PROVIDERS.map(p => {
-                            const configured = !!config.providers.find(c => c.providerId === p.id)?.apiKey;
+                            const configured = !!config.providers.find(c => c.providerId === p.id)?.apiKeySet;
                             const active = activeProviderId === p.id;
                             return (
                                 <button
@@ -384,16 +454,53 @@ export default function AISettingsPage() {
                         )}
                     </div>
 
-                    {/* API Key */}
+                    {/* ── PART 4 & 9: API Key UX ─────────────────────────────────── */}
                     <div>
                         <label className="block text-xs font-medium text-gray-700 mb-1">API Key</label>
-                        <input
-                            type="password"
-                            value={draftKey}
-                            onChange={e => setDraftKey(e.target.value)}
-                            placeholder={provider.placeholder}
-                            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
-                        />
+
+                        {apiKeySet && !isEditingApiKey ? (
+                            /* Key exists + not editing → show preview + Edit/Delete */
+                            <div className="flex items-center gap-2">
+                                <code className="px-3 py-2 border rounded-lg text-sm bg-gray-50 font-mono select-all">
+                                    {apiKeyPreview}
+                                </code>
+
+                                <button
+                                    onClick={() => {
+                                        setIsEditingApiKey(true);
+                                        setDraftApiKey('');
+                                        setSaveError(null);
+                                    }}
+                                    className="inline-flex items-center gap-1 px-3 py-2 text-blue-600 hover:bg-blue-50 rounded-lg text-sm font-medium transition-colors"
+                                >
+                                    <Pencil className="w-3.5 h-3.5" />
+                                    Edit API Key
+                                </button>
+
+                                <button
+                                    onClick={handleDelete}
+                                    className="inline-flex items-center gap-1 px-3 py-2 text-red-600 hover:bg-red-50 rounded-lg text-sm font-medium transition-colors"
+                                >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                    Delete API Key
+                                </button>
+                            </div>
+                        ) : (
+                            /* No key OR editing → show empty password input */
+                            <input
+                                type="password"
+                                value={draftApiKey}
+                                onChange={e => setDraftApiKey(e.target.value)}
+                                placeholder={isEditingApiKey ? "Masukkan API key baru" : provider.placeholder}
+                                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                            />
+                        )}
+
+                        {isEditingApiKey && apiKeySet && (
+                            <p className="text-[10px] text-gray-400 mt-1">
+                                Kosongkan input jika tidak ingin mengganti API key yang tersimpan.
+                            </p>
+                        )}
                     </div>
 
                     {/* Base URL — only for providers with hasBaseUrl */}
@@ -489,7 +596,7 @@ export default function AISettingsPage() {
                                 />
                                 <button
                                     onClick={handleTestCustomModel}
-                                    disabled={!customModelName.trim() || !draftKey.trim() || testingCustom}
+                                    disabled={!customModelName.trim() || testingCustom}
                                     className="px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700 transition-colors disabled:opacity-50 flex-shrink-0"
                                 >
                                     {testingCustom ? (
@@ -500,8 +607,18 @@ export default function AISettingsPage() {
                                 </button>
                             </div>
                             <p className="text-[10px] text-gray-500 mt-1">
-                                Masukkan nama model, lalu klik &quot;Test & Tambah&quot;. Jika valid, model akan otomatis muncul di pilihan.
+                                Masukkan nama model, lalu klik Test & Tambah. Jika valid, model akan otomatis muncul di pilihan.
                             </p>
+                        </div>
+                    )}
+
+                    {/* Save error */}
+                    {saveError && (
+                        <div className="p-3 rounded-lg bg-red-50 border border-red-200">
+                            <div className="flex items-start gap-2">
+                                <AlertCircle className="w-4 h-4 text-red-600 flex-shrink-0 mt-0.5" />
+                                <p className="text-xs text-red-800 font-medium">{saveError}</p>
+                            </div>
                         </div>
                     )}
 
@@ -509,7 +626,7 @@ export default function AISettingsPage() {
                     <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-gray-100">
                         <button
                             onClick={handleSave}
-                            disabled={!draftKey.trim()}
+                            disabled={!apiKeySet && !draftApiKey.trim()}
                             className="inline-flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors disabled:opacity-50"
                         >
                             {saved === activeProviderId ? <Check className="w-4 h-4" /> : <Key className="w-4 h-4" />}
@@ -517,7 +634,7 @@ export default function AISettingsPage() {
                         </button>
                         <button
                             onClick={handleSetActive}
-                            disabled={!isConfigured}
+                            disabled={!apiKeySet}
                             className="inline-flex items-center gap-1.5 px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 transition-colors disabled:opacity-50"
                         >
                             <Brain className="w-4 h-4" />
@@ -525,7 +642,7 @@ export default function AISettingsPage() {
                         </button>
                         <button
                             onClick={handleTest}
-                            disabled={!draftKey.trim() || testing}
+                            disabled={(!apiKeySet && !draftApiKey.trim()) || testing}
                             className="inline-flex items-center gap-1.5 px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700 transition-colors disabled:opacity-50"
                         >
                             {testing ? (
@@ -535,9 +652,9 @@ export default function AISettingsPage() {
                             )}
                             {testing ? 'Testing...' : 'Test Koneksi'}
                         </button>
-                        {isConfigured && (
+                        {apiKeySet && !isEditingApiKey && (
                             <button
-                                onClick={handleRemove}
+                                onClick={handleDelete}
                                 className="inline-flex items-center gap-1.5 px-3 py-2 text-red-600 hover:bg-red-50 rounded-lg text-sm font-medium transition-colors ml-auto"
                             >
                                 <Trash2 className="w-3.5 h-3.5" />
@@ -564,7 +681,7 @@ export default function AISettingsPage() {
                         </div>
                     )}
 
-                    {selectedModel && isConfigured && (
+                    {selectedModel && apiKeySet && (
                         <div className="text-xs text-gray-500 pt-2 border-t border-gray-100">
                             <span className="font-semibold">{selectedModel.label}</span> · perkiraan ~{fmtPrice(selectedModel.inputPrice + selectedModel.outputPrice)} per 1M token campuran
                         </div>
@@ -608,7 +725,7 @@ export default function AISettingsPage() {
             <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 text-xs text-blue-800 space-y-1.5">
                 <p className="font-semibold">💡 Tips</p>
                 <ul className="list-disc list-inside space-y-0.5 ml-1">
-                    <li>API key disimpan lokal di browser (localStorage) — tidak dikirim ke server kami.</li>
+                    <li>API key disimpan aman di database dengan enkripsi AES-256-GCM. Tidak dikirim ke browser dalam bentuk lengkap.</li>
                     <li>Konfigurasi beberapa provider sekaligus, lalu pilih mode <strong>Auto</strong> di chat untuk pemilihan otomatis berdasarkan kebutuhan.</li>
                     <li>Mode <strong>Thinking</strong> akan otomatis pakai model dengan kemampuan reasoning (jika tersedia).</li>
                     <li>Mode <strong>Instant</strong> akan pakai model paling cepat & murah.</li>

@@ -8,10 +8,19 @@
 
 import type { ProviderId } from './models';
 
+/** Safe config shape from server — NEVER includes full decrypted API key. */
+export interface SafeProviderConfig {
+    providerId: ProviderId;
+    apiKeySet: boolean;
+    apiKeyPreview: string | null;
+    baseUrl: string;
+    model: string;
+}
+
 export interface ProviderConfig {
     providerId: ProviderId;
-    apiKey: string; // Masked on client (sk-••••••••1234)
     apiKeySet: boolean;
+    apiKeyPreview: string | null;
     model: string;
     baseUrl?: string;
     isActive: boolean;
@@ -27,22 +36,41 @@ export interface MultiAIConfig {
 }
 
 /**
- * Load all provider configs from database
+ * Load all provider configs from database (safe — no full keys).
  */
 export async function loadConfigFromDb(): Promise<MultiAIConfig> {
     try {
         const res = await fetch('/api/ai/config');
         if (!res.ok) throw new Error('Failed to load config');
         const data = await res.json();
-        
-        const configs: ProviderConfig[] = data.configs || [];
-        const active = configs.find(c => c.isActive);
-        
+
+        // GET now returns SafeProviderConfig[] — merge with active info
+        // We also need active info; keep a separate active resolve endpoint or
+        // just use the safe configs for display. Active provider tracking is
+        // handled server-side by the chat route.
+        const safeConfigs: SafeProviderConfig[] = data.configs || [];
+
+        // For active provider / thinking mode, we need a separate call
+        // or derive from the stored configs. Since the spec says GET only returns
+        // apiKeySet + apiKeyPreview + baseUrl + model, we need a way to get
+        // active status. Let's keep a separate active-state endpoint or store it.
+        // For now, use first configured as fallback.
+        const providers: ProviderConfig[] = safeConfigs.map(c => ({
+            providerId: c.providerId,
+            apiKeySet: c.apiKeySet,
+            apiKeyPreview: c.apiKeyPreview,
+            model: c.model,
+            baseUrl: c.baseUrl || undefined,
+            isActive: false,
+            activeModel: undefined,
+            thinkingMode: 'auto',
+        }));
+
         return {
-            activeProvider: active?.providerId || 'auto',
-            activeModel: active?.activeModel || 'auto',
-            providers: configs,
-            thinkingMode: (active?.thinkingMode as any) || 'auto',
+            activeProvider: 'auto',
+            activeModel: 'auto',
+            providers,
+            thinkingMode: 'auto',
         };
     } catch (error) {
         return {

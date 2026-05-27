@@ -16,21 +16,17 @@ import type {
 } from '@/types/dashboard';
 
 /**
- * Get hotel-day range for "today": 12:00 WIB today → 11:59:59 WIB tomorrow.
+ * Get normal day range for "today": 00:00 WIB today → 23:59:59 WIB today.
  * Returns ISO strings in Asia/Jakarta local time (no offset suffix, matches DB storage).
  */
 function getHotelDayRange() {
     const timezone = 'Asia/Jakarta';
     const now = toZonedTime(new Date(), timezone);
-    // Hotel day starts at 12:00 WIB
-    const hotelStart = new Date(now);
-    hotelStart.setHours(12, 0, 0, 0);
-    if (now < hotelStart) hotelStart.setDate(hotelStart.getDate() - 1);
-    const hotelEnd = new Date(hotelStart.getTime() + 86400000); // +24h
+    const todayStr = format(now, 'yyyy-MM-dd');
     return {
-        start: format(hotelStart, "yyyy-MM-dd'T'HH:mm:ss"),
-        end: format(new Date(hotelEnd.getTime() - 1000), "yyyy-MM-dd'T'HH:mm:ss"), // 11:59:59
-        dateStr: format(hotelStart, 'yyyy-MM-dd'),
+        start: `${todayStr}T00:00:00`,
+        end: `${todayStr}T23:59:59`,
+        dateStr: todayStr,
     };
 }
 
@@ -199,22 +195,21 @@ async function fetchDailyKPISnapshot(
     targetDay: string,
     totalRoomsCount: number,
 ): Promise<{ bookingCount: number; revenue: number; distinctRoomsOccupied: number; avgOccupancy: number; availableUnits: number }> {
-    // Use hotel day: 12:00 on targetDay → 11:59:59 on next day
-    const dayStart = `${targetDay}T12:00:00`;
-    const nextDay = format(new Date(new Date(targetDay + 'T12:00:00').getTime() + 86400000 - 1000), "yyyy-MM-dd'T'HH:mm:ss");
-    const dayEnd = nextDay;
+    // Use normal day: 00:00 on targetDay → 23:59:59 on same day
+    const dayStart = `${targetDay}T00:00:00`;
+    const dayEnd = `${targetDay}T23:59:59`;
 
     const [{ count: bookingCount }, { data: txData }] = await Promise.all([
         supabase
             .from('transactions')
             .select('*', { count: 'exact', head: true })
             .gte('checkin_at', dayStart)
-            .lt('checkin_at', dayEnd),
+            .lte('checkin_at', dayEnd),
         supabase
             .from('transactions')
             .select('cash_amount, transfer_amount, room_number, apartment_location')
             .gte('checkin_at', dayStart)
-            .lt('checkin_at', dayEnd),
+            .lte('checkin_at', dayEnd),
     ]);
 
     const revenue = txData?.reduce(
