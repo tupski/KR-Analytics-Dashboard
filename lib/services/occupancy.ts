@@ -204,6 +204,21 @@ export async function getDailyOccupancyTrend(days: number = 30): Promise<DailyOc
 // For each location, calculate usedRoomDays / totalPossibleRoomDays
 // * 100 over the period.
 //
+// IMPORTANT — check-in volume ≠ occupancy/utilization:
+//   - Counting transactions by checkin_at tells you how many guests
+//     arrived on a given day, NOT how many rooms were occupied.
+//   - Utilization must account for the full stay-span (checkin_at
+//     through checkout_at) because multi-day stays occupy rooms on
+//     EVERY day of the stay, not just the check-in day.
+//
+// This function now uses the SAME stay-span overlap logic as
+// getDailyOccupancyTrend():
+//   checkin_at  <= dayEnd   (23:59:59)
+//   checkout_at >= dayStart (00:00:00)
+//
+// Each transaction is expanded into all room-days it spans within
+// the query range, then unique (room, date) pairs are counted.
+//
 // Mirrors fetchHighOccupancyLocations() in laporan/actions.ts:406-447
 // ============================================================
 export async function getRoomDayUtilization(start: string, end: string): Promise<RoomDayUtilizationItem[]> {
@@ -219,11 +234,16 @@ export async function getRoomDayUtilization(start: string, end: string): Promise
     const days = Math.max(1, Math.round((endDt.getTime() - startDt.getTime()) / (1000 * 60 * 60 * 24)) + 1);
 
     const { data: allRooms } = await supabase.from('nomor_kamar').select('name, lokasi');
+
+    // Fetch ALL transactions that could overlap the date range.
+    // This is the same overlap query used by getDailyOccupancyTrend():
+    //   checkin_at <= rangeEnd   AND   checkout_at >= rangeStart
+    // We need checkout_at to expand multi-day stays across all occupied dates.
     const { data: transactions } = await supabase
         .from('transactions')
-        .select('room_number, apartment_location, checkin_at')
-        .gte('checkin_at', `${startDate}T00:00:00`)
-        .lte('checkin_at', `${endDate}T23:59:59`);
+        .select('room_number, apartment_location, checkin_at, checkout_at')
+        .lte('checkin_at', `${endDate}T23:59:59`)
+        .gte('checkout_at', `${startDate}T00:00:00`);
 
     // Count rooms per location
     const roomsPerLocation: Record<string, number> = {};
@@ -231,14 +251,38 @@ export async function getRoomDayUtilization(start: string, end: string): Promise
         roomsPerLocation[r.lokasi] = (roomsPerLocation[r.lokasi] || 0) + 1;
     });
 
-    // Count unique room-days used per location
+    // Build a lookup of all valid dates in the range for fast iteration
+    const allDates: string[] = [];
+    const cursor = new Date(startDt);
+    while (cursor <= endDt) {
+        allDates.push(format(cursor, 'yyyy-MM-dd'));
+        cursor.setDate(cursor.getDate() + 1);
+    }
+
+    // Count unique room-days used per location.
+    // For each transaction, expand across ALL dates the stay spans
+    // (clamped to the query range), then record each (room, date) pair.
     const locationUsage: Record<string, Set<string>> = {};
     transactions?.forEach((t: any) => {
         const loc = t.apartment_location;
         if (!locationUsage[loc]) locationUsage[loc] = new Set();
-        // Each unique room+date combination counts as 1 room-day
-        const dayKey = `${t.room_number}|${format(new Date(t.checkin_at), 'yyyy-MM-dd')}`;
-        locationUsage[loc].add(dayKey);
+
+        // Determine the effective stay range within the query window
+        const txCheckinDate = format(new Date(t.checkin_at), 'yyyy-MM-dd');
+        const txCheckoutDate = format(new Date(t.checkout_at), 'yyyy-MM-dd');
+
+        // Clamp to the query range: stay starts at max(checkin_date, range_start)
+        // and ends at min(checkout_date, range_end)
+        const effectiveStart = txCheckinDate > startDate ? txCheckinDate : startDate;
+        const effectiveEnd = txCheckoutDate < endDate ? txCheckoutDate : endDate;
+
+        // Expand the stay into individual room-days
+        for (const d of allDates) {
+            if (d >= effectiveStart && d <= effectiveEnd) {
+                const dayKey = `${t.room_number}|${d}`;
+                locationUsage[loc].add(dayKey);
+            }
+        }
     });
 
     // Calculate occupancy rate per location
