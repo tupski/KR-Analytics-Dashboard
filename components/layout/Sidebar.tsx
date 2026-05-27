@@ -4,14 +4,8 @@ import { usePathname } from 'next/navigation';
 import Link from 'next/link';
 import { useState, useCallback } from 'react';
 import {
-    LayoutDashboard,
-    Calendar,
-    CalendarDays,
     Building,
     Users,
-    Wallet,
-    Brain,
-    Settings,
     X,
     ChevronLeft,
     ChevronRight,
@@ -19,23 +13,13 @@ import {
 } from 'lucide-react';
 import KraiLogo from '@/components/shared/KraiLogo';
 import { useAppSettings } from '@/lib/contexts/AppSettingsContext';
+import { SIDEBAR_ITEMS, isActivePath } from '@/lib/config/navigation';
 
 interface SidebarProps {
     isMobileOpen?: boolean;
     onClose?: () => void;
     userEmail?: string | null;
 }
-
-const MENU_ITEMS = [
-    { label: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
-    { label: 'Booking', href: '/booking', icon: Calendar },
-    { label: 'Kalender', href: '/kalender', icon: CalendarDays },
-    { label: 'Unit', href: '/unit', icon: Building },
-    { label: 'Customer', href: '/customer', icon: Users },
-    { label: 'Laporan', href: '/laporan', icon: Wallet },
-    { label: 'KR·AI Chat', href: '/chat', icon: Brain, isKrai: true },
-    { label: 'Pengaturan', href: '/pengaturan', icon: Settings },
-];
 
 const COLLAPSED_KEY = 'kr-sidebar-collapsed';
 
@@ -112,14 +96,14 @@ function MobileSidebarHeader({ onClose }: { onClose: () => void }) {
 /** Logo block used in desktop sidebar header */
 function SidebarLogo({ collapsed }: { collapsed?: boolean }) {
     const { settings } = useAppSettings();
-    
+
     if (settings.logo_url) {
         return (
             <div className={`border-b border-gray-200 ${collapsed ? 'flex justify-center py-3' : 'flex items-center gap-3 px-5 py-4'}`}>
                 {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img 
-                    src={settings.logo_url} 
-                    alt={settings.app_name} 
+                <img
+                    src={settings.logo_url}
+                    alt={settings.app_name}
                     className={`object-contain ${collapsed ? 'w-10 h-10' : 'w-9 h-9'} flex-shrink-0`}
                 />
                 {!collapsed && (
@@ -160,9 +144,6 @@ export default function Sidebar({ isMobileOpen = false, onClose, userEmail }: Si
         });
     }, []);
 
-    const isActive = (href: string) =>
-        pathname === href || pathname?.startsWith(`${href}/`);
-
     // ── Desktop sidebar ────────────────────────────────────────────────────────
     const desktopSidebar = (
         <aside
@@ -173,9 +154,9 @@ export default function Sidebar({ isMobileOpen = false, onClose, userEmail }: Si
             {/* Nav */}
             <nav className={`flex-1 overflow-y-auto py-3 ${collapsed ? 'px-2' : 'px-2'}`}>
                 <ul className="space-y-1">
-                    {MENU_ITEMS.map(item => {
+                    {SIDEBAR_ITEMS.map(item => {
                         const Icon = item.icon;
-                        const active = isActive(item.href);
+                        const active = isActivePath(pathname, item.href);
                         return (
                             <li key={item.href}>
                                 <Link
@@ -252,9 +233,9 @@ export default function Sidebar({ isMobileOpen = false, onClose, userEmail }: Si
 
                 <nav className="flex-1 px-3 py-3 overflow-y-auto">
                     <ul className="space-y-1">
-                        {MENU_ITEMS.map(item => {
+                        {SIDEBAR_ITEMS.map(item => {
                             const Icon = item.icon;
-                            const active = isActive(item.href);
+                            const active = isActivePath(pathname, item.href);
                             return (
                                 <li key={item.href}>
                                     <Link

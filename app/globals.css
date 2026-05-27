@@ -6,6 +6,24 @@
   :root {
     --color-primary: 37 99 235;
     --color-primary-hover: 29 78 216;
+
+    /* Card Design Tokens */
+    --card-radius: 0.75rem;        /* rounded-xl */
+    --card-border: 1px solid rgb(219 234 254);  /* border-blue-100 */
+    --card-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.05);  /* shadow-sm */
+
+    /* Status Colors */
+    --status-available: #16a34a;   /* green-600 */
+    --status-occupied: #2563eb;    /* blue-600 */
+    --status-cleaning: #d97706;    /* amber-600 */
+    --status-maintenance: #dc2626; /* red-600 */
+
+    /* Page Background */
+    --page-bg: linear-gradient(to bottom right, rgb(248 250 252), rgb(239 246 255 / 0.3));
+
+    /* Spacing Scale */
+    --space-page-x: 1rem;          /* px-4 */
+    --space-section-y: 1.5rem;     /* py-6 */
   }
 
   body {
@@ -18,7 +36,10 @@
 
   /* Blue-tinted cards */
   .card {
-    @apply bg-white/80 backdrop-blur-sm rounded-xl border border-blue-100 shadow-sm;
+    @apply bg-white/80 backdrop-blur-sm;
+    border-radius: var(--card-radius);
+    border: var(--card-border);
+    box-shadow: var(--card-shadow);
   }
 }
 

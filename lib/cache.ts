@@ -1,8 +1,14 @@
+/**
+ * 🗑️ SAFE TO REMOVE — Verified unused as of 2026-05-27 audit.
+ * This file is dead code. No imports reference it.
+ * Awaiting approval before deletion.
+ */
+
 import { unstable_cache } from 'next/cache';
 
 /**
  * Cache Utilities
- * 
+ *
  * Provides caching helpers for dashboard data with configurable TTL.
  * Uses Next.js unstable_cache for server-side caching.
  * 

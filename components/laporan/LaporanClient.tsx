@@ -19,13 +19,12 @@ import {
 import type { LaporanData, RoomDetail, DateFilter, ExpenseDetail } from '@/app/(dashboard)/laporan/actions';
 import ExpenseCategoryModal from './ExpenseCategoryModal';
 import { formatDuration } from '@/lib/utils/formatDuration';
+import { formatCurrency } from '@/lib/utils/format';
 
 interface LaporanClientProps {
     data: LaporanData;
     highOccupancy: { location: string; totalRooms: number; usedRoomDays: number; totalPossibleRoomDays: number; occupancyRate: number }[];
 }
-
-const fmt = (v: number) => `Rp ${v.toLocaleString('id-ID')}`;
 
 const FILTERS: { value: DateFilter; label: string }[] = [
     { value: 'today', label: 'Hari Ini' },
@@ -109,7 +108,7 @@ export default function LaporanClient({ data, highOccupancy }: LaporanClientProp
                         <div className="p-2 sm:p-2.5 rounded-lg bg-green-50 flex-shrink-0"><Wallet className="w-4 h-4 sm:w-5 sm:h-5 text-green-600" /></div>
                         <div className="min-w-0">
                             <p className="text-xs sm:text-sm text-gray-500">Pendapatan</p>
-                            <p className="text-base sm:text-xl font-bold text-gray-900 truncate">{fmt(data.totalRevenue)}</p>
+                            <p className="text-base sm:text-xl font-bold text-gray-900 truncate">{formatCurrency(data.totalRevenue)}</p>
                             <p className="text-[10px] sm:text-xs text-gray-400">{data.totalTransactions} transaksi</p>
                         </div>
                     </div>
@@ -117,8 +116,8 @@ export default function LaporanClient({ data, highOccupancy }: LaporanClientProp
 
                 <div className="bg-white rounded-xl border border-gray-200 p-3 sm:p-5 shadow-sm flex flex-col">
                     <p className="text-xs sm:text-sm text-gray-500 mb-1">Cash / Transfer</p>
-                    <p className="text-xs sm:text-sm font-bold text-gray-900 truncate">{fmt(data.totalCash)}</p>
-                    <p className="text-xs sm:text-sm font-bold text-blue-600 truncate">{fmt(data.totalTransfer)}</p>
+                    <p className="text-xs sm:text-sm font-bold text-gray-900 truncate">{formatCurrency(data.totalCash)}</p>
+                    <p className="text-xs sm:text-sm font-bold text-blue-600 truncate">{formatCurrency(data.totalTransfer)}</p>
                 </div>
 
                 <div className="bg-white rounded-xl border border-gray-200 p-3 sm:p-5 shadow-sm flex flex-col">
@@ -126,7 +125,7 @@ export default function LaporanClient({ data, highOccupancy }: LaporanClientProp
                         <div className="p-2 sm:p-2.5 rounded-lg bg-red-50 flex-shrink-0"><Receipt className="w-4 h-4 sm:w-5 sm:h-5 text-red-600" /></div>
                         <div className="min-w-0">
                             <p className="text-xs sm:text-sm text-gray-500">Pengeluaran</p>
-                            <p className="text-base sm:text-xl font-bold text-red-600 truncate">{fmt(data.totalExpenses)}</p>
+                            <p className="text-base sm:text-xl font-bold text-red-600 truncate">{formatCurrency(data.totalExpenses)}</p>
                         </div>
                     </div>
                 </div>
@@ -158,7 +157,7 @@ export default function LaporanClient({ data, highOccupancy }: LaporanClientProp
                         <div className="flex items-center gap-1.5 mt-1 flex-wrap">
                             {expenseGrowthPct === null ? (
                                 <span className="text-xs text-gray-500 truncate">
-                                    Pengeluaran: {data.totalExpenses > 0 ? fmt(data.totalExpenses) : '–'}
+                                    Pengeluaran: {data.totalExpenses > 0 ? formatCurrency(data.totalExpenses) : '–'}
                                 </span>
                             ) : expenseGrowthPct >= 0 ? (
                                 <>
@@ -176,7 +175,7 @@ export default function LaporanClient({ data, highOccupancy }: LaporanClientProp
                         </div>
 
                         <p className="text-[10px] sm:text-[11px] text-gray-400 mt-auto pt-2 hidden sm:block">
-                            Selisih: {revenueDelta >= 0 ? '+' : ''}{fmt(revenueDelta)} pendapatan, {expenseDelta >= 0 ? '+' : ''}{fmt(expenseDelta)} pengeluaran
+                            Selisih: {revenueDelta >= 0 ? '+' : ''}{formatCurrency(revenueDelta)} pendapatan, {expenseDelta >= 0 ? '+' : ''}{formatCurrency(expenseDelta)} pengeluaran
                         </p>
                     </div>
                 )}
@@ -189,12 +188,12 @@ export default function LaporanClient({ data, highOccupancy }: LaporanClientProp
                     <div className="grid grid-cols-2 gap-3 sm:gap-4">
                         <div className="bg-green-50 rounded-lg p-3 text-center">
                             <p className="text-xs text-green-700">Lunas</p>
-                            <p className="text-base sm:text-lg font-bold text-green-700 truncate">{fmt(data.tagihan.paid)}</p>
+                            <p className="text-base sm:text-lg font-bold text-green-700 truncate">{formatCurrency(data.tagihan.paid)}</p>
                             <p className="text-xs text-green-600">{data.tagihan.paidCount} tagihan</p>
                         </div>
                         <div className="bg-red-50 rounded-lg p-3 text-center">
                             <p className="text-xs text-red-700">Belum Bayar</p>
-                            <p className="text-base sm:text-lg font-bold text-red-700 truncate">{fmt(data.tagihan.unpaid)}</p>
+                            <p className="text-base sm:text-lg font-bold text-red-700 truncate">{formatCurrency(data.tagihan.unpaid)}</p>
                             <p className="text-xs text-red-600">{data.tagihan.unpaidCount} tagihan</p>
                         </div>
                     </div>
@@ -204,12 +203,12 @@ export default function LaporanClient({ data, highOccupancy }: LaporanClientProp
                     <div className="grid grid-cols-2 gap-3 sm:gap-4">
                         <div className="bg-green-50 rounded-lg p-3 text-center">
                             <p className="text-xs text-green-700">Sudah Dibayar</p>
-                            <p className="text-base sm:text-lg font-bold text-green-700 truncate">{fmt(data.feeMarketing.totalPaid)}</p>
+                            <p className="text-base sm:text-lg font-bold text-green-700 truncate">{formatCurrency(data.feeMarketing.totalPaid)}</p>
                             <p className="text-xs text-green-600">{data.feeMarketing.paidCount} item</p>
                         </div>
                         <div className="bg-orange-50 rounded-lg p-3 text-center">
                             <p className="text-xs text-orange-700">Belum Dibayar</p>
-                            <p className="text-base sm:text-lg font-bold text-orange-700 truncate">{fmt(data.feeMarketing.totalUnpaid)}</p>
+                            <p className="text-base sm:text-lg font-bold text-orange-700 truncate">{formatCurrency(data.feeMarketing.totalUnpaid)}</p>
                         </div>
                     </div>
                 </div>
@@ -233,7 +232,7 @@ export default function LaporanClient({ data, highOccupancy }: LaporanClientProp
                                     <span className="text-xs sm:text-sm text-gray-700 group-hover:text-blue-700 truncate">{e.category}</span>
                                     <span className="text-[10px] sm:text-xs text-gray-400 flex-shrink-0">({e.count}x)</span>
                                 </div>
-                                <span className="text-xs sm:text-sm font-semibold text-gray-900 flex-shrink-0">{fmt(e.total)}</span>
+                                <span className="text-xs sm:text-sm font-semibold text-gray-900 flex-shrink-0">{formatCurrency(e.total)}</span>
                             </button>
                         ))}
                     </div>
@@ -268,7 +267,7 @@ export default function LaporanClient({ data, highOccupancy }: LaporanClientProp
                                 <span className="text-xs sm:text-sm text-gray-500 flex-shrink-0">{loc.totalRooms} kamar</span>
                             </div>
                             <div className="bg-slate-50 rounded-lg px-3 sm:px-4 py-2 mb-3 sm:mb-4 text-xs sm:text-sm break-words">
-                                Transaksi: <strong>{loc.transactions}</strong> · Pendapatan: <strong className="text-green-700">{fmt(loc.revenue)}</strong>
+                                Transaksi: <strong>{loc.transactions}</strong> · Pendapatan: <strong className="text-green-700">{formatCurrency(loc.revenue)}</strong>
                             </div>
 
                             {/* Expenses per location */}
@@ -278,7 +277,7 @@ export default function LaporanClient({ data, highOccupancy }: LaporanClientProp
                                     <div className="flex flex-wrap gap-2 sm:gap-3">
                                         {data.expensesPerLocation[loc.name].map(exp => (
                                             <span key={exp.category} className="text-xs text-gray-700">
-                                                {exp.category}: <strong className="text-red-700">{fmt(exp.total)}</strong> ({exp.count}x)
+                                                {exp.category}: <strong className="text-red-700">{formatCurrency(exp.total)}</strong> ({exp.count}x)
                                             </span>
                                         ))}
                                     </div>
@@ -295,7 +294,7 @@ export default function LaporanClient({ data, highOccupancy }: LaporanClientProp
                                     >
                                         <p className="font-bold text-gray-900 text-base sm:text-lg truncate">{room.roomNumber}</p>
                                         <p className="text-xs sm:text-sm text-gray-600">Digunakan: <strong>{room.transactions}x</strong></p>
-                                        <p className="text-xs sm:text-sm text-green-700 truncate">Pendapatan: <strong>{fmt(room.revenue)}</strong></p>
+                                        <p className="text-xs sm:text-sm text-green-700 truncate">Pendapatan: <strong>{formatCurrency(room.revenue)}</strong></p>
                                     </button>
                                 ))}
                             </div>
@@ -353,7 +352,7 @@ export default function LaporanClient({ data, highOccupancy }: LaporanClientProp
                                 <>
                                     <div className="bg-slate-50 rounded-lg px-4 py-2 text-sm">
                                         Transaksi: <strong>{roomDetails.length}</strong> · Pendapatan: <strong className="text-green-700">
-                                            {fmt(roomDetails.reduce((s, d) => s + d.cashAmount + d.transferAmount, 0))}
+                                            {formatCurrency(roomDetails.reduce((s, d) => s + d.cashAmount + d.transferAmount, 0))}
                                         </strong>
                                     </div>
 
@@ -376,11 +375,11 @@ export default function LaporanClient({ data, highOccupancy }: LaporanClientProp
                                                         .sort((a, b) => b[1].total - a[1].total)
                                                         .map(([cat, d]) => (
                                                             <div key={cat} className="text-xs text-gray-700 border-b border-red-100 pb-1 last:border-0 last:pb-0">
-                                                                <span>{cat}: <strong className="text-red-700">{fmt(d.total)}</strong> ({d.count}x)</span>
+                                                                <span>{cat}: <strong className="text-red-700">{formatCurrency(d.total)}</strong> ({d.count}x)</span>
                                                                 {d.items.map(item => (
                                                                     <div key={item.id} className="ml-2 text-[11px] text-gray-500 flex justify-between">
                                                                         <span>{new Date(item.tanggal + 'T00:00:00').toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' })}</span>
-                                                                        <span>{fmt(item.jumlah)}</span>
+                                                                        <span>{formatCurrency(item.jumlah)}</span>
                                                                     </div>
                                                                 ))}
                                                             </div>
@@ -404,7 +403,7 @@ export default function LaporanClient({ data, highOccupancy }: LaporanClientProp
                                             {detail.marketingName && (
                                                 <p className="text-sm text-gray-600">
                                                     Marketing: {detail.marketingName}
-                                                    {detail.marketingFee > 0 && <span className="text-orange-600"> · Komisi: {fmt(detail.marketingFee)}</span>}
+                                                    {detail.marketingFee > 0 && <span className="text-orange-600"> · Komisi: {formatCurrency(detail.marketingFee)}</span>}
                                                     {detail.marketingFee === 0 && <span className="text-green-600"> · Rp 0 (Tanpa komisi)</span>}
                                                 </p>
                                             )}
@@ -416,13 +415,13 @@ export default function LaporanClient({ data, highOccupancy }: LaporanClientProp
                                             {/* Payment */}
                                             <div className="bg-slate-50 rounded-lg p-3 mt-2">
                                                 <p className="text-xs text-gray-500 uppercase font-semibold mb-1">Pembayaran</p>
-                                                {detail.cashAmount > 0 && <p className="text-sm">Tunai: <strong>{fmt(detail.cashAmount)}</strong></p>}
+                                                {detail.cashAmount > 0 && <p className="text-sm">Tunai: <strong>{formatCurrency(detail.cashAmount)}</strong></p>}
                                                 {detail.transferAmount > 0 && (
-                                                    <p className="text-sm">Transfer: <strong className="text-blue-700">{fmt(detail.transferAmount)}</strong>
+                                                    <p className="text-sm">Transfer: <strong className="text-blue-700">{formatCurrency(detail.transferAmount)}</strong>
                                                         {detail.transferTo && <span className="text-gray-500"> → {detail.transferTo}</span>}
                                                     </p>
                                                 )}
-                                                <p className="text-sm font-bold mt-1">Total: {fmt(detail.cashAmount + detail.transferAmount)}</p>
+                                                <p className="text-sm font-bold mt-1">Total: {formatCurrency(detail.cashAmount + detail.transferAmount)}</p>
                                             </div>
                                             {/* Input by */}
                                             {detail.inputBy && (

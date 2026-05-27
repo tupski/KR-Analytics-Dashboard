@@ -1,8 +1,14 @@
+/**
+ * 🗑️ SAFE TO REMOVE — Verified unused as of 2026-05-27 audit.
+ * This file is dead code. No imports reference it.
+ * Awaiting approval before deletion.
+ */
+
 'use client';
 
 /**
  * DateRangeComparison - Reusable comparison mode component
- * 
+ *
  * Features:
  * - Toggle comparison mode on/off
  * - Two date range selectors (primary vs comparison)
@@ -166,11 +172,10 @@ export default function DateRangeComparison({ value, onChange, className = '' }:
             <div className="flex items-center justify-between">
                 <button
                     onClick={handleToggle}
-                    className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
-                        value.enabled
+                    className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${value.enabled
                             ? 'bg-blue-600 text-white shadow-md hover:bg-blue-700'
                             : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-50'
-                    }`}
+                        }`}
                 >
                     <ArrowLeftRight className="w-4 h-4" />
                     <span>{value.enabled ? 'Mode Bandingkan Aktif' : 'Bandingkan Periode'}</span>

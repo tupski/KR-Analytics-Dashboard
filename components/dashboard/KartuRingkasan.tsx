@@ -2,13 +2,14 @@
 
 import React from 'react';
 import Link from 'next/link';
+import { formatCurrency, formatPercentage } from '@/lib/utils/format';
 
 /**
  * KartuRingkasan (KPI Card) Component
- * 
+ *
  * Displays a single KPI metric with value, label, icon, and optional trend indicator.
  * Supports loading states, error states, and Indonesian locale formatting.
- * 
+ *
  */
 
 interface TrendData {
@@ -25,25 +26,6 @@ interface KartuRingkasanProps {
     isLoading?: boolean;
     error?: string;
     onRetry?: () => void;
-}
-
-/**
- * Format number as Indonesian Rupiah currency
- * Format: Rp X.XXX.XXX (period as thousand separator, no decimals)
- */
-function formatCurrency(value: number): string {
-    return `Rp ${value.toLocaleString('id-ID', {
-        minimumFractionDigits: 0,
-        maximumFractionDigits: 0,
-    })}`;
-}
-
-/**
- * Format number as percentage with 2 decimal places
- * Format: XX.XX%
- */
-function formatPercentage(value: number): string {
-    return `${value.toFixed(2)}%`;
 }
 
 /**
@@ -156,5 +138,5 @@ export default function KartuRingkasan({
     return cardContent;
 }
 
-// Export helper functions for use in parent components
-export { formatCurrency, formatPercentage };
+// Re-export helper functions from shared utilities for backward compatibility
+export { formatCurrency, formatPercentage } from '@/lib/utils/format';
