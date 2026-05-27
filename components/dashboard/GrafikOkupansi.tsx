@@ -68,12 +68,16 @@ export default function GrafikOkupansi({ data, period = 30, isLoading = false }:
         );
     }
 
+    // NOTE: This component now shows TRUE daily occupancy via getDailyOccupancyTrend().
+    // A room is "occupied" on a given day if checkin_at <= end of that day AND
+    // checkout_at >= start of that day. Multi-day stays count on every day of the stay,
+    // not just the check-in date.
     return (
         <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4 sm:p-6">
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between mb-4 gap-2">
                 <div>
                     <h2 className="text-base sm:text-lg font-semibold text-gray-900">Okupansi Harian</h2>
-                    <p className="text-xs text-gray-500 mt-0.5">Persentase kamar yang terisi per hari</p>
+                    <p className="text-xs text-gray-500 mt-0.5">Kamar yang terisi berdasarkan masa inap (check-in s/d check-out)</p>
                 </div>
                 <span className="text-xs text-gray-500">{period} hari terakhir</span>
             </div>

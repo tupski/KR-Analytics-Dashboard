@@ -1,4 +1,4 @@
-import { format, subDays } from 'date-fns';
+import { format, subDays, eachDayOfInterval } from 'date-fns';
 import { createServerClient } from '@/lib/supabase/server';
 
 // ============================================================
@@ -90,20 +90,36 @@ export async function getLiveOccupancy(): Promise<LiveOccupancyResult> {
 // ============================================================
 // getDailyOccupancyTrend(days=30)
 //
-// Get daily occupancy trend over N days.
-// Groups check-ins by date and counts unique rooms per day.
+// TRUE DAILY OCCUPANCY: For each date in the range [startDate, today],
+// a room is occupied if there exists ANY transaction where:
+//   checkin_at  <= end   of that day   (23:59:59 on that date)
+//   checkout_at >= start of that day   (00:00:00 on that date)
 //
-// Mirrors fetchOccupancyData() in dashboard/actions.ts:527-590
-// (note: the original function is named "occupancy" but actually
-// computes daily check-in counts; this is preserved as occupancy trend)
+// This is fundamentally different from "daily check-in volume"
+// (which count() does below) because multi-day stays count as
+// occupied on EVERY day of the stay, not just the check-in day.
+//
+// Example: A guest checking in on Jan 1 and out on Jan 5 occupies
+// a room on Jan 1, 2, 3, 4, AND 5 — all 5 days.
+//
+// CONTRAST with getDailyCheckinVolume() below:
+//   - daily check-in volume = # of transactions whose checkin_at
+//     falls exactly on a given date (ignores stay length)
+//   - daily occupancy        = # of unique rooms occupied on a
+//     given date based on checkin/checkout overlap (counts all
+//     days of multi-day stays)
 // ============================================================
 export async function getDailyOccupancyTrend(days: number = 30): Promise<DailyOccupancyTrendPoint[]> {
     const supabase = createServerClient();
     const today = new Date();
-    const startDate = subDays(today, days);
+
+    // Build the full date range: [startDate, today] inclusive
+    const startDate = subDays(today, days - 1);
+    const allDays: Date[] = eachDayOfInterval({ start: startDate, end: today });
+    const formattedDays: string[] = allDays.map((d) => format(d, 'yyyy-MM-dd'));
 
     try {
-        // Get total rooms from nomor_kamar table
+        // Step 1: Get total room count from nomor_kamar table
         const { count: totalRooms, error: roomError } = await supabase
             .from('nomor_kamar')
             .select('id', { count: 'exact', head: true });
@@ -114,46 +130,66 @@ export async function getDailyOccupancyTrend(days: number = 30): Promise<DailyOc
         }
 
         if (!totalRooms || totalRooms === 0) {
-            return [];
+            // No rooms configured → all days have 0 occupancy
+            return formattedDays.map((date) => ({
+                date,
+                occupancyRate: 0,
+                occupiedUnits: 0,
+                totalUnits: 0,
+            }));
         }
 
-        // Get transactions in the date range
+        // Step 2: Fetch ALL transactions that could overlap the date range.
+        // We need checkout_at to determine if a stay spans across days.
+        // Query: checkin_at <= rangeEnd (23:59:59) AND checkout_at >= rangeStart (00:00:00)
+        const rangeStart = `${formattedDays[0]}T00:00:00`;
+        const rangeEnd = `${formattedDays[formattedDays.length - 1]}T23:59:59`;
+
         const { data: transactions, error: txError } = await supabase
             .from('transactions')
-            .select('room_number, apartment_location, checkin_at')
-            .gte('checkin_at', `${format(startDate, 'yyyy-MM-dd')}T00:00:00`)
-            .lte('checkin_at', `${format(today, 'yyyy-MM-dd')}T23:59:59`)
-            .order('checkin_at', { ascending: true });
+            .select('room_number, apartment_location, checkin_at, checkout_at')
+            .lte('checkin_at', rangeEnd)
+            .gte('checkout_at', rangeStart);
 
         if (txError) {
             console.error('Error fetching transactions for occupancy:', txError);
             return [];
         }
 
-        if (!transactions || transactions.length === 0) {
-            return [];
-        }
+        // Step 3: For each day in the range, count unique occupied rooms.
+        // A room is occupied on a given day if:
+        //   checkin_at  <= dayEnd   (23:59:59 on that day)
+        //   checkout_at >= dayStart (00:00:00 on that day)
+        const result: DailyOccupancyTrendPoint[] = formattedDays.map((day) => {
+            const dayStart = `${day}T00:00:00`;
+            const dayEnd = `${day}T23:59:59`;
 
-        // Group by date and count unique rooms occupied per day
-        const dailyOccupancy = new Map<string, Set<string>>();
+            const occupiedOnDay = new Set<string>();
 
-        transactions.forEach((tx: any) => {
-            const date = format(new Date(tx.checkin_at), 'yyyy-MM-dd');
-            if (!dailyOccupancy.has(date)) {
-                dailyOccupancy.set(date, new Set());
+            if (transactions) {
+                for (const tx of transactions) {
+                    const checkin = (tx as any).checkin_at as string;
+                    const checkout = (tx as any).checkout_at as string;
+
+                    // Check overlap: checkin <= dayEnd AND checkout >= dayStart
+                    if (checkin <= dayEnd && checkout >= dayStart) {
+                        occupiedOnDay.add(`${(tx as any).apartment_location}-${(tx as any).room_number}`);
+                    }
+                }
             }
-            dailyOccupancy.get(date)!.add(`${tx.apartment_location}-${tx.room_number}`);
-        });
 
-        // Convert to DailyOccupancyTrendPoint array
-        const result: DailyOccupancyTrendPoint[] = Array.from(dailyOccupancy.entries())
-            .map(([date, rooms]) => ({
-                date,
-                occupancyRate: Math.round((rooms.size / totalRooms) * 10000) / 100,
-                occupiedUnits: rooms.size,
+            const occupiedUnits = occupiedOnDay.size;
+            const occupancyRate = totalRooms > 0
+                ? Math.round((occupiedUnits / totalRooms) * 10000) / 100
+                : 0;
+
+            return {
+                date: day,
+                occupancyRate,
+                occupiedUnits,
                 totalUnits: totalRooms,
-            }))
-            .sort((a, b) => a.date.localeCompare(b.date));
+            };
+        });
 
         return result;
     } catch (error) {
