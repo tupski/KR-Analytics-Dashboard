@@ -6,6 +6,7 @@ import { getPool, closePool } from './db';
 import { getSupabaseClient } from './supabase';
 import { syncTransactions } from './sync/transactions';
 import { syncPengeluaran } from './sync/pengeluaran';
+import { syncTagihanBulanan } from './sync/tagihan-bulanan';
 import { getMetadata } from './sync/metadata';
 
 let lastSyncResult: { rowsSynced: number; rowsDeleted: number; durationMs: number } | null = null;
@@ -32,8 +33,12 @@ async function runSyncCycle() {
         const pResult = await syncPengeluaran(pool, supabase);
         console.log(`[sync] pengeluaran: ${pResult.rowsSynced} synced, ${pResult.rowsDeleted} deleted in ${pResult.durationMs}ms`);
 
-        const totalDuration = Date.now() - (Date.now() - (txResult.durationMs + pResult.durationMs));
-        console.log(`[sync] Cycle complete: total ${txResult.rowsSynced + pResult.rowsSynced} synced, ${txResult.rowsDeleted + pResult.rowsDeleted} deleted`);
+        // Sync tagihan_bulanan
+        const tbResult = await syncTagihanBulanan(pool, supabase);
+        console.log(`[sync] tagihan_bulanan: ${tbResult.rowsSynced} synced, ${tbResult.rowsDeleted} deleted in ${tbResult.durationMs}ms`);
+
+        const totalDuration = Date.now() - (Date.now() - (txResult.durationMs + pResult.durationMs + tbResult.durationMs));
+        console.log(`[sync] Cycle complete: total ${txResult.rowsSynced + pResult.rowsSynced + tbResult.rowsSynced} synced, ${txResult.rowsDeleted + pResult.rowsDeleted + tbResult.rowsDeleted} deleted`);
     } catch (error) {
         console.error('[sync] Cycle failed:', error);
     } finally {
@@ -48,6 +53,7 @@ const server = http.createServer(async (req, res) => {
             const pool = getPool();
             const txMeta = await getMetadata(pool, 'transactions');
             const pMeta = await getMetadata(pool, 'pengeluaran');
+            const tbMeta = await getMetadata(pool, 'tagihan_bulanan');
 
             res.writeHead(200, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({
@@ -70,6 +76,13 @@ const server = http.createServer(async (req, res) => {
                     syncStatus: pMeta.sync_status,
                     backfillDone: pMeta.backfill_done,
                 } : null,
+                tagihan_bulanan: tbMeta ? {
+                    lastSyncAt: tbMeta.last_sync_at,
+                    lastMaxId: tbMeta.last_max_id,
+                    rowCount: tbMeta.row_count,
+                    syncStatus: tbMeta.sync_status,
+                    backfillDone: tbMeta.backfill_done,
+                } : null,
             }));
         } catch {
             res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -81,6 +94,7 @@ const server = http.createServer(async (req, res) => {
                 lastSync: lastSyncResult,
                 transactions: null,
                 pengeluaran: null,
+                tagihan_bulanan: null,
             }));
         }
         return;
