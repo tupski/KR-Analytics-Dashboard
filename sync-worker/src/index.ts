@@ -8,6 +8,7 @@ import { syncTransactions } from './sync/transactions';
 import { syncPengeluaran } from './sync/pengeluaran';
 import { syncTagihanBulanan } from './sync/tagihan-bulanan';
 import { syncTagihanFeeLunasCombined } from './sync/tagihan-fee-lunas';
+import { syncMasterTables } from './sync/master';
 import { getMetadata } from './sync/metadata';
 
 let lastSyncResult: { rowsSynced: number; rowsDeleted: number; durationMs: number } | null = null;
@@ -43,6 +44,10 @@ async function runSyncCycle() {
         console.log(`[sync] tagihan_fee_lunas: ${flResult.parent.rowsSynced} synced, ${flResult.parent.rowsDeleted} deleted in ${flResult.parent.durationMs}ms`);
         console.log(`[sync] tagihan_fee_lunas_items: ${flResult.items.rowsSynced} synced, ${flResult.items.rowsDeleted} deleted in ${flResult.items.durationMs}ms`);
 
+        // Sync master tables (full re-scan — all 5)
+        const masterResult = await syncMasterTables(pool, supabase);
+        console.log(`[sync] master tables: ${masterResult.tables.map(t => `${t.tableName}=${t.rowsSynced}`).join(', ')}`);
+
         const totalDuration = Date.now() - (Date.now() - (txResult.durationMs + pResult.durationMs + tbResult.durationMs + flResult.parent.durationMs + flResult.items.durationMs));
         console.log(`[sync] Cycle complete: total ${txResult.rowsSynced + pResult.rowsSynced + tbResult.rowsSynced + flResult.parent.rowsSynced + flResult.items.rowsSynced} synced, ${txResult.rowsDeleted + pResult.rowsDeleted + tbResult.rowsDeleted + flResult.parent.rowsDeleted + flResult.items.rowsDeleted} deleted`);
     } catch (error) {
@@ -62,6 +67,11 @@ const server = http.createServer(async (req, res) => {
             const tbMeta = await getMetadata(pool, 'tagihan_bulanan');
             const flMeta = await getMetadata(pool, 'tagihan_fee_lunas');
             const fliMeta = await getMetadata(pool, 'tagihan_fee_lunas_items');
+            const nkMeta = await getMetadata(pool, 'nomor_kamar');
+            const laMeta = await getMetadata(pool, 'lokasi_apartemen');
+            const pcMeta = await getMetadata(pool, 'pengeluaran_categories');
+            const klMeta = await getMetadata(pool, 'karyawan_list');
+            const mlMeta = await getMetadata(pool, 'marketing_list');
 
             res.writeHead(200, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({
@@ -105,6 +115,31 @@ const server = http.createServer(async (req, res) => {
                     syncStatus: fliMeta.sync_status,
                     backfillDone: fliMeta.backfill_done,
                 } : null,
+                nomor_kamar: nkMeta ? {
+                    lastSyncAt: nkMeta.last_sync_at,
+                    rowCount: nkMeta.row_count,
+                    syncStatus: nkMeta.sync_status,
+                } : null,
+                lokasi_apartemen: laMeta ? {
+                    lastSyncAt: laMeta.last_sync_at,
+                    rowCount: laMeta.row_count,
+                    syncStatus: laMeta.sync_status,
+                } : null,
+                pengeluaran_categories: pcMeta ? {
+                    lastSyncAt: pcMeta.last_sync_at,
+                    rowCount: pcMeta.row_count,
+                    syncStatus: pcMeta.sync_status,
+                } : null,
+                karyawan_list: klMeta ? {
+                    lastSyncAt: klMeta.last_sync_at,
+                    rowCount: klMeta.row_count,
+                    syncStatus: klMeta.sync_status,
+                } : null,
+                marketing_list: mlMeta ? {
+                    lastSyncAt: mlMeta.last_sync_at,
+                    rowCount: mlMeta.row_count,
+                    syncStatus: mlMeta.sync_status,
+                } : null,
             }));
         } catch {
             res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -119,6 +154,11 @@ const server = http.createServer(async (req, res) => {
                 tagihan_bulanan: null,
                 tagihan_fee_lunas: null,
                 tagihan_fee_lunas_items: null,
+                nomor_kamar: null,
+                lokasi_apartemen: null,
+                pengeluaran_categories: null,
+                karyawan_list: null,
+                marketing_list: null,
             }));
         }
         return;
