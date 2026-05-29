@@ -8,14 +8,16 @@
         "dev": "tsx watch src/index.ts"
     },
     "dependencies": {
-        "pg": "^8.13.0",
         "@supabase/supabase-js": "^2.49.0",
-        "dotenv": "^16.4.0"
+        "dotenv": "^16.4.0",
+        "pg": "^8.13.0",
+        "ws": "^8.21.0"
     },
     "devDependencies": {
-        "typescript": "^5.7.0",
         "@types/node": "^22.0.0",
         "@types/pg": "^8.11.0",
-        "tsx": "^4.19.0"
+        "@types/ws": "^8.18.1",
+        "tsx": "^4.19.0",
+        "typescript": "^5.7.0"
     }
 }

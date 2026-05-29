@@ -213,11 +213,24 @@ async function getRevenueTrendLegacy(
             return [];
         }
 
-        const result: RevenueTrendPoint[] = (data as any[]).map((row: any) => ({
-            date: row.date || row.day || '',
-            revenue: Number(row.revenue || row.total_revenue || 0),
-            transactionCount: Number(row.transaction_count || row.count || 0),
-        }));
+        const result: RevenueTrendPoint[] = (data as any[]).map((row: any) => {
+            const rawDate = row.date || row.day || row.transaction_date;
+            let dateStr = '';
+            if (rawDate) {
+                const d = new Date(rawDate);
+                if (!isNaN(d.getTime())) {
+                    dateStr = d.toISOString().split('T')[0];
+                }
+            }
+            if (!dateStr) {
+                dateStr = new Date().toISOString().split('T')[0];
+            }
+            return {
+                date: dateStr,
+                revenue: Number(row.revenue || row.total_revenue || 0),
+                transactionCount: Number(row.transaction_count || row.count || 0),
+            };
+        });
 
         return result;
     } catch (error) {

@@ -13,12 +13,13 @@ services:
     environment:
       - NODE_ENV=production
       - TZ=Asia/Jakarta
+      - ANALYTICS_DATABASE_URL=postgresql://${LOCAL_DB_USER:-analytics_user}:${LOCAL_DB_PASSWORD:-postgres}@postgres:5432/${LOCAL_DB_NAME:-analytics_db}
     depends_on:
       postgres:
         condition: service_healthy
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/api/health"]
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/api/app-settings"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -35,7 +36,7 @@ services:
     environment:
       POSTGRES_DB: ${LOCAL_DB_NAME:-analytics_db}
       POSTGRES_USER: ${LOCAL_DB_USER:-analytics_user}
-      POSTGRES_PASSWORD: ${LOCAL_DB_PASSWORD}
+      POSTGRES_PASSWORD: ${LOCAL_DB_PASSWORD:-postgres}
     ports:
       - "127.0.0.1:${LOCAL_DB_PORT:-5433}:5432"
     restart: unless-stopped
@@ -60,7 +61,7 @@ services:
       LOCAL_DB_PORT: "5432"
       LOCAL_DB_NAME: ${LOCAL_DB_NAME:-analytics_db}
       LOCAL_DB_USER: ${LOCAL_DB_USER:-analytics_user}
-      LOCAL_DB_PASSWORD: ${LOCAL_DB_PASSWORD}
+      LOCAL_DB_PASSWORD: ${LOCAL_DB_PASSWORD:-postgres}
       SYNC_INTERVAL_MS: ${SYNC_INTERVAL_MS:-300000}
       SYNC_BATCH_SIZE: ${SYNC_BATCH_SIZE:-500}
       SYNC_LOOKBACK_DAYS: ${SYNC_LOOKBACK_DAYS:-365}
@@ -71,9 +72,9 @@ services:
         condition: service_healthy
     restart: unless-stopped
     ports:
-      - "127.0.0.1:${SYNC_WORKER_PORT:-3032}:3001"
+      - "127.0.0.1:${SYNC_WORKER_PORT:-3032}:9090"
     healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3001/health"]
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:9090/health"]
       interval: 30s
       timeout: 10s
       retries: 3
