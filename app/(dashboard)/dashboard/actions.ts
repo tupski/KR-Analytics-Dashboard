@@ -520,3 +520,22 @@ export async function fetchRevenueData(filter: RevenueFilter): Promise<RevenueDa
 export async function fetchOccupancyData(days: number = 30): Promise<OccupancyDataPoint[]> {
     return getDailyOccupancyTrend(days);
 }
+
+/**
+ * Fetch sync freshness status from the analytics DB.
+ * Returns normalized SyncFreshnessResult — never throws.
+ */
+export async function getSyncFreshness(): Promise<import('@/lib/analytics/sync-freshness').SyncFreshnessResult> {
+  const { getSyncFreshnessResult } = await import('@/lib/analytics/sync-freshness');
+  try {
+    return await getSyncFreshnessResult();
+  } catch {
+    return {
+      status: 'unavailable' as const,
+      lastSyncAt: null,
+      lastSyncAtWIB: null,
+      rowsSyncedLastRun: null,
+      errorMessage: 'Gagal mengambil status sinkronisasi',
+    };
+  }
+}
