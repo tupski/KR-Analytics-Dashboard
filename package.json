@@ -19,6 +19,7 @@
         "jspdf": "2.5.2",
         "lucide-react": "^0.344.0",
         "next": "^15.0.0",
+        "pg": "^8.21.0",
         "react": "^18.3.0",
         "react-dom": "^18.3.0",
         "recharts": "^2.10.0"
@@ -27,6 +28,7 @@
         "@testing-library/jest-dom": "^6.9.1",
         "@testing-library/react": "^14.1.2",
         "@types/node": "^20.11.0",
+        "@types/pg": "^8.20.0",
         "@types/react": "^18.2.48",
         "@types/react-dom": "^18.2.18",
         "autoprefixer": "^10.4.17",
