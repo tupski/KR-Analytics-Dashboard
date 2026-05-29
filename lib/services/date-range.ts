@@ -1,4 +1,4 @@
-import { format, subDays } from 'date-fns';
+import { format, subDays, startOfMonth, endOfMonth, isSameDay } from 'date-fns';
 import { toZonedTime } from 'date-fns-tz';
 
 // ============================================================
@@ -156,4 +156,29 @@ export function getPreviousDateRange(filter: DateFilter): DateRangeResult {
             };
         }
     }
+}
+
+// ============================================================
+// isMonthAligned(startDate, endDate)
+//
+// Phase 2B-5E-2: Month-aligned detection helper
+//
+// Returns true if the date range is month-aligned:
+// - startDate is first day of month AND endDate is last day of same month
+// - OR range spans complete calendar months
+//
+// Used to determine if we can use monthly summary analytics.
+// ============================================================
+export function isMonthAligned(startDate: Date, endDate: Date): boolean {
+    const firstOfStartMonth = startOfMonth(startDate);
+    const lastOfEndMonth = endOfMonth(endDate);
+
+    // Check if startDate is the first day of its month
+    const startsOnFirstDay = isSameDay(startDate, firstOfStartMonth);
+
+    // Check if endDate is the last day of its month
+    const endsOnLastDay = isSameDay(endDate, lastOfEndMonth);
+
+    // Both conditions must be true for month-aligned range
+    return startsOnFirstDay && endsOnLastDay;
 }

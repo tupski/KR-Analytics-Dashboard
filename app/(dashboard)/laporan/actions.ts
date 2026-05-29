@@ -1,10 +1,11 @@
 'use server';
 
 import { createServerClient } from '@/lib/supabase/server';
-import { format, subDays } from 'date-fns';
-import { getDateRange, getPreviousDateRange, type DateFilter } from '@/lib/services/date-range';
+import { format, subDays, startOfMonth, endOfMonth, parseISO } from 'date-fns';
+import { getDateRange, getPreviousDateRange, isMonthAligned, type DateFilter } from '@/lib/services/date-range';
 import { getRevenueSummary } from '@/lib/services/revenue';
 import { getExpenseSummary } from '@/lib/services/expense';
+import { getMonthlySummaries } from '@/lib/analytics/monthly';
 
 export type { DateFilter };
 
@@ -102,6 +103,7 @@ export async function fetchLaporanData(filter: DateFilter = 'today'): Promise<La
 
     // ── REVENUE (analytics-first, legacy Supabase fallback) ──
     let totalRevenue = 0, totalCash = 0, totalTransfer = 0, totalTransactions = txList.length;
+    let analyticsRevenueUsed = false;
 
     try {
         if (process.env.ANALYTICS_DATABASE_URL) {
@@ -115,13 +117,14 @@ export async function fetchLaporanData(filter: DateFilter = 'today'): Promise<La
             totalCash = revSummary.cashAmount;
             totalTransfer = revSummary.transferAmount;
             totalTransactions = revSummary.transactionCount;
+            analyticsRevenueUsed = true;
         }
     } catch (e) {
         console.warn('[laporan] Analytics revenue unavailable, falling back to Supabase:', e);
     }
 
-    // Fallback: compute from Supabase txList if analytics didn't populate
-    if (totalRevenue === 0 && totalTransactions === 0) {
+    // Fallback: compute from Supabase txList if analytics threw error
+    if (!analyticsRevenueUsed) {
         totalRevenue = txList.reduce((s, t: any) => s + (t.cash_amount || 0) + (t.transfer_amount || 0), 0);
         totalCash = txList.reduce((s, t: any) => s + (t.cash_amount || 0), 0);
         totalTransfer = txList.reduce((s, t: any) => s + (t.transfer_amount || 0), 0);
@@ -175,6 +178,7 @@ export async function fetchLaporanData(filter: DateFilter = 'today'): Promise<La
     // ── EXPENSES (analytics-first, legacy Supabase fallback) ──
     let expenses: ExpenseReport[] = [];
     let totalExpenses = 0;
+    let analyticsExpensesUsed = false;
 
     try {
         if (process.env.ANALYTICS_DATABASE_URL) {
@@ -188,13 +192,14 @@ export async function fetchLaporanData(filter: DateFilter = 'today'): Promise<La
             expenses = expSummary.byCategory
                 .map(c => ({ category: c.category, total: c.total_amount, count: c.expense_count }))
                 .sort((a, b) => b.total - a.total);
+            analyticsExpensesUsed = true;
         }
     } catch (e) {
         console.warn('[laporan] Analytics expenses unavailable, falling back to Supabase:', e);
     }
 
-    // Fallback: compute from Supabase pengeluaran if analytics didn't populate
-    if (totalExpenses === 0 && expenses.length === 0) {
+    // Fallback: compute from Supabase pengeluaran if analytics threw error
+    if (!analyticsExpensesUsed) {
         const { data: expenseData } = await supabase
             .from('pengeluaran')
             .select('category, jumlah, apartment_location, room_number')
@@ -238,41 +243,142 @@ export async function fetchLaporanData(filter: DateFilter = 'today'): Promise<La
         });
     }
 
-    // Tagihan bulanan
-    const { data: tagihanPaid } = await supabase
-        .from('tagihan_bulanan')
-        .select('amount')
-        .eq('status', 'paid');
-    const { data: tagihanUnpaid } = await supabase
-        .from('tagihan_bulanan')
-        .select('amount')
-        .eq('status', 'unpaid');
-
-    const tagihan: TagihanReport = {
-        paid: tagihanPaid?.reduce((s, t: any) => s + (t.amount || 0), 0) || 0,
-        unpaid: tagihanUnpaid?.reduce((s, t: any) => s + (t.amount || 0), 0) || 0,
-        paidCount: tagihanPaid?.length || 0,
-        unpaidCount: tagihanUnpaid?.length || 0,
-    };
-
-    // Fee Marketing - paid vs unpaid (unpaid = transactions with marketing_fee > 0 that don't have a matching fee_lunas_item)
-    const { data: feePaid } = await supabase
-        .from('tagihan_fee_lunas_items')
-        .select('fee_amount');
-    const totalFeePaid = feePaid?.reduce((s, f: any) => s + (f.fee_amount || 0), 0) || 0;
-
-    const totalFeeAll = txList.reduce((s, t: any) => s + (t.marketing_fee || 0), 0);
-
-    const feeMarketing: FeeMarketingReport = {
-        totalPaid: totalFeePaid,
-        totalUnpaid: Math.max(0, totalFeeAll - totalFeePaid),
-        paidCount: feePaid?.length || 0,
+    // ── TAGIHAN BULANAN (analytics-first for month-aligned, legacy Supabase fallback) ──
+    let tagihan: TagihanReport = {
+        paid: 0,
+        unpaid: 0,
+        paidCount: 0,
         unpaidCount: 0,
     };
+
+    // Check if date range is month-aligned
+    const startDateObj = parseISO(start.split('T')[0]);
+    const endDateObj = parseISO(end.split('T')[0]);
+    const isMonthAlignedRange = isMonthAligned(startDateObj, endDateObj);
+
+    if (isMonthAlignedRange && process.env.ANALYTICS_DATABASE_URL) {
+        try {
+            // Extract year/month range
+            const startYear = startDateObj.getFullYear();
+            const startMonth = startDateObj.getMonth() + 1; // 1-based
+            const endYear = endDateObj.getFullYear();
+            const endMonth = endDateObj.getMonth() + 1; // 1-based
+
+            const monthlySummaries = await getMonthlySummaries(startYear, startMonth, endYear, endMonth);
+
+            // Aggregate across all locations and months
+            for (const summary of monthlySummaries) {
+                tagihan.paid += summary.paid_bills_amount;
+                tagihan.unpaid += summary.unpaid_bills_amount;
+                tagihan.paidCount += summary.paid_bills_count;
+                tagihan.unpaidCount += summary.unpaid_bills_count;
+            }
+        } catch (e) {
+            console.warn('[laporan] Analytics bills unavailable, falling back to Supabase:', e);
+            // Fall through to legacy path
+            const { data: tagihanPaid } = await supabase
+                .from('tagihan_bulanan')
+                .select('amount')
+                .eq('status', 'paid');
+            const { data: tagihanUnpaid } = await supabase
+                .from('tagihan_bulanan')
+                .select('amount')
+                .eq('status', 'unpaid');
+
+            tagihan = {
+                paid: tagihanPaid?.reduce((s, t: any) => s + (t.amount || 0), 0) || 0,
+                unpaid: tagihanUnpaid?.reduce((s, t: any) => s + (t.amount || 0), 0) || 0,
+                paidCount: tagihanPaid?.length || 0,
+                unpaidCount: tagihanUnpaid?.length || 0,
+            };
+        }
+    } else {
+        // Legacy Supabase path for non-month-aligned ranges
+        const { data: tagihanPaid } = await supabase
+            .from('tagihan_bulanan')
+            .select('amount')
+            .eq('status', 'paid');
+        const { data: tagihanUnpaid } = await supabase
+            .from('tagihan_bulanan')
+            .select('amount')
+            .eq('status', 'unpaid');
+
+        tagihan = {
+            paid: tagihanPaid?.reduce((s, t: any) => s + (t.amount || 0), 0) || 0,
+            unpaid: tagihanUnpaid?.reduce((s, t: any) => s + (t.amount || 0), 0) || 0,
+            paidCount: tagihanPaid?.length || 0,
+            unpaidCount: tagihanUnpaid?.length || 0,
+        };
+    }
+
+    // ── FEE MARKETING (analytics-first for month-aligned, legacy Supabase fallback) ──
+    let feeMarketing: FeeMarketingReport = {
+        totalPaid: 0,
+        totalUnpaid: 0,
+        paidCount: 0,
+        unpaidCount: 0,
+    };
+
+    if (isMonthAlignedRange && process.env.ANALYTICS_DATABASE_URL) {
+        try {
+            // Extract year/month range
+            const startYear = startDateObj.getFullYear();
+            const startMonth = startDateObj.getMonth() + 1; // 1-based
+            const endYear = endDateObj.getFullYear();
+            const endMonth = endDateObj.getMonth() + 1; // 1-based
+
+            const monthlySummaries = await getMonthlySummaries(startYear, startMonth, endYear, endMonth);
+
+            // Aggregate across all locations and months
+            let totalFees = 0;
+            let paidFees = 0;
+            for (const summary of monthlySummaries) {
+                totalFees += summary.total_marketing_fees;
+                paidFees += summary.paid_fees_amount;
+            }
+
+            feeMarketing = {
+                totalPaid: paidFees,
+                totalUnpaid: Math.max(0, totalFees - paidFees),
+                paidCount: 0, // Monthly summary doesn't track paid fee count
+                unpaidCount: 0,
+            };
+        } catch (e) {
+            console.warn('[laporan] Analytics marketing fees unavailable, falling back to Supabase:', e);
+            // Fall through to legacy path
+            const { data: feePaid } = await supabase
+                .from('tagihan_fee_lunas_items')
+                .select('fee_amount');
+            const totalFeePaid = feePaid?.reduce((s, f: any) => s + (f.fee_amount || 0), 0) || 0;
+            const totalFeeAll = txList.reduce((s, t: any) => s + (t.marketing_fee || 0), 0);
+
+            feeMarketing = {
+                totalPaid: totalFeePaid,
+                totalUnpaid: Math.max(0, totalFeeAll - totalFeePaid),
+                paidCount: feePaid?.length || 0,
+                unpaidCount: 0,
+            };
+        }
+    } else {
+        // Legacy Supabase path for non-month-aligned ranges
+        const { data: feePaid } = await supabase
+            .from('tagihan_fee_lunas_items')
+            .select('fee_amount');
+        const totalFeePaid = feePaid?.reduce((s, f: any) => s + (f.fee_amount || 0), 0) || 0;
+        const totalFeeAll = txList.reduce((s, t: any) => s + (t.marketing_fee || 0), 0);
+
+        feeMarketing = {
+            totalPaid: totalFeePaid,
+            totalUnpaid: Math.max(0, totalFeeAll - totalFeePaid),
+            paidCount: feePaid?.length || 0,
+            unpaidCount: 0,
+        };
+    }
 
     // ── COMPARISON (analytics-first, legacy Supabase fallback) ──
     const prev = getPreviousDateRange(filter);
     let prevRevenue = 0, prevTransactions = 0, prevExpenses = 0;
+    let analyticsComparisonUsed = false;
 
     try {
         if (process.env.ANALYTICS_DATABASE_URL) {
@@ -287,13 +393,14 @@ export async function fetchLaporanData(filter: DateFilter = 'today'): Promise<La
 
             const prevExpSummary = await getExpenseSummary(prevStartStr, prevEndStr);
             prevExpenses = prevExpSummary.totalAmount;
+            analyticsComparisonUsed = true;
         }
     } catch (e) {
         console.warn('[laporan] Analytics comparison unavailable, falling back to Supabase:', e);
     }
 
-    // Fallback: compute from Supabase if analytics didn't populate
-    if (prevRevenue === 0 && prevTransactions === 0 && prevExpenses === 0) {
+    // Fallback: compute from Supabase if analytics threw error
+    if (!analyticsComparisonUsed) {
         const [prevTxResult, prevExpResult] = await Promise.all([
             supabase
                 .from('transactions')
