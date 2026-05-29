@@ -1,0 +1,10 @@
+node_modules
+.git
+.gitignore
+.next
+*.md
+docs/
+scripts/
+sync-worker/
+supabase-schema/
+types/

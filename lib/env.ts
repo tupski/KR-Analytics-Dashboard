@@ -40,6 +40,13 @@ export function validateServerEnv(): void {
         missing.push('SUPABASE_SERVICE_ROLE_KEY');
     }
 
+    // ANALYTICS_DATABASE_URL is optional — analytics has fallback
+    if (!process.env.ANALYTICS_DATABASE_URL) {
+        console.warn(
+            '[env] ANALYTICS_DATABASE_URL not set — analytics will use fallback data'
+        );
+    }
+
     if (missing.length > 0) {
         throw new Error(
             `Missing required server environment variables: ${missing.join(', ')}\n` +
