@@ -3,6 +3,7 @@
 import { createServerClient } from '@/lib/supabase/server';
 import { getHotelDayRange } from '@/lib/services/date-range';
 import { getLiveOccupancy, getDailyOccupancyTrend } from '@/lib/services/occupancy';
+import { getRevenueTrend } from '@/lib/services/revenue';
 import { format, subDays, subWeeks, subMonths, subYears, startOfWeek, startOfMonth, startOfYear } from 'date-fns';
 import { id as idLocale } from 'date-fns/locale';
 import { toZonedTime } from 'date-fns-tz';
@@ -399,22 +400,12 @@ function aggregateRevenueData(
     }
 }
 
-/**
- * Fetch revenue trend data based on selected time filter
- * 
- * Calculates date ranges and aggregates data by filter type.
- * 
- * @param filter Time period filter: 'daily' | 'weekly' | 'monthly' | 'yearly'
- * @returns Promise<RevenueDataPoint[]> Array of revenue data points
- * @throws Error if data fetching fails
- * 
- */
-export async function fetchRevenueData(filter: RevenueFilter): Promise<RevenueDataPoint[]> {
+/** Legacy Supabase-only implementation (kept as fallback). */
+async function fetchRevenueDataLegacy(filter: RevenueFilter): Promise<RevenueDataPoint[]> {
     const supabase = createServerClient();
     const today = new Date();
     let startDate: Date;
 
-    // Calculate date range based on filter
     switch (filter) {
         case 'daily':
             startDate = subDays(today, 30);
@@ -450,14 +441,68 @@ export async function fetchRevenueData(filter: RevenueFilter): Promise<RevenueDa
             return [];
         }
 
-        // Aggregate data based on filter
-        const aggregatedData = aggregateRevenueData(data, filter);
-
-        return aggregatedData;
+        return aggregateRevenueData(data, filter);
     } catch (error) {
-        console.error('Error in fetchRevenueData:', error);
+        console.error('Error in fetchRevenueDataLegacy:', error);
         throw new Error('Failed to fetch revenue data');
     }
+}
+
+/**
+ * Fetch revenue trend data based on selected time filter.
+ *
+ * Migrated (Phase 2B-5D): calls getRevenueTrend() from revenue service
+ * (analytics DB first, Supabase RPC fallback). Return shape is IDENTICAL
+ * to the legacy version so no component changes needed.
+ *
+ * @param filter Time period filter: 'daily' | 'weekly' | 'monthly' | 'yearly'
+ * @returns Promise<RevenueDataPoint[]> Array of revenue data points
+ */
+export async function fetchRevenueData(filter: RevenueFilter): Promise<RevenueDataPoint[]> {
+    const today = new Date();
+    let startDate: Date;
+
+    switch (filter) {
+        case 'daily':
+            startDate = subDays(today, 30);
+            break;
+        case 'weekly':
+            startDate = subWeeks(today, 12);
+            break;
+        case 'monthly':
+            startDate = subMonths(today, 12);
+            break;
+        case 'yearly':
+            startDate = subYears(today, 5);
+            break;
+        default:
+            startDate = subDays(today, 30);
+    }
+
+    try {
+        const trendPoints = await getRevenueTrend(
+            format(startDate, 'yyyy-MM-dd'),
+            format(today, 'yyyy-MM-dd'),
+        );
+
+        if (!trendPoints || trendPoints.length === 0) {
+            return [];
+        }
+
+        // Map getRevenueTrend() output {date, revenue, transactionCount}
+        // to aggregateRevenueData() expected shape {transaction_date, total_revenue, transaction_count}
+        const mapped = trendPoints.map((p) => ({
+            transaction_date: p.date,
+            total_revenue: p.revenue,
+            transaction_count: p.transactionCount,
+        }));
+
+        return aggregateRevenueData(mapped, filter);
+    } catch (error) {
+        console.warn('[dashboard] Revenue service unavailable, falling back to legacy:', error);
+    }
+
+    return fetchRevenueDataLegacy(filter);
 }
 
 /**
