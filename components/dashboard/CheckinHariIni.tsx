@@ -3,7 +3,7 @@
 import React from 'react';
 import Link from 'next/link';
 import { ArrowDown } from 'lucide-react';
-import { CheckinItem } from '@/types';
+import { CheckinItem } from '@/types/dashboard';
 
 interface CheckinHariIniProps {
     items: CheckinItem[];

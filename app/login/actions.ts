@@ -1,6 +1,7 @@
 'use server';
 
 import { createAuthClient } from '@/lib/supabase/auth';
+import { createServerClient } from '@/lib/supabase/server';
 
 export async function loginAction(formData: FormData) {
     const email = formData.get('email') as string;
@@ -27,7 +28,6 @@ export async function loginAction(formData: FormData) {
     }
 
     // Check role using service role client
-    const { createServerClient } = await import('@/lib/supabase/server');
     const adminSupabase = createServerClient();
 
     const { data: roleData } = await adminSupabase
