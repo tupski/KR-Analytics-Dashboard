@@ -120,7 +120,12 @@ async function runTests() {
         assert('getDailyRevenue() — returns array', Array.isArray(daily));
         if (daily.length > 0) {
             assert('getDailyRevenue() — has date_wib', !!daily[0].date_wib);
-            assert('getDailyRevenue() — has total_revenue', typeof daily[0].total_revenue === 'number' || typeof daily[0].total_revenue === 'string');
+            assert('getDailyRevenue() — total_revenue is number', typeof daily[0].total_revenue === 'number');
+            assert('getDailyRevenue() — cash_revenue is number', typeof daily[0].cash_revenue === 'number');
+            assert('getDailyRevenue() — transfer_revenue is number', typeof daily[0].transfer_revenue === 'number');
+            assert('getDailyRevenue() — transaction_count is number', typeof daily[0].transaction_count === 'number');
+            assert('getDailyRevenue() — avg_revenue_per_tx is number', typeof daily[0].avg_revenue_per_tx === 'number');
+            assert('getDailyRevenue() — unique_rooms is number', typeof daily[0].unique_rooms === 'number');
             console.log(`     → ${daily.length} rows, sample: ${daily[0].date_wib} | ${daily[0].apartment_location} | ${fmt(daily[0].total_revenue)}`);
         } else {
             console.log('     ⚠️  No daily revenue data (expected if DB empty)');
@@ -132,8 +137,12 @@ async function runTests() {
     try {
         const summary = await getRevenueSummary();
         assert('getRevenueSummary() — returns object', typeof summary === 'object');
-        assert('getRevenueSummary() — has totalRevenue', typeof summary.totalRevenue === 'number');
-        assert('getRevenueSummary() — has averagePerDay', typeof summary.averagePerDay === 'number');
+        assert('getRevenueSummary() — totalRevenue is number', typeof summary.totalRevenue === 'number');
+        assert('getRevenueSummary() — totalCash is number', typeof summary.totalCash === 'number');
+        assert('getRevenueSummary() — totalTransfer is number', typeof summary.totalTransfer === 'number');
+        assert('getRevenueSummary() — totalTransactions is number', typeof summary.totalTransactions === 'number');
+        assert('getRevenueSummary() — averagePerDay is number', typeof summary.averagePerDay === 'number');
+        assert('getRevenueSummary() — averagePerTransaction is number', typeof summary.averagePerTransaction === 'number');
         console.log(`     → total: ${fmt(summary.totalRevenue)} | avg/day: ${fmt(summary.averagePerDay)} | avg/tx: ${fmt(summary.averagePerTransaction)}`);
 
         // Cross-check: direct SQL
@@ -153,6 +162,8 @@ async function runTests() {
         const byLoc = await getRevenueByLocation();
         assert('getRevenueByLocation() — returns array', Array.isArray(byLoc));
         if (byLoc.length > 0) {
+            assert('getRevenueByLocation() — total_revenue is number', typeof byLoc[0].total_revenue === 'number');
+            assert('getRevenueByLocation() — transaction_count is number', typeof byLoc[0].transaction_count === 'number');
             console.log(`     → ${byLoc.length} locations, top: ${byLoc[0].apartment_location} | ${fmt(byLoc[0].total_revenue)}`);
         }
     } catch (e: any) {
@@ -179,6 +190,8 @@ async function runTests() {
         assert('getExpenses() — returns array', Array.isArray(exp));
         if (exp.length > 0) {
             assert('getExpenses() — has category', !!exp[0].category);
+            assert('getExpenses() — total_amount is number', typeof exp[0].total_amount === 'number');
+            assert('getExpenses() — expense_count is number', typeof exp[0].expense_count === 'number');
             console.log(`     → ${exp.length} rows, sample: ${exp[0].date_wib} | ${exp[0].category} | ${fmt(exp[0].total_amount)}`);
         } else {
             console.log('     ⚠️  No expense data');
@@ -189,9 +202,18 @@ async function runTests() {
 
     try {
         const es = await getExpenseSummary();
-        assert('getExpenseSummary() — has totalAmount', typeof es.totalAmount === 'number');
+        assert('getExpenseSummary() — totalAmount is number', typeof es.totalAmount === 'number');
+        assert('getExpenseSummary() — totalExpenses is number', typeof es.totalExpenses === 'number');
         assert('getExpenseSummary() — has byCategory', Array.isArray(es.byCategory));
         assert('getExpenseSummary() — has byLocation', Array.isArray(es.byLocation));
+        if (es.byCategory.length > 0) {
+            assert('getExpenseSummary() — category total_amount is number', typeof es.byCategory[0].total_amount === 'number');
+            assert('getExpenseSummary() — category expense_count is number', typeof es.byCategory[0].expense_count === 'number');
+        }
+        if (es.byLocation.length > 0) {
+            assert('getExpenseSummary() — location total_amount is number', typeof es.byLocation[0].total_amount === 'number');
+            assert('getExpenseSummary() — location expense_count is number', typeof es.byLocation[0].expense_count === 'number');
+        }
         console.log(`     → total: ${fmt(es.totalAmount)} | categories: ${es.byCategory.length} | locations: ${es.byLocation.length}`);
     } catch (e: any) {
         assert('getExpenseSummary()', false, e.message);
@@ -207,7 +229,9 @@ async function runTests() {
         assert('getMonthlySummaries() — returns array', Array.isArray(ms));
         if (ms.length > 0) {
             assert('getMonthlySummaries() — has year', typeof ms[0].year === 'number');
-            assert('getMonthlySummaries() — has net_profit', typeof ms[0].net_profit === 'number' || typeof ms[0].net_profit === 'string');
+            assert('getMonthlySummaries() — total_revenue is number', typeof ms[0].total_revenue === 'number');
+            assert('getMonthlySummaries() — total_expenses is number', typeof ms[0].total_expenses === 'number');
+            assert('getMonthlySummaries() — net_profit is number', typeof ms[0].net_profit === 'number');
             console.log(`     → ${ms.length} rows, sample: ${ms[0].year}-${String(ms[0].month).padStart(2, '0')} | ${ms[0].apartment_location} | rev:${fmt(ms[0].total_revenue)} | exp:${fmt(ms[0].total_expenses)} | profit:${fmt(ms[0].net_profit)}`);
         } else {
             console.log('     ⚠️  No monthly data');
@@ -221,7 +245,12 @@ async function runTests() {
         assert('getMonthlyComparison() — returns array', Array.isArray(mc));
         if (mc.length > 0) {
             assert('getMonthlyComparison() — has yearMonth', !!mc[0].yearMonth);
-            assert('getMonthlyComparison() — has revenue/expenses/netProfit', (typeof mc[0].revenue === 'number' || typeof mc[0].revenue === 'string') && (typeof mc[0].expenses === 'number' || typeof mc[0].expenses === 'string') && (typeof mc[0].netProfit === 'number' || typeof mc[0].netProfit === 'string'));
+            assert('getMonthlyComparison() — revenue is number', typeof mc[0].revenue === 'number');
+            assert('getMonthlyComparison() — expenses is number', typeof mc[0].expenses === 'number');
+            assert('getMonthlyComparison() — netProfit is number', typeof mc[0].netProfit === 'number');
+            assert('getMonthlyComparison() — transactions is number', typeof mc[0].transactions === 'number');
+            assert('getMonthlyComparison() — paidBills is number', typeof mc[0].paidBills === 'number');
+            assert('getMonthlyComparison() — unpaidBills is number', typeof mc[0].unpaidBills === 'number');
             console.log(`     → ${mc.length} months, sample: ${mc[0].yearMonth} | rev:${fmt(mc[0].revenue)} | exp:${fmt(mc[0].expenses)} | profit:${fmt(mc[0].netProfit)}`);
         } else {
             console.log('     ⚠️  No monthly comparison data');
@@ -252,6 +281,9 @@ async function runTests() {
         const occRate = await getOccupancyRate();
         assert('getOccupancyRate() — returns array', Array.isArray(occRate));
         if (occRate.length > 0) {
+            assert('getOccupancyRate() — total_rooms is number', typeof occRate[0].total_rooms === 'number');
+            assert('getOccupancyRate() — occupied_rooms is number', typeof occRate[0].occupied_rooms === 'number');
+            assert('getOccupancyRate() — occupancy_rate is number', typeof occRate[0].occupancy_rate === 'number');
             assert('getOccupancyRate() — has occupancy_rate 0..1', occRate[0].occupancy_rate >= 0 && occRate[0].occupancy_rate <= 1);
             console.log(`     → ${occRate.length} rows, sample: ${occRate[0].date_wib} | ${occRate[0].apartment_location} | rate:${fmt(occRate[0].occupancy_rate, 4)} | occupied:${occRate[0].occupied_rooms}/${occRate[0].total_rooms}`);
         }
@@ -261,8 +293,9 @@ async function runTests() {
 
     try {
         const occSum = await getOccupancySummary();
-        assert('getOccupancySummary() — has averageOccupancyRate', typeof occSum.averageOccupancyRate === 'number');
-        assert('getOccupancySummary() — has totalRoomDays', typeof occSum.totalRoomDays === 'number');
+        assert('getOccupancySummary() — averageOccupancyRate is number', typeof occSum.averageOccupancyRate === 'number');
+        assert('getOccupancySummary() — totalRoomDays is number', typeof occSum.totalRoomDays === 'number');
+        assert('getOccupancySummary() — totalOccupiedRoomDays is number', typeof occSum.totalOccupiedRoomDays === 'number');
         console.log(`     → avg rate: ${fmt(occSum.averageOccupancyRate, 4)} | room-days: ${occSum.totalRoomDays} | occupied: ${occSum.totalOccupiedRoomDays}`);
     } catch (e: any) {
         assert('getOccupancySummary()', false, e.message);
@@ -281,6 +314,12 @@ async function runTests() {
             console.log(`     → ${statuses.length} tables tracked`);
             // Print summary
             for (const s of statuses) {
+                assert(`getAllSyncStatuses() — ${s.table_name} row_count is number|null`, s.row_count === null || typeof s.row_count === 'number');
+                assert(`getAllSyncStatuses() — ${s.table_name} last_max_id is number|null`, s.last_max_id === null || typeof s.last_max_id === 'number');
+                if (s.last_sync_log) {
+                    assert(`getAllSyncStatuses() — ${s.table_name} log.rows_synced is number`, typeof s.last_sync_log.rows_synced === 'number');
+                    assert(`getAllSyncStatuses() — ${s.table_name} log.rows_deleted is number`, typeof s.last_sync_log.rows_deleted === 'number');
+                }
                 console.log(`     · ${s.table_name.padEnd(30)} rows:${String(s.row_count ?? '?').padStart(8)} status:${s.sync_status ?? '?'}`);
             }
         } else {
@@ -294,7 +333,12 @@ async function runTests() {
         const single = await getSyncStatus('transactions');
         if (single) {
             assert('getSyncStatus("transactions") — found', true);
-            assert('getSyncStatus("transactions") — has row_count', single.row_count !== null);
+            assert('getSyncStatus("transactions") — row_count is number|null', single.row_count === null || typeof single.row_count === 'number');
+            assert('getSyncStatus("transactions") — last_max_id is number|null', single.last_max_id === null || typeof single.last_max_id === 'number');
+            if (single.last_sync_log) {
+                assert('getSyncStatus("transactions") — log.rows_synced is number', typeof single.last_sync_log.rows_synced === 'number');
+                assert('getSyncStatus("transactions") — log.rows_deleted is number', typeof single.last_sync_log.rows_deleted === 'number');
+            }
             console.log(`     → transactions: ${single.row_count} rows, last sync: ${single.last_sync_at ?? 'never'}`);
         } else {
             console.log('     ⚠️  getSyncStatus("transactions") returned null');
@@ -307,6 +351,9 @@ async function runTests() {
         const logs = await getRecentSyncLogs(5);
         assert('getRecentSyncLogs(5) — returns array', Array.isArray(logs));
         if (logs.length > 0) {
+            assert('getRecentSyncLogs(5) — id is number', typeof logs[0].id === 'number');
+            assert('getRecentSyncLogs(5) — rows_synced is number', typeof logs[0].rows_synced === 'number');
+            assert('getRecentSyncLogs(5) — rows_deleted is number', typeof logs[0].rows_deleted === 'number');
             console.log(`     → ${logs.length} recent log entries, latest: ${logs[0].table_name} | ${logs[0].sync_type} | ${logs[0].status}`);
         }
     } catch (e: any) {
@@ -317,6 +364,9 @@ async function runTests() {
         const tLogs = await getSyncLogsForTable('transactions', 3);
         assert('getSyncLogsForTable("transactions",3) — returns array', Array.isArray(tLogs));
         if (tLogs.length > 0) {
+            assert('getSyncLogsForTable() — id is number', typeof tLogs[0].id === 'number');
+            assert('getSyncLogsForTable() — rows_synced is number', typeof tLogs[0].rows_synced === 'number');
+            assert('getSyncLogsForTable() — rows_deleted is number', typeof tLogs[0].rows_deleted === 'number');
             console.log(`     → ${tLogs.length} log entries for transactions`);
         }
     } catch (e: any) {

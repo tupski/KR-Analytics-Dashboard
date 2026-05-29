@@ -1,4 +1,4 @@
-import { queryAnalytics } from './db';
+import { queryAnalytics, parseNumeric } from './db';
 import type { MonthlySummary, MonthlyComparison } from './types';
 
 function getDefaultYearMonth(): {
@@ -47,7 +47,7 @@ export async function getMonthlySummaries(
     const ey = endYear ?? def.endYear;
     const em = endMonth ?? def.endMonth;
 
-    return queryAnalytics<MonthlySummary>(
+    const rows = await queryAnalytics<MonthlySummary>(
         `SELECT *
      FROM analytics_monthly_summary
      WHERE (year > $1 OR (year = $1 AND month >= $2))
@@ -55,6 +55,22 @@ export async function getMonthlySummaries(
      ORDER BY year DESC, month DESC, apartment_location`,
         [sy, sm, ey, em]
     );
+    return rows.map(r => ({
+        ...r,
+        total_revenue: parseNumeric(r.total_revenue),
+        cash_revenue: parseNumeric(r.cash_revenue),
+        transfer_revenue: parseNumeric(r.transfer_revenue),
+        total_expenses: parseNumeric(r.total_expenses),
+        expense_count: parseNumeric(r.expense_count),
+        net_profit: parseNumeric(r.net_profit),
+        transaction_count: parseNumeric(r.transaction_count),
+        paid_bills_count: parseNumeric(r.paid_bills_count),
+        unpaid_bills_count: parseNumeric(r.unpaid_bills_count),
+        paid_bills_amount: parseNumeric(r.paid_bills_amount),
+        unpaid_bills_amount: parseNumeric(r.unpaid_bills_amount),
+        total_marketing_fees: parseNumeric(r.total_marketing_fees),
+        paid_fees_amount: parseNumeric(r.paid_fees_amount),
+    }));
 }
 
 /**
@@ -73,7 +89,7 @@ export async function getMonthlyComparison(
     const ey = endYear ?? def.endYear;
     const em = endMonth ?? def.endMonth;
 
-    return queryAnalytics<MonthlyComparison>(
+    const rows = await queryAnalytics<MonthlyComparison>(
         `SELECT
        (year || '-' || LPAD(month::text, 2, '0')) AS "yearMonth",
        SUM(total_revenue)      AS "revenue",
@@ -89,4 +105,13 @@ export async function getMonthlyComparison(
      ORDER BY year DESC, month DESC`,
         [sy, sm, ey, em]
     );
+    return rows.map(r => ({
+        yearMonth: r.yearMonth,
+        revenue: parseNumeric(r.revenue),
+        expenses: parseNumeric(r.expenses),
+        netProfit: parseNumeric(r.netProfit),
+        transactions: parseNumeric(r.transactions),
+        paidBills: parseNumeric(r.paidBills),
+        unpaidBills: parseNumeric(r.unpaidBills),
+    }));
 }

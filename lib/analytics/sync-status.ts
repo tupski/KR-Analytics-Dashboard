@@ -1,4 +1,4 @@
-import { queryAnalytics } from './db';
+import { queryAnalytics, parseNumeric, parseNullableNumeric } from './db';
 import type { SyncStatus, SyncLogEntry } from './types';
 
 /**
@@ -6,8 +6,8 @@ import type { SyncStatus, SyncLogEntry } from './types';
  * Includes the latest sync log entry per table.
  */
 export async function getAllSyncStatuses(): Promise<SyncStatus[]> {
-    return queryAnalytics<SyncStatus>(
-        `SELECT
+  const rows = await queryAnalytics<SyncStatus>(
+    `SELECT
        sm.table_name,
        sm.last_sync_at,
        sm.row_count,
@@ -35,18 +35,29 @@ export async function getAllSyncStatuses(): Promise<SyncStatus[]> {
        LIMIT 1
      ) sl ON TRUE
      ORDER BY sm.table_name`,
-        []
-    );
+    []
+  );
+  return rows.map(r => ({
+    ...r,
+    row_count: parseNullableNumeric(r.row_count),
+    last_max_id: parseNullableNumeric(r.last_max_id),
+    last_sync_log: r.last_sync_log ? {
+      ...r.last_sync_log,
+      id: parseNumeric(r.last_sync_log.id),
+      rows_synced: parseNumeric(r.last_sync_log.rows_synced),
+      rows_deleted: parseNumeric(r.last_sync_log.rows_deleted),
+    } : null,
+  }));
 }
 
 /**
  * Fetch sync status for a single table.
  */
 export async function getSyncStatus(
-    tableName: string
+  tableName: string
 ): Promise<SyncStatus | null> {
-    const rows = await queryAnalytics<SyncStatus>(
-        `SELECT
+  const rows = await queryAnalytics<SyncStatus>(
+    `SELECT
        sm.table_name,
        sm.last_sync_at,
        sm.row_count,
@@ -74,19 +85,31 @@ export async function getSyncStatus(
        LIMIT 1
      ) sl ON TRUE
      WHERE sm.table_name = $1`,
-        [tableName]
-    );
-    return rows[0] ?? null;
+    [tableName]
+  );
+  const r = rows[0] ?? null;
+  if (!r) return null;
+  return {
+    ...r,
+    row_count: parseNullableNumeric(r.row_count),
+    last_max_id: parseNullableNumeric(r.last_max_id),
+    last_sync_log: r.last_sync_log ? {
+      ...r.last_sync_log,
+      id: parseNumeric(r.last_sync_log.id),
+      rows_synced: parseNumeric(r.last_sync_log.rows_synced),
+      rows_deleted: parseNumeric(r.last_sync_log.rows_deleted),
+    } : null,
+  };
 }
 
 /**
  * Fetch recent sync log entries across all tables.
  */
 export async function getRecentSyncLogs(
-    limit: number = 20
+  limit: number = 20
 ): Promise<SyncLogEntry[]> {
-    return queryAnalytics<SyncLogEntry>(
-        `SELECT
+  const rows = await queryAnalytics<SyncLogEntry>(
+    `SELECT
        id,
        table_name,
        sync_type,
@@ -99,19 +122,25 @@ export async function getRecentSyncLogs(
      FROM sync_logs
      ORDER BY started_at DESC
      LIMIT $1`,
-        [limit]
-    );
+    [limit]
+  );
+  return rows.map(r => ({
+    ...r,
+    id: parseNumeric(r.id),
+    rows_synced: parseNumeric(r.rows_synced),
+    rows_deleted: parseNumeric(r.rows_deleted),
+  }));
 }
 
 /**
  * Fetch sync logs for a specific table.
  */
 export async function getSyncLogsForTable(
-    tableName: string,
-    limit: number = 10
+  tableName: string,
+  limit: number = 10
 ): Promise<SyncLogEntry[]> {
-    return queryAnalytics<SyncLogEntry>(
-        `SELECT
+  const rows = await queryAnalytics<SyncLogEntry>(
+    `SELECT
        id,
        table_name,
        sync_type,
@@ -125,6 +154,12 @@ export async function getSyncLogsForTable(
      WHERE table_name = $1
      ORDER BY started_at DESC
      LIMIT $2`,
-        [tableName, limit]
-    );
+    [tableName, limit]
+  );
+  return rows.map(r => ({
+    ...r,
+    id: parseNumeric(r.id),
+    rows_synced: parseNumeric(r.rows_synced),
+    rows_deleted: parseNumeric(r.rows_deleted),
+  }));
 }

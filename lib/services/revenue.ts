@@ -1,4 +1,8 @@
 import { createServerClient } from '@/lib/supabase/server';
+import {
+    getDailyRevenue as getDailyRevenueAnalytics,
+    getRevenueSummary as getRevenueSummaryAnalytics,
+} from '@/lib/analytics/revenue';
 
 // ============================================================
 // lib/services/revenue.ts
@@ -6,6 +10,10 @@ import { createServerClient } from '@/lib/supabase/server';
 // Revenue-related service functions extracted from:
 //   - dashboard/actions.ts  → fetchRevenueData() (RPC call)
 //   - booking/actions.ts    → inline revenue aggregation
+//
+// Migration Phase 2B-5A:
+//   Analytics DB first, Supabase fallback.
+//   Old implementation kept for fallback.
 // ============================================================
 
 export interface RevenueSummary {
@@ -21,6 +29,46 @@ export interface RevenueTrendPoint {
     transactionCount: number;
 }
 
+// ─── Helpers ────────────────────────────────────────────────
+
+/** Check if analytics DB is configured. */
+function analyticsConfigured(): boolean {
+    return !!process.env.ANALYTICS_DATABASE_URL;
+}
+
+/**
+ * Transform analytics RevenueByDateRange → legacy RevenueSummary.
+ * Analytics returns totalCash/totalTransfer instead of cashAmount/transferAmount.
+ */
+function toRevenueSummary(a: {
+    totalRevenue: number;
+    totalCash: number;
+    totalTransfer: number;
+    totalTransactions: number;
+}): RevenueSummary {
+    return {
+        totalRevenue: a.totalRevenue,
+        cashAmount: a.totalCash,
+        transferAmount: a.totalTransfer,
+        transactionCount: a.totalTransactions,
+    };
+}
+
+/**
+ * Normalize a date_wib value (Date object or string) to YYYY-MM-DD string.
+ * pg returns DATE columns as JavaScript Date objects.
+ */
+function normalizeDate(d: unknown): string {
+    if (d instanceof Date) {
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        return `${y}-${m}-${day}`;
+    }
+    if (typeof d === 'string') return d;
+    return String(d);
+}
+
 // ============================================================
 // getRevenueSummary(start, end)
 //
@@ -28,6 +76,22 @@ export interface RevenueTrendPoint {
 // given period.
 // ============================================================
 export async function getRevenueSummary(start: string, end: string): Promise<RevenueSummary> {
+    // ── Analytics path (primary) ──────────────────────────────
+    if (analyticsConfigured()) {
+        try {
+            const data = await getRevenueSummaryAnalytics(start, end);
+            return toRevenueSummary(data);
+        } catch (error) {
+            console.warn('[revenue] Analytics DB unavailable, falling back to Supabase:', error);
+        }
+    }
+
+    // ── Supabase fallback ────────────────────────────────────
+    return getRevenueSummaryLegacy(start, end);
+}
+
+/** Supabase-only fallback (unchanged from original). */
+async function getRevenueSummaryLegacy(start: string, end: string): Promise<RevenueSummary> {
     const supabase = createServerClient();
 
     try {
@@ -84,6 +148,47 @@ export async function getRevenueSummary(start: string, end: string): Promise<Rev
 // Mirrors fetchRevenueData() in dashboard/actions.ts:466-514
 // ============================================================
 export async function getRevenueTrend(
+    startDate: string,
+    endDate: string,
+    location?: string | null
+): Promise<RevenueTrendPoint[]> {
+    // ── Analytics path (primary) ──────────────────────────────
+    if (analyticsConfigured()) {
+        try {
+            const dailyRows = await getDailyRevenueAnalytics(startDate, endDate);
+
+            // Aggregate per date (analytics returns per-location rows)
+            const byDate = new Map<string, { revenue: number; count: number }>();
+
+            for (const row of dailyRows) {
+                // Apply location filter if specified
+                if (location && row.apartment_location !== location) continue;
+
+                const dateKey = normalizeDate(row.date_wib);
+                const existing = byDate.get(dateKey) || { revenue: 0, count: 0 };
+                existing.revenue += row.total_revenue;
+                existing.count += row.transaction_count;
+                byDate.set(dateKey, existing);
+            }
+
+            return Array.from(byDate.entries())
+                .map(([date, { revenue, count }]) => ({
+                    date,
+                    revenue,
+                    transactionCount: count,
+                }))
+                .sort((a, b) => a.date.localeCompare(b.date));
+        } catch (error) {
+            console.warn('[revenue] Analytics DB unavailable, falling back to Supabase:', error);
+        }
+    }
+
+    // ── Supabase fallback ────────────────────────────────────
+    return getRevenueTrendLegacy(startDate, endDate, location);
+}
+
+/** Supabase-only fallback (unchanged from original). */
+async function getRevenueTrendLegacy(
     startDate: string,
     endDate: string,
     location?: string | null

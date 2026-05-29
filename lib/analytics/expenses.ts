@@ -1,4 +1,4 @@
-import { queryAnalytics } from './db';
+import { queryAnalytics, parseNumeric } from './db';
 import type { ExpenseSummary, ExpenseByDateRange } from './types';
 
 function getDefaultDateRange(): { startDate: string; endDate: string } {
@@ -34,13 +34,18 @@ export async function getExpenses(
     endDate?: string
 ): Promise<ExpenseSummary[]> {
     const { startDate: sd, endDate: ed } = resolveRange(startDate, endDate);
-    return queryAnalytics<ExpenseSummary>(
+    const rows = await queryAnalytics<ExpenseSummary>(
         `SELECT *
      FROM analytics_expense_summary
      WHERE date_wib >= $1 AND date_wib < $2
      ORDER BY date_wib, apartment_location, category`,
         [sd, ed]
     );
+    return rows.map(r => ({
+        ...r,
+        total_amount: parseNumeric(r.total_amount),
+        expense_count: parseNumeric(r.expense_count),
+    }));
 }
 
 /**
@@ -101,9 +106,17 @@ export async function getExpenseSummary(
     return {
         startDate: sd,
         endDate: ed,
-        totalAmount: parseFloat(t.total_amount),
-        totalExpenses: parseInt(t.total_expenses, 10),
-        byCategory,
-        byLocation,
+        totalAmount: parseNumeric(t.total_amount),
+        totalExpenses: parseNumeric(t.total_expenses),
+        byCategory: byCategory.map(c => ({
+            category: c.category,
+            total_amount: parseNumeric(c.total_amount),
+            expense_count: parseNumeric(c.expense_count),
+        })),
+        byLocation: byLocation.map(l => ({
+            apartment_location: l.apartment_location,
+            total_amount: parseNumeric(l.total_amount),
+            expense_count: parseNumeric(l.expense_count),
+        })),
     };
 }

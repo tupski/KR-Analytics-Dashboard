@@ -1,4 +1,4 @@
-import { queryAnalytics } from './db';
+import { queryAnalytics, parseNumeric } from './db';
 import type { OccupancyDaily } from './types';
 
 /**
@@ -73,7 +73,7 @@ export async function getOccupancyRate(
     }>
 > {
     const { startDate: sd, endDate: ed } = resolveRange(startDate, endDate);
-    return queryAnalytics<{
+    const rows = await queryAnalytics<{
         date_wib: string;
         apartment_location: string;
         total_rooms: number;
@@ -96,6 +96,13 @@ export async function getOccupancyRate(
      ORDER BY date_wib, apartment_location`,
         [sd, ed]
     );
+    return rows.map(r => ({
+        date_wib: r.date_wib,
+        apartment_location: r.apartment_location,
+        total_rooms: parseNumeric(r.total_rooms),
+        occupied_rooms: parseNumeric(r.occupied_rooms),
+        occupancy_rate: parseNumeric(r.occupancy_rate),
+    }));
 }
 
 /**
@@ -132,8 +139,8 @@ export async function getOccupancySummary(
     return {
         startDate: sd,
         endDate: ed,
-        averageOccupancyRate: parseFloat(row.avg_occupancy),
-        totalRoomDays: parseInt(row.total_room_days, 10),
-        totalOccupiedRoomDays: parseInt(row.total_occupied, 10),
+        averageOccupancyRate: parseNumeric(row.avg_occupancy),
+        totalRoomDays: parseNumeric(row.total_room_days),
+        totalOccupiedRoomDays: parseNumeric(row.total_occupied),
     };
 }

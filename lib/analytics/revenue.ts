@@ -1,4 +1,4 @@
-import { queryAnalytics } from './db';
+import { queryAnalytics, parseNumeric } from './db';
 import type { DailyRevenue, RevenueByDateRange } from './types';
 
 /**
@@ -43,13 +43,22 @@ export async function getDailyRevenue(
     endDate?: string
 ): Promise<DailyRevenue[]> {
     const { startDate: sd, endDate: ed } = resolveRange(startDate, endDate);
-    return queryAnalytics<DailyRevenue>(
+    const rows = await queryAnalytics<DailyRevenue>(
         `SELECT *
      FROM analytics_daily_revenue
      WHERE date_wib >= $1 AND date_wib < $2
      ORDER BY date_wib, apartment_location`,
         [sd, ed]
     );
+    return rows.map(r => ({
+        ...r,
+        total_revenue: parseNumeric(r.total_revenue),
+        cash_revenue: parseNumeric(r.cash_revenue),
+        transfer_revenue: parseNumeric(r.transfer_revenue),
+        transaction_count: parseNumeric(r.transaction_count),
+        avg_revenue_per_tx: parseNumeric(r.avg_revenue_per_tx),
+        unique_rooms: parseNumeric(r.unique_rooms),
+    }));
 }
 
 /**
@@ -79,15 +88,15 @@ export async function getRevenueSummary(
         [sd, ed]
     );
     const row = rows[0];
-    const totalRevenue = parseFloat(row.total_revenue);
-    const totalTransactions = parseInt(row.total_transactions, 10);
-    const dayCount = parseInt(row.day_count, 10) || 1;
+    const totalRevenue = parseNumeric(row.total_revenue);
+    const totalTransactions = parseNumeric(row.total_transactions);
+    const dayCount = parseNumeric(row.day_count) || 1;
     return {
         startDate: sd,
         endDate: ed,
         totalRevenue,
-        totalCash: parseFloat(row.total_cash),
-        totalTransfer: parseFloat(row.total_transfer),
+        totalCash: parseNumeric(row.total_cash),
+        totalTransfer: parseNumeric(row.total_transfer),
         totalTransactions,
         averagePerDay: Math.round(totalRevenue / dayCount),
         averagePerTransaction:
@@ -105,7 +114,7 @@ export async function getRevenueByLocation(
     Array<{ apartment_location: string; total_revenue: number; transaction_count: number }>
 > {
     const { startDate: sd, endDate: ed } = resolveRange(startDate, endDate);
-    return queryAnalytics<{
+    const rows = await queryAnalytics<{
         apartment_location: string;
         total_revenue: number;
         transaction_count: number;
@@ -120,4 +129,9 @@ export async function getRevenueByLocation(
      ORDER BY total_revenue DESC`,
         [sd, ed]
     );
+    return rows.map(r => ({
+        apartment_location: r.apartment_location,
+        total_revenue: parseNumeric(r.total_revenue),
+        transaction_count: parseNumeric(r.transaction_count),
+    }));
 }
