@@ -5,6 +5,7 @@ import { config } from './config';
 import { getPool, closePool } from './db';
 import { getSupabaseClient } from './supabase';
 import { syncTransactions } from './sync/transactions';
+import { syncPengeluaran } from './sync/pengeluaran';
 import { getMetadata } from './sync/metadata';
 
 let lastSyncResult: { rowsSynced: number; rowsDeleted: number; durationMs: number } | null = null;
@@ -21,9 +22,18 @@ async function runSyncCycle() {
 
     try {
         console.log('[sync] Starting sync cycle...');
-        const result = await syncTransactions(pool, supabase);
-        lastSyncResult = result;
-        console.log(`[sync] Cycle complete: ${result.rowsSynced} synced, ${result.rowsDeleted} deleted in ${result.durationMs}ms`);
+
+        // Sync transactions
+        const txResult = await syncTransactions(pool, supabase);
+        lastSyncResult = txResult;
+        console.log(`[sync] transactions: ${txResult.rowsSynced} synced, ${txResult.rowsDeleted} deleted in ${txResult.durationMs}ms`);
+
+        // Sync pengeluaran
+        const pResult = await syncPengeluaran(pool, supabase);
+        console.log(`[sync] pengeluaran: ${pResult.rowsSynced} synced, ${pResult.rowsDeleted} deleted in ${pResult.durationMs}ms`);
+
+        const totalDuration = Date.now() - (Date.now() - (txResult.durationMs + pResult.durationMs));
+        console.log(`[sync] Cycle complete: total ${txResult.rowsSynced + pResult.rowsSynced} synced, ${txResult.rowsDeleted + pResult.rowsDeleted} deleted`);
     } catch (error) {
         console.error('[sync] Cycle failed:', error);
     } finally {
@@ -36,7 +46,8 @@ const server = http.createServer(async (req, res) => {
     if (req.url === '/health' && req.method === 'GET') {
         try {
             const pool = getPool();
-            const metadata = await getMetadata(pool, 'transactions');
+            const txMeta = await getMetadata(pool, 'transactions');
+            const pMeta = await getMetadata(pool, 'pengeluaran');
 
             res.writeHead(200, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({
@@ -45,12 +56,19 @@ const server = http.createServer(async (req, res) => {
                 timestamp: new Date().toISOString(),
                 syncing: isSyncing,
                 lastSync: lastSyncResult,
-                transactions: metadata ? {
-                    lastSyncAt: metadata.last_sync_at,
-                    lastMaxId: metadata.last_max_id,
-                    rowCount: metadata.row_count,
-                    syncStatus: metadata.sync_status,
-                    backfillDone: metadata.backfill_done,
+                transactions: txMeta ? {
+                    lastSyncAt: txMeta.last_sync_at,
+                    lastMaxId: txMeta.last_max_id,
+                    rowCount: txMeta.row_count,
+                    syncStatus: txMeta.sync_status,
+                    backfillDone: txMeta.backfill_done,
+                } : null,
+                pengeluaran: pMeta ? {
+                    lastSyncAt: pMeta.last_sync_at,
+                    lastMaxId: pMeta.last_max_id,
+                    rowCount: pMeta.row_count,
+                    syncStatus: pMeta.sync_status,
+                    backfillDone: pMeta.backfill_done,
                 } : null,
             }));
         } catch {
@@ -62,6 +80,7 @@ const server = http.createServer(async (req, res) => {
                 syncing: isSyncing,
                 lastSync: lastSyncResult,
                 transactions: null,
+                pengeluaran: null,
             }));
         }
         return;
