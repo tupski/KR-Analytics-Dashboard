@@ -50,7 +50,7 @@ describe('RealTimeClock', () => {
         expect(colonElement).toBeTruthy();
 
         // Initial state - colon should be visible
-        const initialOpacity = colonElement?.style.opacity;
+        const initialOpacity = (colonElement as HTMLElement).style.opacity;
         expect(initialOpacity).toBe('1');
 
         // After 500ms, colon should be hidden
@@ -58,7 +58,7 @@ describe('RealTimeClock', () => {
             vi.advanceTimersByTime(500);
         });
 
-        const afterFirstToggle = colonElement?.style.opacity;
+        const afterFirstToggle = (colonElement as HTMLElement).style.opacity;
         expect(afterFirstToggle).toBe('0');
 
         // After another 500ms, colon should be visible again
@@ -66,7 +66,7 @@ describe('RealTimeClock', () => {
             vi.advanceTimersByTime(500);
         });
 
-        const afterSecondToggle = colonElement?.style.opacity;
+        const afterSecondToggle = (colonElement as HTMLElement).style.opacity;
         expect(afterSecondToggle).toBe('1');
     });
 

@@ -31,7 +31,7 @@ export default function AutoRefreshWrapper({
     refreshInterval = 60000, // 60 seconds
 }: AutoRefreshWrapperProps) {
     const router = useRouter();
-    const [lastRefresh, setLastRefresh] = useState<Date>(new Date());
+    const [lastRefresh, setLastRefresh] = useState<Date>(() => new Date());
     const [isRefreshing, setIsRefreshing] = useState(false);
     const [retryCount, setRetryCount] = useState(0);
     const [error, setError] = useState<string | null>(null);

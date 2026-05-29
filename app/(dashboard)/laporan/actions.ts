@@ -309,46 +309,12 @@ export async function fetchRoomExpenses(location: string, roomNumber: string, fi
 }
 
 /** Detect LOCATIONS where overall occupancy is ≥90% (all units combined) */
+import { getRoomDayUtilization } from '@/lib/services/occupancy';
+
 export async function fetchHighOccupancyLocations(days: number = 30) {
-    const supabase = createServerClient();
-    const startDate = format(subDays(new Date(), days), 'yyyy-MM-dd');
     const endDate = format(new Date(), 'yyyy-MM-dd');
-
-    const { data: allRooms } = await supabase.from('nomor_kamar').select('name, lokasi');
-    const { data: transactions } = await supabase
-        .from('transactions')
-        .select('room_number, apartment_location, checkin_at')
-        .gte('checkin_at', `${startDate}T00:00:00`)
-        .lte('checkin_at', `${endDate}T23:59:59`);
-
-    // Count rooms per location
-    const roomsPerLocation: Record<string, number> = {};
-    allRooms?.forEach((r: any) => {
-        roomsPerLocation[r.lokasi] = (roomsPerLocation[r.lokasi] || 0) + 1;
-    });
-
-    // Count unique room-days used per location
-    // (how many room-days were occupied out of total possible room-days)
-    const locationUsage: Record<string, Set<string>> = {};
-    transactions?.forEach((t: any) => {
-        const loc = t.apartment_location;
-        if (!locationUsage[loc]) locationUsage[loc] = new Set();
-        // Each unique room+date combination counts as 1 room-day
-        const dayKey = `${t.room_number}|${format(new Date(t.checkin_at), 'yyyy-MM-dd')}`;
-        locationUsage[loc].add(dayKey);
-    });
-
-    // Calculate occupancy rate per location
-    const results = Object.entries(roomsPerLocation)
-        .map(([location, totalRooms]) => {
-            const totalPossibleRoomDays = totalRooms * days;
-            const usedRoomDays = locationUsage[location]?.size || 0;
-            const occupancyRate = Math.round((usedRoomDays / totalPossibleRoomDays) * 100);
-            return { location, totalRooms, usedRoomDays, totalPossibleRoomDays, occupancyRate };
-        })
-        .filter(r => r.occupancyRate >= 90)
-        .sort((a, b) => b.occupancyRate - a.occupancyRate);
-
+    const startDate = format(subDays(new Date(), days - 1), 'yyyy-MM-dd');
+    const results = await getRoomDayUtilization(startDate, endDate);
     return results;
 }
 

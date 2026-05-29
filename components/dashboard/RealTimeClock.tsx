@@ -12,7 +12,7 @@ import { toZonedTime } from 'date-fns-tz';
  * 
  */
 export default function RealTimeClock() {
-    const [time, setTime] = useState<Date>(new Date());
+    const [time, setTime] = useState<Date>(() => new Date());
     const [showColon, setShowColon] = useState(true);
 
     useEffect(() => {
