@@ -1,5 +1,10 @@
 import { format, subDays, eachDayOfInterval } from 'date-fns';
 import { createServerClient } from '@/lib/supabase/server';
+import {
+    getOccupancyDaily as getOccupancyDailyAnalytics,
+    getOccupancyRate as getOccupancyRateAnalytics,
+    getOccupancySummary as getOccupancySummaryAnalytics,
+} from '@/lib/analytics/occupancy';
 
 // ============================================================
 // lib/services/occupancy.ts
@@ -7,6 +12,26 @@ import { createServerClient } from '@/lib/supabase/server';
 // Occupancy-related service functions extracted from:
 //   - dashboard/actions.ts  → fetchUnitStatus() + fetchOccupancyData()
 //   - laporan/actions.ts    → fetchHighOccupancyLocations()
+//
+// Migration Phase 2B-5B:
+//   Analytics DB first, Supabase fallback.
+//   Old implementation kept for fallback.
+//
+// ⚠️ DEFINITION DIFFERENCE DOCUMENTED:
+//   Legacy (Supabase): stay-span model — a room is occupied on a date
+//     if checkin_at ≤ end_of_day AND checkout_at ≥ start_of_day. Multi-day
+//     stays count on EVERY day they span.
+//   Analytics DB: transaction-creation model — a room is occupied on a
+//     date (WIB) if at least 1 transaction was created that day, based on
+//     (created_at AT TIME ZONE 'Asia/Jakarta')::DATE.
+//   These differ when stays span multiple days. Both are preserved
+//   intentionally. See docs for full comparison.
+//
+// FUNCTIONS NOT MIGRATED (Supabase-only):
+//   - getLiveOccupancy(): point-in-time active stay check, no analytics
+//     table models real-time occupancy.
+//   - getDailyCheckinVolume(): counts by checkin_at field, analytics DB
+//     uses created_at — different semantics, irrelevant to migrate.
 // ============================================================
 
 export interface LiveOccupancyResult {
@@ -35,11 +60,33 @@ export interface DailyCheckinVolumePoint {
     count: number;
 }
 
+// ─── Helpers ────────────────────────────────────────────────
+
+/** Check if analytics DB is configured. */
+function analyticsConfigured(): boolean {
+    return !!process.env.ANALYTICS_DATABASE_URL;
+}
+
+/** Normalize a date_wib value (Date object or string) to YYYY-MM-DD. */
+function normalizeDate(d: unknown): string {
+    if (d instanceof Date) {
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        return `${y}-${m}-${day}`;
+    }
+    if (typeof d === 'string') return d;
+    return String(d);
+}
+
 // ============================================================
 // getLiveOccupancy()
 //
 // Get live occupancy: active stays right now.
 // Active stay = checkin_at <= now AND checkout_at >= now.
+//
+// NOT MIGRATED TO ANALYTICS DB: No real-time occupancy table
+// in analytics DB. Kept as Supabase-only.
 //
 // Mirrors fetchUnitStatus() in dashboard/actions.ts:42-85
 // ============================================================
@@ -90,26 +137,81 @@ export async function getLiveOccupancy(): Promise<LiveOccupancyResult> {
 // ============================================================
 // getDailyOccupancyTrend(days=30)
 //
-// TRUE DAILY OCCUPANCY: For each date in the range [startDate, today],
-// a room is occupied if there exists ANY transaction where:
-//   checkin_at  <= end   of that day   (23:59:59 on that date)
-//   checkout_at >= start of that day   (00:00:00 on that date)
+// ⚠️ DEFINITION DIFFERENCE (see header):
+//   Analytics path: room is occupied on date WIB if any transaction
+//   was created that day (created_at AT TIME ZONE 'Asia/Jakarta')::DATE.
+//   Legacy path: room is occupied on date if checkin_at ≤ dayEnd AND
+//   checkout_at ≥ dayStart (stay-span model).
 //
-// This is fundamentally different from "daily check-in volume"
-// (which count() does below) because multi-day stays count as
-// occupied on EVERY day of the stay, not just the check-in day.
-//
-// Example: A guest checking in on Jan 1 and out on Jan 5 occupies
-// a room on Jan 1, 2, 3, 4, AND 5 — all 5 days.
-//
-// CONTRAST with getDailyCheckinVolume() below:
-//   - daily check-in volume = # of transactions whose checkin_at
-//     falls exactly on a given date (ignores stay length)
-//   - daily occupancy        = # of unique rooms occupied on a
-//     given date based on checkin/checkout overlap (counts all
-//     days of multi-day stays)
+// Analytics path preferred, falls back to legacy Supabase.
 // ============================================================
 export async function getDailyOccupancyTrend(days: number = 30): Promise<DailyOccupancyTrendPoint[]> {
+    // ── Analytics path (primary) ──────────────────────────────
+    if (analyticsConfigured()) {
+        try {
+            const today = new Date();
+            const startDate = subDays(today, days - 1);
+            const sd = format(startDate, 'yyyy-MM-dd');
+            const ed = format(new Date(today.getTime() + 86400000), 'yyyy-MM-dd'); // exclusive end
+
+            const dailyRows = await getOccupancyDailyAnalytics(sd, ed);
+
+            if (!dailyRows || dailyRows.length === 0) {
+                return [];
+            }
+
+            // Count total rooms (distinct room_number per location)
+            const roomsByLoc = new Map<string, Set<string>>();
+            for (const row of dailyRows) {
+                if (!roomsByLoc.has(row.apartment_location)) {
+                    roomsByLoc.set(row.apartment_location, new Set());
+                }
+                roomsByLoc.get(row.apartment_location)!.add(row.room_number);
+            }
+            const totalRooms = Array.from(roomsByLoc.values()).reduce(
+                (sum, s) => sum + s.size, 0
+            );
+
+            // Group by date, count occupied rooms
+            const byDate = new Map<string, Set<string>>();
+            for (const row of dailyRows) {
+                const dateKey = normalizeDate(row.date_wib);
+                if (!byDate.has(dateKey)) {
+                    byDate.set(dateKey, new Set());
+                }
+                if (row.is_occupied) {
+                    byDate.get(dateKey)!.add(`${row.apartment_location}-${row.room_number}`);
+                }
+            }
+
+            // Build the full date range
+            const allDays: Date[] = eachDayOfInterval({ start: startDate, end: today });
+            const result: DailyOccupancyTrendPoint[] = allDays.map((d) => {
+                const dateKey = format(d, 'yyyy-MM-dd');
+                const occupiedUnits = byDate.get(dateKey)?.size || 0;
+                const occupancyRate = totalRooms > 0
+                    ? Math.round((occupiedUnits / totalRooms) * 10000) / 100
+                    : 0;
+                return {
+                    date: dateKey,
+                    occupancyRate,
+                    occupiedUnits,
+                    totalUnits: totalRooms,
+                };
+            });
+
+            return result;
+        } catch (error) {
+            console.warn('[occupancy] Analytics DB unavailable, falling back to Supabase:', error);
+        }
+    }
+
+    // ── Supabase fallback ────────────────────────────────────
+    return getDailyOccupancyTrendLegacy(days);
+}
+
+/** Supabase-only fallback (unchanged, stay-span model). */
+async function getDailyOccupancyTrendLegacy(days: number = 30): Promise<DailyOccupancyTrendPoint[]> {
     const supabase = createServerClient();
     const today = new Date();
 
@@ -140,8 +242,6 @@ export async function getDailyOccupancyTrend(days: number = 30): Promise<DailyOc
         }
 
         // Step 2: Fetch ALL transactions that could overlap the date range.
-        // We need checkout_at to determine if a stay spans across days.
-        // Query: checkin_at <= rangeEnd (23:59:59) AND checkout_at >= rangeStart (00:00:00)
         const rangeStart = `${formattedDays[0]}T00:00:00`;
         const rangeEnd = `${formattedDays[formattedDays.length - 1]}T23:59:59`;
 
@@ -156,10 +256,7 @@ export async function getDailyOccupancyTrend(days: number = 30): Promise<DailyOc
             return [];
         }
 
-        // Step 3: For each day in the range, count unique occupied rooms.
-        // A room is occupied on a given day if:
-        //   checkin_at  <= dayEnd   (23:59:59 on that day)
-        //   checkout_at >= dayStart (00:00:00 on that day)
+        // Step 3: For each day, count unique occupied rooms (stay-span model)
         const result: DailyOccupancyTrendPoint[] = formattedDays.map((day) => {
             const dayStart = `${day}T00:00:00`;
             const dayEnd = `${day}T23:59:59`;
@@ -201,27 +298,84 @@ export async function getDailyOccupancyTrend(days: number = 30): Promise<DailyOc
 // ============================================================
 // getRoomDayUtilization(start, end)
 //
-// For each location, calculate usedRoomDays / totalPossibleRoomDays
-// * 100 over the period.
+// ⚠️ DEFINITION DIFFERENCE (see header):
+//   Analytics path: uses is_occupied from analytics_occupancy_daily
+//   (created_at WIB date). Legacy path: stay-span overlap model.
 //
-// IMPORTANT — check-in volume ≠ occupancy/utilization:
-//   - Counting transactions by checkin_at tells you how many guests
-//     arrived on a given day, NOT how many rooms were occupied.
-//   - Utilization must account for the full stay-span (checkin_at
-//     through checkout_at) because multi-day stays occupy rooms on
-//     EVERY day of the stay, not just the check-in day.
-//
-// This function now uses the SAME stay-span overlap logic as
-// getDailyOccupancyTrend():
-//   checkin_at  <= dayEnd   (23:59:59)
-//   checkout_at >= dayStart (00:00:00)
-//
-// Each transaction is expanded into all room-days it spans within
-// the query range, then unique (room, date) pairs are counted.
-//
-// Mirrors fetchHighOccupancyLocations() in laporan/actions.ts:406-447
+// Analytics path preferred, falls back to legacy Supabase.
 // ============================================================
 export async function getRoomDayUtilization(start: string, end: string): Promise<RoomDayUtilizationItem[]> {
+    // ── Analytics path (primary) ──────────────────────────────
+    if (analyticsConfigured()) {
+        try {
+            // Normalize dates
+            const startDate = start.split('T')[0] || format(new Date(start), 'yyyy-MM-dd');
+            let endDate = end.split('T')[0] || format(new Date(end), 'yyyy-MM-dd');
+            // Analytics uses exclusive end, so add one day
+            const endExclusive = format(
+                new Date(new Date(endDate).getTime() + 86400000),
+                'yyyy-MM-dd'
+            );
+
+            // Get occupancy rate per location per day from analytics
+            const rateRows = await getOccupancyRateAnalytics(startDate, endExclusive);
+
+            if (!rateRows || rateRows.length === 0) {
+                return [];
+            }
+
+            // Calculate days in the period
+            const startDt = new Date(startDate);
+            const endDt = new Date(endDate);
+            const periodDays = Math.max(1, Math.round((endDt.getTime() - startDt.getTime()) / (1000 * 60 * 60 * 24)) + 1);
+
+            // Aggregate per location across all days
+            const perLocation = new Map<string, {
+                totalRooms: number;
+                usedRoomDays: number;
+                totalPossibleRoomDays: number;
+            }>();
+
+            for (const row of rateRows) {
+                const loc = row.apartment_location;
+                if (!perLocation.has(loc)) {
+                    perLocation.set(loc, { totalRooms: 0, usedRoomDays: 0, totalPossibleRoomDays: 0 });
+                }
+                const entry = perLocation.get(loc)!;
+                // totalRooms per day — use row value (should be stable per location)
+                entry.totalRooms = row.total_rooms;
+                entry.usedRoomDays += row.occupied_rooms;
+                entry.totalPossibleRoomDays += row.total_rooms;
+            }
+
+            const results: RoomDayUtilizationItem[] = Array.from(perLocation.entries())
+                .map(([location, data]) => {
+                    const occupancyRate = data.totalPossibleRoomDays > 0
+                        ? Math.round((data.usedRoomDays / data.totalPossibleRoomDays) * 100)
+                        : 0;
+                    // Restore totalPossibleRoomDays = totalRooms * periodDays for consistency
+                    return {
+                        location,
+                        totalRooms: data.totalRooms,
+                        usedRoomDays: data.usedRoomDays,
+                        totalPossibleRoomDays: data.totalRooms * periodDays,
+                        occupancyRate,
+                    };
+                })
+                .sort((a, b) => b.occupancyRate - a.occupancyRate);
+
+            return results;
+        } catch (error) {
+            console.warn('[occupancy] Analytics DB unavailable, falling back to Supabase:', error);
+        }
+    }
+
+    // ── Supabase fallback ────────────────────────────────────
+    return getRoomDayUtilizationLegacy(start, end);
+}
+
+/** Supabase-only fallback (unchanged, stay-span model). */
+async function getRoomDayUtilizationLegacy(start: string, end: string): Promise<RoomDayUtilizationItem[]> {
     const supabase = createServerClient();
 
     // Extract the date portion for string comparisons
@@ -236,9 +390,6 @@ export async function getRoomDayUtilization(start: string, end: string): Promise
     const { data: allRooms } = await supabase.from('nomor_kamar').select('name, lokasi');
 
     // Fetch ALL transactions that could overlap the date range.
-    // This is the same overlap query used by getDailyOccupancyTrend():
-    //   checkin_at <= rangeEnd   AND   checkout_at >= rangeStart
-    // We need checkout_at to expand multi-day stays across all occupied dates.
     const { data: transactions } = await supabase
         .from('transactions')
         .select('room_number, apartment_location, checkin_at, checkout_at')
@@ -260,8 +411,6 @@ export async function getRoomDayUtilization(start: string, end: string): Promise
     }
 
     // Count unique room-days used per location.
-    // For each transaction, expand across ALL dates the stay spans
-    // (clamped to the query range), then record each (room, date) pair.
     const locationUsage: Record<string, Set<string>> = {};
     transactions?.forEach((t: any) => {
         const loc = t.apartment_location;
@@ -271,8 +420,7 @@ export async function getRoomDayUtilization(start: string, end: string): Promise
         const txCheckinDate = format(new Date(t.checkin_at), 'yyyy-MM-dd');
         const txCheckoutDate = format(new Date(t.checkout_at), 'yyyy-MM-dd');
 
-        // Clamp to the query range: stay starts at max(checkin_date, range_start)
-        // and ends at min(checkout_date, range_end)
+        // Clamp to the query range
         const effectiveStart = txCheckinDate > startDate ? txCheckinDate : startDate;
         const effectiveEnd = txCheckoutDate < endDate ? txCheckoutDate : endDate;
 
@@ -301,9 +449,10 @@ export async function getRoomDayUtilization(start: string, end: string): Promise
 // ============================================================
 // getDailyCheckinVolume(days=30)
 //
-// Simpler version — just count check-ins per date.
-//
-// Groups transactions by checkin_at date and counts rows.
+// NOT MIGRATED TO ANALYTICS DB: Counts transactions by checkin_at
+// date. Analytics DB stores occupancy by created_at date, not
+// checkin_at — different field with different semantics. Kept as
+// Supabase-only.
 // ============================================================
 export async function getDailyCheckinVolume(days: number = 30): Promise<DailyCheckinVolumePoint[]> {
     const supabase = createServerClient();
