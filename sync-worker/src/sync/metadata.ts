@@ -8,6 +8,10 @@ export interface SyncMetadata {
     sync_status: string;
     error_message: string | null;
     backfill_done: boolean;
+    /** Optional: date range start for summary table refresh */
+    summary_refresh_range_start?: string;
+    /** Optional: last refresh time for summary tables */
+    summary_last_refresh_at?: Date;
 }
 
 export async function getMetadata(pool: Pool, tableName: string): Promise<SyncMetadata | null> {

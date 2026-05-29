@@ -299,6 +299,17 @@ CREATE INDEX idx_expense_summary_date ON analytics_expense_summary (date_wib);
 CREATE INDEX idx_expense_summary_location ON analytics_expense_summary (apartment_location);
 CREATE INDEX idx_expense_summary_category ON analytics_expense_summary (category);
 
+-- Add summary tracking fields to sync_metadata (if not exist)
+-- These are added idempotently via DO block
+DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'sync_metadata' AND column_name = 'summary_refresh_range_start') THEN
+        ALTER TABLE sync_metadata ADD COLUMN summary_refresh_range_start TEXT;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'sync_metadata' AND column_name = 'summary_last_refresh_at') THEN
+        ALTER TABLE sync_metadata ADD COLUMN summary_last_refresh_at TIMESTAMPTZ;
+    END IF;
+END $$;
+
 -- ─── Seed sync_metadata ───
 INSERT INTO sync_metadata (table_name) VALUES
     ('transactions'),
@@ -310,4 +321,9 @@ INSERT INTO sync_metadata (table_name) VALUES
     ('tagihan_fee_lunas'),
     ('pengeluaran_categories'),
     ('marketing_list'),
-    ('karyawan_list');
+    ('karyawan_list'),
+    ('analytics_daily_revenue'),
+    ('analytics_monthly_summary'),
+    ('analytics_occupancy_daily'),
+    ('analytics_expense_summary')
+ON CONFLICT (table_name) DO NOTHING;

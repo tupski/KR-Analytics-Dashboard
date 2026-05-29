@@ -9,6 +9,7 @@ import { syncPengeluaran } from './sync/pengeluaran';
 import { syncTagihanBulanan } from './sync/tagihan-bulanan';
 import { syncTagihanFeeLunasCombined } from './sync/tagihan-fee-lunas';
 import { syncMasterTables } from './sync/master';
+import { refreshAllSummaries } from './sync/summary';
 import { getMetadata } from './sync/metadata';
 
 let lastSyncResult: { rowsSynced: number; rowsDeleted: number; durationMs: number } | null = null;
@@ -48,8 +49,13 @@ async function runSyncCycle() {
         const masterResult = await syncMasterTables(pool, supabase);
         console.log(`[sync] master tables: ${masterResult.tables.map(t => `${t.tableName}=${t.rowsSynced}`).join(', ')}`);
 
-        const totalDuration = Date.now() - (Date.now() - (txResult.durationMs + pResult.durationMs + tbResult.durationMs + flResult.parent.durationMs + flResult.items.durationMs));
-        console.log(`[sync] Cycle complete: total ${txResult.rowsSynced + pResult.rowsSynced + tbResult.rowsSynced + flResult.parent.rowsSynced + flResult.items.rowsSynced} synced, ${txResult.rowsDeleted + pResult.rowsDeleted + tbResult.rowsDeleted + flResult.parent.rowsDeleted + flResult.items.rowsDeleted} deleted`);
+        // Refresh analytics summary tables (from local mirrors only)
+        const summaryResult = await refreshAllSummaries(pool, { mode: 'window' });
+        console.log(`[sync] summary tables: ${summaryResult.summaries.map(s => `${s.tableName}=${s.rowsInserted}`).join(', ')}`);
+
+        const totalSynced = txResult.rowsSynced + pResult.rowsSynced + tbResult.rowsSynced + flResult.parent.rowsSynced + flResult.items.rowsSynced;
+        const totalDeleted = txResult.rowsDeleted + pResult.rowsDeleted + tbResult.rowsDeleted + flResult.parent.rowsDeleted + flResult.items.rowsDeleted;
+        console.log(`[sync] Cycle complete: total ${totalSynced} synced, ${totalDeleted} deleted`);
     } catch (error) {
         console.error('[sync] Cycle failed:', error);
     } finally {
@@ -72,6 +78,10 @@ const server = http.createServer(async (req, res) => {
             const pcMeta = await getMetadata(pool, 'pengeluaran_categories');
             const klMeta = await getMetadata(pool, 'karyawan_list');
             const mlMeta = await getMetadata(pool, 'marketing_list');
+            const drMeta = await getMetadata(pool, 'analytics_daily_revenue');
+            const msMeta = await getMetadata(pool, 'analytics_monthly_summary');
+            const odMeta = await getMetadata(pool, 'analytics_occupancy_daily');
+            const esMeta = await getMetadata(pool, 'analytics_expense_summary');
 
             res.writeHead(200, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({
@@ -139,6 +149,30 @@ const server = http.createServer(async (req, res) => {
                     lastSyncAt: mlMeta.last_sync_at,
                     rowCount: mlMeta.row_count,
                     syncStatus: mlMeta.sync_status,
+                } : null,
+                analytics_daily_revenue: drMeta ? {
+                    lastSyncAt: drMeta.last_sync_at,
+                    rowCount: drMeta.row_count,
+                    syncStatus: drMeta.sync_status,
+                    refreshRange: drMeta.summary_refresh_range_start,
+                } : null,
+                analytics_monthly_summary: msMeta ? {
+                    lastSyncAt: msMeta.last_sync_at,
+                    rowCount: msMeta.row_count,
+                    syncStatus: msMeta.sync_status,
+                    refreshRange: msMeta.summary_refresh_range_start,
+                } : null,
+                analytics_occupancy_daily: odMeta ? {
+                    lastSyncAt: odMeta.last_sync_at,
+                    rowCount: odMeta.row_count,
+                    syncStatus: odMeta.sync_status,
+                    refreshRange: odMeta.summary_refresh_range_start,
+                } : null,
+                analytics_expense_summary: esMeta ? {
+                    lastSyncAt: esMeta.last_sync_at,
+                    rowCount: esMeta.row_count,
+                    syncStatus: esMeta.sync_status,
+                    refreshRange: esMeta.summary_refresh_range_start,
                 } : null,
             }));
         } catch {
