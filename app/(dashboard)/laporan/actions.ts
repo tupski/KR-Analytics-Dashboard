@@ -3,6 +3,8 @@
 import { createServerClient } from '@/lib/supabase/server';
 import { format, subDays } from 'date-fns';
 import { getDateRange, getPreviousDateRange, type DateFilter } from '@/lib/services/date-range';
+import { getRevenueSummary } from '@/lib/services/revenue';
+import { getExpenseSummary } from '@/lib/services/expense';
 
 export type { DateFilter };
 
@@ -97,9 +99,34 @@ export async function fetchLaporanData(filter: DateFilter = 'today'): Promise<La
         .order('checkin_at', { ascending: false });
 
     const txList = transactions || [];
-    const totalRevenue = txList.reduce((s, t: any) => s + (t.cash_amount || 0) + (t.transfer_amount || 0), 0);
-    const totalCash = txList.reduce((s, t: any) => s + (t.cash_amount || 0), 0);
-    const totalTransfer = txList.reduce((s, t: any) => s + (t.transfer_amount || 0), 0);
+
+    // ── REVENUE (analytics-first, legacy Supabase fallback) ──
+    let totalRevenue = 0, totalCash = 0, totalTransfer = 0, totalTransactions = txList.length;
+
+    try {
+        if (process.env.ANALYTICS_DATABASE_URL) {
+            const startDateStr = start.split('T')[0];
+            const endDateExcl = new Date(end);
+            endDateExcl.setDate(endDateExcl.getDate() + 1);
+            const endDateStr = endDateExcl.toISOString().split('T')[0];
+
+            const revSummary = await getRevenueSummary(startDateStr, endDateStr);
+            totalRevenue = revSummary.totalRevenue;
+            totalCash = revSummary.cashAmount;
+            totalTransfer = revSummary.transferAmount;
+            totalTransactions = revSummary.transactionCount;
+        }
+    } catch (e) {
+        console.warn('[laporan] Analytics revenue unavailable, falling back to Supabase:', e);
+    }
+
+    // Fallback: compute from Supabase txList if analytics didn't populate
+    if (totalRevenue === 0 && totalTransactions === 0) {
+        totalRevenue = txList.reduce((s, t: any) => s + (t.cash_amount || 0) + (t.transfer_amount || 0), 0);
+        totalCash = txList.reduce((s, t: any) => s + (t.cash_amount || 0), 0);
+        totalTransfer = txList.reduce((s, t: any) => s + (t.transfer_amount || 0), 0);
+        totalTransactions = txList.length;
+    }
 
     // Get rooms per location
     const { data: allRooms } = await supabase.from('nomor_kamar').select('name, lokasi');
@@ -145,39 +172,71 @@ export async function fetchLaporanData(filter: DateFilter = 'today'): Promise<La
         }))
         .sort((a, b) => b.revenue - a.revenue);
 
-    // Expenses in range
-    const { data: expenseData } = await supabase
-        .from('pengeluaran')
-        .select('category, jumlah, apartment_location, room_number')
-        .gte('tanggal', start.split('T')[0])
-        .lte('tanggal', end.split('T')[0]);
+    // ── EXPENSES (analytics-first, legacy Supabase fallback) ──
+    let expenses: ExpenseReport[] = [];
+    let totalExpenses = 0;
 
-    const expMap: Record<string, { total: number; count: number }> = {};
-    const expPerLocation: Record<string, { category: string; total: number; count: number }[]> = {};
+    try {
+        if (process.env.ANALYTICS_DATABASE_URL) {
+            const startDateStr = start.split('T')[0];
+            const endDateExcl = new Date(end);
+            endDateExcl.setDate(endDateExcl.getDate() + 1);
+            const endDateStr = endDateExcl.toISOString().split('T')[0];
 
-    expenseData?.forEach((e: any) => {
-        const cat = e.category || 'Lainnya';
-        if (!expMap[cat]) expMap[cat] = { total: 0, count: 0 };
-        expMap[cat].total += e.jumlah || 0;
-        expMap[cat].count++;
-
-        // Group by location only for expenses WITHOUT room_number (apartment-level)
-        // Expenses with room_number will be shown per-unit in the room detail modal
-        const loc = e.apartment_location;
-        const hasRoom = !!(e.room_number);
-        if (loc && !hasRoom) {
-            if (!expPerLocation[loc]) expPerLocation[loc] = [];
-            const existing = expPerLocation[loc].find(x => x.category === cat);
-            if (existing) { existing.total += e.jumlah || 0; existing.count++; }
-            else expPerLocation[loc].push({ category: cat, total: e.jumlah || 0, count: 1 });
+            const expSummary = await getExpenseSummary(startDateStr, endDateStr);
+            totalExpenses = expSummary.totalAmount;
+            expenses = expSummary.byCategory
+                .map(c => ({ category: c.category, total: c.total_amount, count: c.expense_count }))
+                .sort((a, b) => b.total - a.total);
         }
-    });
+    } catch (e) {
+        console.warn('[laporan] Analytics expenses unavailable, falling back to Supabase:', e);
+    }
 
-    const expenses = Object.entries(expMap)
-        .map(([category, d]) => ({ category, total: d.total, count: d.count }))
-        .sort((a, b) => b.total - a.total);
+    // Fallback: compute from Supabase pengeluaran if analytics didn't populate
+    if (totalExpenses === 0 && expenses.length === 0) {
+        const { data: expenseData } = await supabase
+            .from('pengeluaran')
+            .select('category, jumlah, apartment_location, room_number')
+            .gte('tanggal', start.split('T')[0])
+            .lte('tanggal', end.split('T')[0]);
 
-    const totalExpenses = expenses.reduce((s, e) => s + e.total, 0);
+        const expMap: Record<string, { total: number; count: number }> = {};
+        expenseData?.forEach((e: any) => {
+            const cat = e.category || 'Lainnya';
+            if (!expMap[cat]) expMap[cat] = { total: 0, count: 0 };
+            expMap[cat].total += e.jumlah || 0;
+            expMap[cat].count++;
+        });
+
+        expenses = Object.entries(expMap)
+            .map(([category, d]) => ({ category, total: d.total, count: d.count }))
+            .sort((a, b) => b.total - a.total);
+
+        totalExpenses = expenses.reduce((s, e) => s + e.total, 0);
+    }
+
+    // expensesPerLocation: keep legacy Supabase (shape mismatch with analytics byLocation)
+    const expPerLocation: Record<string, { category: string; total: number; count: number }[]> = {};
+    {
+        const { data: expenseLocData } = await supabase
+            .from('pengeluaran')
+            .select('category, jumlah, apartment_location, room_number')
+            .gte('tanggal', start.split('T')[0])
+            .lte('tanggal', end.split('T')[0]);
+
+        expenseLocData?.forEach((e: any) => {
+            const cat = e.category || 'Lainnya';
+            const loc = e.apartment_location;
+            const hasRoom = !!(e.room_number);
+            if (loc && !hasRoom) {
+                if (!expPerLocation[loc]) expPerLocation[loc] = [];
+                const existing = expPerLocation[loc].find(x => x.category === cat);
+                if (existing) { existing.total += e.jumlah || 0; existing.count++; }
+                else expPerLocation[loc].push({ category: cat, total: e.jumlah || 0, count: 1 });
+            }
+        });
+    }
 
     // Tagihan bulanan
     const { data: tagihanPaid } = await supabase
@@ -211,25 +270,52 @@ export async function fetchLaporanData(filter: DateFilter = 'today'): Promise<La
         unpaidCount: 0,
     };
 
-    // Comparison with previous period (always available, all filters)
+    // ── COMPARISON (analytics-first, legacy Supabase fallback) ──
     const prev = getPreviousDateRange(filter);
-    const [prevTxResult, prevExpResult] = await Promise.all([
-        supabase
-            .from('transactions')
-            .select('cash_amount, transfer_amount')
-            .gte('checkin_at', prev.start)
-            .lte('checkin_at', prev.end),
-        supabase
-            .from('pengeluaran')
-            .select('jumlah')
-            .gte('tanggal', prev.start.split('T')[0])
-            .lte('tanggal', prev.end.split('T')[0]),
-    ]);
+    let prevRevenue = 0, prevTransactions = 0, prevExpenses = 0;
+
+    try {
+        if (process.env.ANALYTICS_DATABASE_URL) {
+            const prevStartStr = prev.start.split('T')[0];
+            const prevEndExcl = new Date(prev.end);
+            prevEndExcl.setDate(prevEndExcl.getDate() + 1);
+            const prevEndStr = prevEndExcl.toISOString().split('T')[0];
+
+            const prevRevSummary = await getRevenueSummary(prevStartStr, prevEndStr);
+            prevRevenue = prevRevSummary.totalRevenue;
+            prevTransactions = prevRevSummary.transactionCount;
+
+            const prevExpSummary = await getExpenseSummary(prevStartStr, prevEndStr);
+            prevExpenses = prevExpSummary.totalAmount;
+        }
+    } catch (e) {
+        console.warn('[laporan] Analytics comparison unavailable, falling back to Supabase:', e);
+    }
+
+    // Fallback: compute from Supabase if analytics didn't populate
+    if (prevRevenue === 0 && prevTransactions === 0 && prevExpenses === 0) {
+        const [prevTxResult, prevExpResult] = await Promise.all([
+            supabase
+                .from('transactions')
+                .select('cash_amount, transfer_amount')
+                .gte('checkin_at', prev.start)
+                .lte('checkin_at', prev.end),
+            supabase
+                .from('pengeluaran')
+                .select('jumlah')
+                .gte('tanggal', prev.start.split('T')[0])
+                .lte('tanggal', prev.end.split('T')[0]),
+        ]);
+
+        prevRevenue = prevTxResult.data?.reduce((s, t: any) => s + (t.cash_amount || 0) + (t.transfer_amount || 0), 0) || 0;
+        prevTransactions = prevTxResult.data?.length || 0;
+        prevExpenses = prevExpResult.data?.reduce((s, e: any) => s + (e.jumlah || 0), 0) || 0;
+    }
 
     const comparison: LaporanData['comparison'] = {
-        prevRevenue: prevTxResult.data?.reduce((s, t: any) => s + (t.cash_amount || 0) + (t.transfer_amount || 0), 0) || 0,
-        prevTransactions: prevTxResult.data?.length || 0,
-        prevExpenses: prevExpResult.data?.reduce((s, e: any) => s + (e.jumlah || 0), 0) || 0,
+        prevRevenue,
+        prevTransactions,
+        prevExpenses,
         prevLabel: prev.label,
     };
 
@@ -237,7 +323,7 @@ export async function fetchLaporanData(filter: DateFilter = 'today'): Promise<La
         filter,
         filterLabel: label,
         totalRevenue,
-        totalTransactions: txList.length,
+        totalTransactions,
         totalCash,
         totalTransfer,
         locations,
