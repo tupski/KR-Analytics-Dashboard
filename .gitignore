@@ -72,3 +72,10 @@ SUPABASE_SETUP.md
 # Example/demo files (not production code)
 **/*.example.tsx
 lib/supabase/examples.tsx
+
+# Docker
+postgres_data/
+
+# Sync worker
+sync-worker/node_modules/
+sync-worker/dist/
