@@ -7,6 +7,7 @@ import { getSupabaseClient } from './supabase';
 import { syncTransactions } from './sync/transactions';
 import { syncPengeluaran } from './sync/pengeluaran';
 import { syncTagihanBulanan } from './sync/tagihan-bulanan';
+import { syncTagihanFeeLunasCombined } from './sync/tagihan-fee-lunas';
 import { getMetadata } from './sync/metadata';
 
 let lastSyncResult: { rowsSynced: number; rowsDeleted: number; durationMs: number } | null = null;
@@ -37,8 +38,13 @@ async function runSyncCycle() {
         const tbResult = await syncTagihanBulanan(pool, supabase);
         console.log(`[sync] tagihan_bulanan: ${tbResult.rowsSynced} synced, ${tbResult.rowsDeleted} deleted in ${tbResult.durationMs}ms`);
 
-        const totalDuration = Date.now() - (Date.now() - (txResult.durationMs + pResult.durationMs + tbResult.durationMs));
-        console.log(`[sync] Cycle complete: total ${txResult.rowsSynced + pResult.rowsSynced + tbResult.rowsSynced} synced, ${txResult.rowsDeleted + pResult.rowsDeleted + tbResult.rowsDeleted} deleted`);
+        // Sync tagihan_fee_lunas (parent) + tagihan_fee_lunas_items (items)
+        const flResult = await syncTagihanFeeLunasCombined(pool, supabase);
+        console.log(`[sync] tagihan_fee_lunas: ${flResult.parent.rowsSynced} synced, ${flResult.parent.rowsDeleted} deleted in ${flResult.parent.durationMs}ms`);
+        console.log(`[sync] tagihan_fee_lunas_items: ${flResult.items.rowsSynced} synced, ${flResult.items.rowsDeleted} deleted in ${flResult.items.durationMs}ms`);
+
+        const totalDuration = Date.now() - (Date.now() - (txResult.durationMs + pResult.durationMs + tbResult.durationMs + flResult.parent.durationMs + flResult.items.durationMs));
+        console.log(`[sync] Cycle complete: total ${txResult.rowsSynced + pResult.rowsSynced + tbResult.rowsSynced + flResult.parent.rowsSynced + flResult.items.rowsSynced} synced, ${txResult.rowsDeleted + pResult.rowsDeleted + tbResult.rowsDeleted + flResult.parent.rowsDeleted + flResult.items.rowsDeleted} deleted`);
     } catch (error) {
         console.error('[sync] Cycle failed:', error);
     } finally {
@@ -54,6 +60,8 @@ const server = http.createServer(async (req, res) => {
             const txMeta = await getMetadata(pool, 'transactions');
             const pMeta = await getMetadata(pool, 'pengeluaran');
             const tbMeta = await getMetadata(pool, 'tagihan_bulanan');
+            const flMeta = await getMetadata(pool, 'tagihan_fee_lunas');
+            const fliMeta = await getMetadata(pool, 'tagihan_fee_lunas_items');
 
             res.writeHead(200, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({
@@ -83,6 +91,20 @@ const server = http.createServer(async (req, res) => {
                     syncStatus: tbMeta.sync_status,
                     backfillDone: tbMeta.backfill_done,
                 } : null,
+                tagihan_fee_lunas: flMeta ? {
+                    lastSyncAt: flMeta.last_sync_at,
+                    lastMaxId: flMeta.last_max_id,
+                    rowCount: flMeta.row_count,
+                    syncStatus: flMeta.sync_status,
+                    backfillDone: flMeta.backfill_done,
+                } : null,
+                tagihan_fee_lunas_items: fliMeta ? {
+                    lastSyncAt: fliMeta.last_sync_at,
+                    lastMaxId: fliMeta.last_max_id,
+                    rowCount: fliMeta.row_count,
+                    syncStatus: fliMeta.sync_status,
+                    backfillDone: fliMeta.backfill_done,
+                } : null,
             }));
         } catch {
             res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -95,6 +117,8 @@ const server = http.createServer(async (req, res) => {
                 transactions: null,
                 pengeluaran: null,
                 tagihan_bulanan: null,
+                tagihan_fee_lunas: null,
+                tagihan_fee_lunas_items: null,
             }));
         }
         return;
