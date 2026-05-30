@@ -10,6 +10,7 @@ import CompareSwitcher from '@/components/dashboard/CompareSwitcher';
 import DashboardInsightSummary from '@/components/dashboard/DashboardInsightSummary';
 import LocationHealthMatrix from '@/components/dashboard/LocationHealthMatrix';
 import UnitPerformancePanel from '@/components/dashboard/UnitPerformancePanel';
+import ChannelPerformancePanel from '@/components/dashboard/ChannelPerformancePanel';
 import AIInsightCard from '@/components/ai/AIInsightCard';
 import {
     fetchKPIData,
@@ -20,6 +21,7 @@ import {
     fetchUnitStatus,
     fetchLocationHealthData,
     fetchUnitPerformanceData,
+    fetchChannelPerformanceData,
 } from './actions';
 import { generateInsights } from '@/lib/dashboard/insights';
 import type { KPICompareMode } from '@/types/dashboard';
@@ -53,6 +55,7 @@ export default async function DashboardPage({
         unitStatusData,
         locationHealthData,
         unitPerformanceData,
+        channelPerformanceData,
     ] = await Promise.all([
         fetchKPIData(compareMode || undefined),
         fetchRevenueData('daily'),
@@ -62,6 +65,7 @@ export default async function DashboardPage({
         fetchUnitStatus(),
         fetchLocationHealthData(),
         fetchUnitPerformanceData(),
+        fetchChannelPerformanceData(),
     ]);
 
     // Generate deterministic insights from fetched data
@@ -166,6 +170,15 @@ export default async function DashboardPage({
                     {/* Unit Performance Section */}
                     <UnitPerformancePanel
                         data={unitPerformanceData}
+                        isLoading={false}
+                    />
+
+                    {/* Channel Performance Section */}
+                    <ChannelPerformancePanel
+                        items={channelPerformanceData.items}
+                        totalRevenue={channelPerformanceData.totalRevenue}
+                        totalTransactions={channelPerformanceData.totalTransactions}
+                        activeChannels={channelPerformanceData.activeChannels}
                         isLoading={false}
                     />
 

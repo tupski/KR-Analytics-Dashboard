@@ -9,7 +9,8 @@ import { getRevenueTrend } from '@/lib/services/revenue';
 import { getLocations } from '@/lib/services/location';
 import { applyLocationHealthStatuses } from '@/lib/dashboard/location-health';
 import { getIdleSeverity } from '@/lib/dashboard/unit-performance';
-import type { LocationHealthItem, IdleUnitItem, UnitPerformanceItem } from '@/types/dashboard';
+import type { LocationHealthItem, IdleUnitItem, UnitPerformanceItem, ChannelPerformanceItem, ChannelPerformanceStatus } from '@/types/dashboard';
+import { normalizeChannelName, getChannelStatus } from '@/lib/dashboard/channel-performance';
 import type { UnitPerformanceData } from '@/lib/dashboard/unit-performance';
 import { format, subDays, subWeeks, subMonths, subYears, startOfWeek, startOfMonth, startOfYear } from 'date-fns';
 import { id as idLocale } from 'date-fns/locale';
@@ -840,5 +841,82 @@ export async function fetchUnitPerformanceData(): Promise<UnitPerformanceData> {
     } catch (error) {
         console.error('Error in fetchUnitPerformanceData:', error);
         return { idleUnits: [], topUnits: [], bottomUnits: [] };
+    }
+}
+
+/**
+ * Fetch channel (marketing/source) performance data for the current report period.
+ *
+ * Uses getTodayReportRange() for period-aware boundaries.
+ * Aggregates marketing_name from transactions, summing cash_amount + transfer_amount.
+ * Null/empty marketing_name → 'Tidak Diketahui'.
+ */
+export async function fetchChannelPerformanceData(): Promise<{
+    items: ChannelPerformanceItem[];
+    totalRevenue: number;
+    totalTransactions: number;
+    activeChannels: number;
+}> {
+    const supabase = createServerClient();
+    const { start, end } = await getTodayReportRange();
+
+    try {
+        const { data, error } = await supabase
+            .from('transactions')
+            .select('marketing_name, cash_amount, transfer_amount')
+            .gte('checkin_at', start)
+            .lte('checkin_at', end);
+
+        if (error) {
+            console.error('Error fetching channel performance:', error);
+            throw new Error(`Gagal mengambil data channel: ${error.message}`);
+        }
+
+        if (!data || data.length === 0) {
+            return { items: [], totalRevenue: 0, totalTransactions: 0, activeChannels: 0 };
+        }
+
+        // Aggregate in JS
+        const channelMap = new Map<string, { count: number; revenue: number }>();
+        let totalRevenue = 0;
+        let totalTx = 0;
+
+        data.forEach((tx: { marketing_name: string | null; cash_amount: number | null; transfer_amount: number | null }) => {
+            const channel = normalizeChannelName(tx.marketing_name);
+            const revenue = (tx.cash_amount || 0) + (tx.transfer_amount || 0);
+            const existing = channelMap.get(channel) || { count: 0, revenue: 0 };
+            existing.count += 1;
+            existing.revenue += revenue;
+            channelMap.set(channel, existing);
+            totalRevenue += revenue;
+            totalTx += 1;
+        });
+
+        const items: ChannelPerformanceItem[] = Array.from(channelMap.entries())
+            .map(([channel, data]) => ({
+                channel,
+                transactionCount: data.count,
+                totalRevenue: data.revenue,
+                averageTransaction: data.count > 0 ? data.revenue / data.count : 0,
+                percentageOfRevenue: totalRevenue > 0 ? (data.revenue / totalRevenue) * 100 : 0,
+                percentageOfTransactions: totalTx > 0 ? (data.count / totalTx) * 100 : 0,
+                status: 'normal' as ChannelPerformanceStatus,
+            }))
+            .sort((a, b) => b.totalRevenue - a.totalRevenue);
+
+        // Apply statuses
+        items.forEach(item => {
+            item.status = getChannelStatus(item, items);
+        });
+
+        return {
+            items,
+            totalRevenue,
+            totalTransactions: totalTx,
+            activeChannels: items.filter(i => i.channel !== 'Tidak Diketahui').length,
+        };
+    } catch (error) {
+        console.error('Error in fetchChannelPerformanceData:', error);
+        return { items: [], totalRevenue: 0, totalTransactions: 0, activeChannels: 0 };
     }
 }
