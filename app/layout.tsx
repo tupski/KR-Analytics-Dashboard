@@ -2,14 +2,46 @@ import type { Metadata } from 'next';
 import { Inter } from 'next/font/google';
 import NavigationProgress from '@/components/layout/NavigationProgress';
 import ErrorBoundary from '@/components/ErrorBoundary';
+import { createServerClient } from '@/lib/supabase/server';
 import './globals.css';
 
 const inter = Inter({ subsets: ['latin'] });
 
-export const metadata: Metadata = {
-    title: 'Kakarama Room Analytics Dashboard',
-    description: 'Analytics dashboard for Kakarama Room apartment rental',
-};
+export const dynamic = 'force-dynamic';
+
+export async function generateMetadata(): Promise<Metadata> {
+    let faviconUrl: string | null | undefined;
+
+    try {
+        const supabase = createServerClient();
+        const { data } = await supabase
+            .from('app_settings')
+            .select('value, updated_at')
+            .eq('key', 'favicon_url')
+            .maybeSingle();
+
+        if (data?.value) {
+            const ts = data.updated_at
+                ? new Date(data.updated_at).getTime().toString()
+                : Date.now().toString();
+            faviconUrl = `${data.value}?v=${ts}`;
+        }
+    } catch {
+        // DB unavailable — skip favicon
+    }
+
+    return {
+        title: 'Kakarama Room Analytics Dashboard',
+        description: 'Analytics dashboard for Kakarama Room apartment rental',
+        icons: faviconUrl
+            ? {
+                icon: faviconUrl,
+                shortcut: faviconUrl,
+                apple: faviconUrl,
+            }
+            : undefined,
+    };
+}
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
     return (

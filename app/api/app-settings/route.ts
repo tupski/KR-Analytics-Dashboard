@@ -18,6 +18,7 @@ export async function GET() {
                 logo_url: null,
                 favicon_url: null,
                 primary_color: '#2563eb',
+                report_period_mode: 'calendar_day',
             });
         }
 
@@ -28,6 +29,7 @@ export async function GET() {
             logo_url: map.logo_url || null,
             favicon_url: map.favicon_url || null,
             primary_color: map.primary_color || '#2563eb',
+            report_period_mode: map.report_period_mode || 'calendar_day',
         });
     } catch {
         return NextResponse.json({

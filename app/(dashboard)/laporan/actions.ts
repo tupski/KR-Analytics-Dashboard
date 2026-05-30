@@ -3,6 +3,7 @@
 import { createServerClient } from '@/lib/supabase/server';
 import { format, subDays, startOfMonth, endOfMonth, parseISO } from 'date-fns';
 import { getDateRange, getPreviousDateRange, isMonthAligned, type DateFilter } from '@/lib/services/date-range';
+import { getReportPeriodSetting } from '@/lib/get-report-period-setting';
 import { getRevenueSummary } from '@/lib/services/revenue';
 import { getExpenseSummary } from '@/lib/services/expense';
 import { getMonthlySummaries } from '@/lib/analytics/monthly';
@@ -89,7 +90,8 @@ export interface LaporanData {
 
 export async function fetchLaporanData(filter: DateFilter = 'today'): Promise<LaporanData> {
     const supabase = createServerClient();
-    const { start, end, label } = getDateRange(filter);
+    const mode = await getReportPeriodSetting();
+    const { start, end, label } = getDateRange(filter, mode);
 
     // Fetch transactions in range
     const { data: transactions } = await supabase
@@ -376,7 +378,7 @@ export async function fetchLaporanData(filter: DateFilter = 'today'): Promise<La
     }
 
     // ── COMPARISON (analytics-first, legacy Supabase fallback) ──
-    const prev = getPreviousDateRange(filter);
+    const prev = getPreviousDateRange(filter, mode);
     let prevRevenue = 0, prevTransactions = 0, prevExpenses = 0;
     let analyticsComparisonUsed = false;
 

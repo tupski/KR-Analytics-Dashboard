@@ -1,7 +1,7 @@
 'use server';
 
 import { createServerClient } from '@/lib/supabase/server';
-import { getHotelDayRange } from '@/lib/services/date-range';
+import { getTodayReportRange } from '@/lib/get-report-period-setting';
 import { getLiveOccupancy, getDailyOccupancyTrend } from '@/lib/services/occupancy';
 import { getRevenueTrend } from '@/lib/services/revenue';
 import { format, subDays, subWeeks, subMonths, subYears, startOfWeek, startOfMonth, startOfYear } from 'date-fns';
@@ -43,7 +43,7 @@ export async function fetchUnitStatus(): Promise<UnitStatusCounts> {
  */
 export async function fetchTodayCheckins(): Promise<CheckinItem[]> {
     const supabase = createServerClient();
-    const { start, end } = getHotelDayRange();
+    const { start, end } = await getTodayReportRange();
 
     try {
         const { data, error } = await supabase
@@ -93,7 +93,7 @@ export async function fetchTodayCheckins(): Promise<CheckinItem[]> {
  */
 export async function fetchTodayCheckouts(): Promise<CheckoutItem[]> {
     const supabase = createServerClient();
-    const { start, end } = getHotelDayRange();
+    const { start, end } = await getTodayReportRange();
 
     try {
         const { data, error } = await supabase
@@ -222,8 +222,8 @@ export async function fetchKPIData(compareMode?: KPICompareMode): Promise<KPIDat
             .select('id', { count: 'exact', head: true });
         const totalRoomsCount = totalRooms || 0;
 
-        // Today's snapshot — hotel day: 12:00 WIB today → 11:59:59 WIB tomorrow
-        const { start: dayStart, end: dayEnd } = getHotelDayRange();
+        // Today's snapshot — uses report_period_mode from DB (calendar_day or hotel_day)
+        const { start: dayStart, end: dayEnd } = await getTodayReportRange();
 
         const { count: bookingCount } = await supabase
             .from('transactions')
@@ -526,16 +526,16 @@ export async function fetchOccupancyData(days: number = 30): Promise<OccupancyDa
  * Returns normalized SyncFreshnessResult — never throws.
  */
 export async function getSyncFreshness(): Promise<import('@/lib/analytics/sync-freshness').SyncFreshnessResult> {
-  const { getSyncFreshnessResult } = await import('@/lib/analytics/sync-freshness');
-  try {
-    return await getSyncFreshnessResult();
-  } catch {
-    return {
-      status: 'unavailable' as const,
-      lastSyncAt: null,
-      lastSyncAtWIB: null,
-      rowsSyncedLastRun: null,
-      errorMessage: 'Gagal mengambil status sinkronisasi',
-    };
-  }
+    const { getSyncFreshnessResult } = await import('@/lib/analytics/sync-freshness');
+    try {
+        return await getSyncFreshnessResult();
+    } catch {
+        return {
+            status: 'unavailable' as const,
+            lastSyncAt: null,
+            lastSyncAtWIB: null,
+            rowsSyncedLastRun: null,
+            errorMessage: 'Gagal mengambil status sinkronisasi',
+        };
+    }
 }

@@ -264,6 +264,24 @@ export default function AppSettingsClient({ initialSettings }: Props) {
                 </div>
             </div>
 
+            {/* Report Period Mode */}
+            <div>
+                <label htmlFor="report_period_mode" className="block text-sm font-medium text-gray-700 mb-1.5">
+                    Mode Periode Laporan
+                </label>
+                <p className="text-sm text-gray-500 mb-2">Pilih bagaimana sistem menghitung periode laporan harian.</p>
+                <select
+                    id="report_period_mode"
+                    value={settings.report_period_mode}
+                    onChange={(e) => setSettings(prev => ({ ...prev, report_period_mode: e.target.value }))}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none bg-white"
+                >
+                    <option value="calendar_day">Harian Kalender — 00:00 sampai 23:59</option>
+                    <option value="hotel_day">Jam Hotel — 12:00 sampai 11:59 hari berikutnya</option>
+                </select>
+                <p className="text-xs text-gray-500 mt-1">Mengubah mode akan memengaruhi rentang tanggal pada laporan harian.</p>
+            </div>
+
             {/* Primary Color */}
             <div>
                 <label htmlFor="primary_color" className="block text-sm font-medium text-gray-700 mb-1.5">

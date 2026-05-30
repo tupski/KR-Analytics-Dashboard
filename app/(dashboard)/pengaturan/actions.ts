@@ -8,6 +8,7 @@ export interface AppSettings {
     logo_url: string | null;
     favicon_url: string | null;
     primary_color: string;
+    report_period_mode: string;
 }
 
 /**
@@ -28,6 +29,7 @@ export async function fetchAppSettings(): Promise<AppSettings> {
             logo_url: null,
             favicon_url: null,
             primary_color: '#2563eb',
+            report_period_mode: 'calendar_day',
         };
     }
 
@@ -38,6 +40,7 @@ export async function fetchAppSettings(): Promise<AppSettings> {
         logo_url: map.logo_url || null,
         favicon_url: map.favicon_url || null,
         primary_color: map.primary_color || '#2563eb',
+        report_period_mode: map.report_period_mode || 'calendar_day',
     };
 }
 
@@ -63,6 +66,9 @@ export async function updateAppSettings(settings: Partial<AppSettings>): Promise
         }
         if (settings.primary_color !== undefined) {
             entries.push({ key: 'primary_color', value: settings.primary_color });
+        }
+        if (settings.report_period_mode !== undefined) {
+            entries.push({ key: 'report_period_mode', value: settings.report_period_mode });
         }
 
         for (const entry of entries) {

@@ -14,12 +14,13 @@ const defaults: AppSettings = {
     logo_url: null,
     favicon_url: null,
     primary_color: '#2563eb',
+    report_period_mode: 'calendar_day',
 };
 
 const AppSettingsCtx = createContext<AppSettingsContextValue>({
     settings: defaults,
     loading: true,
-    refresh: () => {},
+    refresh: () => { },
 });
 
 export function useAppSettings() {
@@ -47,6 +48,7 @@ export function AppSettingsProvider({ children }: { children: ReactNode }) {
                             logo_url: data.logo_url || null,
                             favicon_url: data.favicon_url || null,
                             primary_color: data.primary_color || defaults.primary_color,
+                            report_period_mode: data.report_period_mode || defaults.report_period_mode,
                         });
                     }
                 }
