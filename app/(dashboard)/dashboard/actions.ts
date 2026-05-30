@@ -6,6 +6,9 @@ import { getReportPeriodRange } from '@/lib/reporting-period';
 import type { ReportPeriodMode } from '@/lib/reporting-period';
 import { getLiveOccupancy, getDailyOccupancyTrend } from '@/lib/services/occupancy';
 import { getRevenueTrend } from '@/lib/services/revenue';
+import { getLocations } from '@/lib/services/location';
+import { applyLocationHealthStatuses } from '@/lib/dashboard/location-health';
+import type { LocationHealthItem } from '@/types/dashboard';
 import { format, subDays, subWeeks, subMonths, subYears, startOfWeek, startOfMonth, startOfYear } from 'date-fns';
 import { id as idLocale } from 'date-fns/locale';
 import { toZonedTime } from 'date-fns-tz';
@@ -550,5 +553,98 @@ export async function getSyncFreshness(): Promise<import('@/lib/analytics/sync-f
             rowsSyncedLastRun: null,
             errorMessage: 'Gagal mengambil status sinkronisasi',
         };
+    }
+}
+
+/**
+ * Fetch per-location health matrix for the current report period.
+ *
+ * Returns location health items with: total units, occupied units (active stay),
+ * occupancy rate, revenue, revenue per unit, and computed health status.
+ *
+ * Uses `getTodayReportRange()` to respect report_period_mode.
+ * Occupancy uses the same stay-span overlap model as getLiveOccupancy():
+ *   checkin_at ≤ now AND checkout_at ≥ now.
+ * Revenue sums cash_amount + transfer_amount for bookings with checkin_at
+ * within the report period.
+ */
+export async function fetchLocationHealthData(): Promise<LocationHealthItem[]> {
+    const supabase = createServerClient();
+    const { start: periodStart, end: periodEnd } = await getTodayReportRange();
+    const nowIso = new Date().toISOString();
+
+    try {
+        // 1. Get all locations with room counts
+        const locations = await getLocations();
+        if (locations.length === 0) return [];
+
+        // 2. Get all rooms per location for mapping
+        const { data: allRooms } = await supabase
+            .from('nomor_kamar')
+            .select('name, lokasi');
+
+        const roomsPerLocation: Record<string, number> = {};
+        allRooms?.forEach((r: any) => {
+            roomsPerLocation[r.lokasi] = (roomsPerLocation[r.lokasi] || 0) + 1;
+        });
+
+        // 3. Get active stays (occupancy) per location — stay-span overlap
+        const { data: activeStays } = await supabase
+            .from('transactions')
+            .select('room_number, apartment_location')
+            .lte('checkin_at', nowIso)
+            .gte('checkout_at', nowIso);
+
+        const occupiedPerLocation: Record<string, Set<string>> = {};
+        activeStays?.forEach((t: any) => {
+            const loc = t.apartment_location;
+            if (!occupiedPerLocation[loc]) occupiedPerLocation[loc] = new Set();
+            occupiedPerLocation[loc].add(`${t.apartment_location}-${t.room_number}`);
+        });
+
+        // 4. Get revenue per location within the report period
+        const { data: revenueData } = await supabase
+            .from('transactions')
+            .select('apartment_location, cash_amount, transfer_amount')
+            .gte('checkin_at', periodStart)
+            .lte('checkin_at', periodEnd);
+
+        const revenuePerLocation: Record<string, number> = {};
+        revenueData?.forEach((t: any) => {
+            const loc = t.apartment_location;
+            revenuePerLocation[loc] = (revenuePerLocation[loc] || 0)
+                + (t.cash_amount || 0) + (t.transfer_amount || 0);
+        });
+
+        // 5. Build location health items
+        const items: LocationHealthItem[] = locations.map((loc) => {
+            const totalUnits = roomsPerLocation[loc.name] || loc.totalRooms || 0;
+            const occupiedUnits = occupiedPerLocation[loc.name]?.size || 0;
+            const availableUnits = Math.max(0, totalUnits - occupiedUnits);
+            const occupancyRate = totalUnits > 0
+                ? Math.round((occupiedUnits / totalUnits) * 10000) / 100
+                : 0;
+            const revenue = revenuePerLocation[loc.name] || 0;
+            const revenuePerUnit = occupiedUnits > 0
+                ? Math.round(revenue / occupiedUnits)
+                : (totalUnits > 0 ? Math.round(revenue / totalUnits) : 0);
+
+            return {
+                location: loc.name,
+                totalUnits,
+                occupiedUnits,
+                availableUnits,
+                occupancyRate,
+                revenue,
+                revenuePerUnit,
+                status: 'no_data' as const,
+            };
+        });
+
+        // 6. Apply status computation
+        return applyLocationHealthStatuses(items);
+    } catch (error) {
+        console.error('Error in fetchLocationHealthData:', error);
+        return [];
     }
 }

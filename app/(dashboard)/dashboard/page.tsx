@@ -8,6 +8,7 @@ import StatusUnit from '@/components/dashboard/StatusUnit';
 import AutoRefreshWrapper from '@/components/dashboard/AutoRefreshWrapper';
 import CompareSwitcher from '@/components/dashboard/CompareSwitcher';
 import DashboardInsightSummary from '@/components/dashboard/DashboardInsightSummary';
+import LocationHealthMatrix from '@/components/dashboard/LocationHealthMatrix';
 import AIInsightCard from '@/components/ai/AIInsightCard';
 import {
     fetchKPIData,
@@ -16,6 +17,7 @@ import {
     fetchTodayCheckins,
     fetchTodayCheckouts,
     fetchUnitStatus,
+    fetchLocationHealthData,
 } from './actions';
 import { generateInsights } from '@/lib/dashboard/insights';
 import type { KPICompareMode } from '@/types/dashboard';
@@ -47,6 +49,7 @@ export default async function DashboardPage({
         checkinsData,
         checkoutsData,
         unitStatusData,
+        locationHealthData,
     ] = await Promise.all([
         fetchKPIData(compareMode || undefined),
         fetchRevenueData('daily'),
@@ -54,6 +57,7 @@ export default async function DashboardPage({
         fetchTodayCheckins(),
         fetchTodayCheckouts(),
         fetchUnitStatus(),
+        fetchLocationHealthData(),
     ]);
 
     // Generate deterministic insights from fetched data
@@ -148,6 +152,12 @@ export default async function DashboardPage({
 
                     {/* Insight Summary Section */}
                     <DashboardInsightSummary insights={insights} />
+
+                    {/* Location Health Matrix Section */}
+                    <LocationHealthMatrix
+                        locations={locationHealthData}
+                        isLoading={false}
+                    />
 
                     {/* Charts Section */}
                     <section className="grid grid-cols-1 lg:grid-cols-2 gap-3 sm:gap-4 lg:gap-6">

@@ -76,6 +76,26 @@ export interface UnitStatusCounts {
 
 export type UnitStatus = 'tersedia' | 'ditempati';
 
+// ─── Location Health Matrix ───
+export type LocationHealthStatus =
+  | 'healthy'
+  | 'low_occupancy'
+  | 'high_occupancy'
+  | 'low_revenue'
+  | 'needs_attention'
+  | 'no_data';
+
+export type LocationHealthItem = {
+  location: string;
+  totalUnits: number;
+  occupiedUnits: number;
+  availableUnits: number;
+  occupancyRate: number; // 0-100
+  revenue: number;
+  revenuePerUnit: number;
+  status: LocationHealthStatus;
+};
+
 // ─── Dashboard Insight ───
 export type InsightSeverity = 'good' | 'info' | 'warning' | 'critical';
 export type InsightTrend = 'up' | 'down' | 'flat';
