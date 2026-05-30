@@ -53,6 +53,24 @@ export function decryptApiKey(enc: string, ivB64: string): string {
     const { createDecipheriv } = require('crypto') as typeof import('crypto');
     const key = getEncryptionKey();
     const iv = Buffer.from(ivB64, 'base64');
+
+    // Detect legacy format (saved by ai-actions.ts):
+    //   api_key_enc = "base64Ciphertext.base64AuthTag"  (dot-separated)
+    // vs new format (saved by configServer.ts):
+    //   api_key_enc = base64(authTag[16] + ciphertext)   (binary prepended)
+    if (enc.includes('.')) {
+        // Legacy format: "${encrypted}.${authTag}" from ai-actions.ts
+        const [cipherB64, authTagB64] = enc.split('.');
+        const decipher = createDecipheriv('aes-256-gcm', key, iv);
+        decipher.setAuthTag(Buffer.from(authTagB64, 'base64'));
+        const decrypted = Buffer.concat([
+            decipher.update(Buffer.from(cipherB64, 'base64')),
+            decipher.final(),
+        ]);
+        return decrypted.toString('utf8');
+    }
+
+    // New format: authTag (16 bytes) prepended to ciphertext
     const combined = Buffer.from(enc, 'base64');
     const authTag = combined.subarray(0, 16);
     const ciphertext = combined.subarray(16);
