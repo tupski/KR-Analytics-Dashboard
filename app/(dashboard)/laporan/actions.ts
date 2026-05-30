@@ -107,22 +107,25 @@ export async function fetchLaporanData(filter: DateFilter = 'today'): Promise<La
     let totalRevenue = 0, totalCash = 0, totalTransfer = 0, totalTransactions = txList.length;
     let analyticsRevenueUsed = false;
 
-    try {
-        if (process.env.ANALYTICS_DATABASE_URL) {
-            const startDateStr = start.split('T')[0];
-            const endDateExcl = new Date(end);
-            endDateExcl.setDate(endDateExcl.getDate() + 1);
-            const endDateStr = endDateExcl.toISOString().split('T')[0];
+    // hotel_day: skip analytics aggregate to preserve ISO time boundaries
+    if (mode !== 'hotel_day') {
+        try {
+            if (process.env.ANALYTICS_DATABASE_URL) {
+                const startDateStr = start.split('T')[0];
+                const endDateExcl = new Date(end);
+                endDateExcl.setDate(endDateExcl.getDate() + 1);
+                const endDateStr = endDateExcl.toISOString().split('T')[0];
 
-            const revSummary = await getRevenueSummary(startDateStr, endDateStr);
-            totalRevenue = revSummary.totalRevenue;
-            totalCash = revSummary.cashAmount;
-            totalTransfer = revSummary.transferAmount;
-            totalTransactions = revSummary.transactionCount;
-            analyticsRevenueUsed = true;
+                const revSummary = await getRevenueSummary(startDateStr, endDateStr);
+                totalRevenue = revSummary.totalRevenue;
+                totalCash = revSummary.cashAmount;
+                totalTransfer = revSummary.transferAmount;
+                totalTransactions = revSummary.transactionCount;
+                analyticsRevenueUsed = true;
+            }
+        } catch (e) {
+            console.warn('[laporan] Analytics revenue unavailable, falling back to Supabase:', e);
         }
-    } catch (e) {
-        console.warn('[laporan] Analytics revenue unavailable, falling back to Supabase:', e);
     }
 
     // Fallback: compute from Supabase txList if analytics threw error
@@ -182,22 +185,25 @@ export async function fetchLaporanData(filter: DateFilter = 'today'): Promise<La
     let totalExpenses = 0;
     let analyticsExpensesUsed = false;
 
-    try {
-        if (process.env.ANALYTICS_DATABASE_URL) {
-            const startDateStr = start.split('T')[0];
-            const endDateExcl = new Date(end);
-            endDateExcl.setDate(endDateExcl.getDate() + 1);
-            const endDateStr = endDateExcl.toISOString().split('T')[0];
+    // hotel_day: skip analytics aggregate to preserve ISO time boundaries
+    if (mode !== 'hotel_day') {
+        try {
+            if (process.env.ANALYTICS_DATABASE_URL) {
+                const startDateStr = start.split('T')[0];
+                const endDateExcl = new Date(end);
+                endDateExcl.setDate(endDateExcl.getDate() + 1);
+                const endDateStr = endDateExcl.toISOString().split('T')[0];
 
-            const expSummary = await getExpenseSummary(startDateStr, endDateStr);
-            totalExpenses = expSummary.totalAmount;
-            expenses = expSummary.byCategory
-                .map(c => ({ category: c.category, total: c.total_amount, count: c.expense_count }))
-                .sort((a, b) => b.total - a.total);
-            analyticsExpensesUsed = true;
+                const expSummary = await getExpenseSummary(startDateStr, endDateStr);
+                totalExpenses = expSummary.totalAmount;
+                expenses = expSummary.byCategory
+                    .map(c => ({ category: c.category, total: c.total_amount, count: c.expense_count }))
+                    .sort((a, b) => b.total - a.total);
+                analyticsExpensesUsed = true;
+            }
+        } catch (e) {
+            console.warn('[laporan] Analytics expenses unavailable, falling back to Supabase:', e);
         }
-    } catch (e) {
-        console.warn('[laporan] Analytics expenses unavailable, falling back to Supabase:', e);
     }
 
     // Fallback: compute from Supabase pengeluaran if analytics threw error
@@ -258,7 +264,8 @@ export async function fetchLaporanData(filter: DateFilter = 'today'): Promise<La
     const endDateObj = parseISO(end.split('T')[0]);
     const isMonthAlignedRange = isMonthAligned(startDateObj, endDateObj);
 
-    if (isMonthAlignedRange && process.env.ANALYTICS_DATABASE_URL) {
+    // hotel_day: skip analytics monthly summaries (calendar-month aggregation breaks ISO time boundaries)
+    if (isMonthAlignedRange && mode !== 'hotel_day' && process.env.ANALYTICS_DATABASE_URL) {
         try {
             // Extract year/month range
             const startYear = startDateObj.getFullYear();
@@ -321,7 +328,8 @@ export async function fetchLaporanData(filter: DateFilter = 'today'): Promise<La
         unpaidCount: 0,
     };
 
-    if (isMonthAlignedRange && process.env.ANALYTICS_DATABASE_URL) {
+    // hotel_day: skip analytics monthly summaries (calendar-month aggregation breaks ISO time boundaries)
+    if (isMonthAlignedRange && mode !== 'hotel_day' && process.env.ANALYTICS_DATABASE_URL) {
         try {
             // Extract year/month range
             const startYear = startDateObj.getFullYear();
@@ -382,23 +390,26 @@ export async function fetchLaporanData(filter: DateFilter = 'today'): Promise<La
     let prevRevenue = 0, prevTransactions = 0, prevExpenses = 0;
     let analyticsComparisonUsed = false;
 
-    try {
-        if (process.env.ANALYTICS_DATABASE_URL) {
-            const prevStartStr = prev.start.split('T')[0];
-            const prevEndExcl = new Date(prev.end);
-            prevEndExcl.setDate(prevEndExcl.getDate() + 1);
-            const prevEndStr = prevEndExcl.toISOString().split('T')[0];
+    // hotel_day: skip analytics aggregate to preserve ISO time boundaries
+    if (mode !== 'hotel_day') {
+        try {
+            if (process.env.ANALYTICS_DATABASE_URL) {
+                const prevStartStr = prev.start.split('T')[0];
+                const prevEndExcl = new Date(prev.end);
+                prevEndExcl.setDate(prevEndExcl.getDate() + 1);
+                const prevEndStr = prevEndExcl.toISOString().split('T')[0];
 
-            const prevRevSummary = await getRevenueSummary(prevStartStr, prevEndStr);
-            prevRevenue = prevRevSummary.totalRevenue;
-            prevTransactions = prevRevSummary.transactionCount;
+                const prevRevSummary = await getRevenueSummary(prevStartStr, prevEndStr);
+                prevRevenue = prevRevSummary.totalRevenue;
+                prevTransactions = prevRevSummary.transactionCount;
 
-            const prevExpSummary = await getExpenseSummary(prevStartStr, prevEndStr);
-            prevExpenses = prevExpSummary.totalAmount;
-            analyticsComparisonUsed = true;
+                const prevExpSummary = await getExpenseSummary(prevStartStr, prevEndStr);
+                prevExpenses = prevExpSummary.totalAmount;
+                analyticsComparisonUsed = true;
+            }
+        } catch (e) {
+            console.warn('[laporan] Analytics comparison unavailable, falling back to Supabase:', e);
         }
-    } catch (e) {
-        console.warn('[laporan] Analytics comparison unavailable, falling back to Supabase:', e);
     }
 
     // Fallback: compute from Supabase if analytics threw error

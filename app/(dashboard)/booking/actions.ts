@@ -4,6 +4,7 @@ import { createServerClient } from '@/lib/supabase/server';
 import { getLocations } from '@/lib/services/location';
 import { format } from 'date-fns';
 import { toZonedTime } from 'date-fns-tz';
+import { getTodayReportRange } from '@/lib/get-report-period-setting';
 
 export interface BookingItem {
     id: number;
@@ -136,14 +137,16 @@ export async function fetchBookingStats() {
     const today = format(toZonedTime(new Date(), timezone), 'yyyy-MM-dd');
 
     try {
-        // Today's bookings count
+        // Today's bookings count — use report period setting
+        const { start: todayStart, end: todayEnd } = await getTodayReportRange();
+
         const { count: todayCount } = await supabase
             .from('transactions')
             .select('id', { count: 'exact', head: true })
-            .gte('checkin_at', `${today}T00:00:00`)
-            .lt('checkin_at', `${today}T23:59:59`);
+            .gte('checkin_at', todayStart)
+            .lte('checkin_at', todayEnd);
 
-        // This week's bookings
+        // This week's bookings (same range start)
         const weekAgo = new Date();
         weekAgo.setDate(weekAgo.getDate() - 7);
         const weekAgoStr = format(toZonedTime(weekAgo, timezone), 'yyyy-MM-dd');
@@ -153,7 +156,7 @@ export async function fetchBookingStats() {
             .select('id', { count: 'exact', head: true })
             .gte('checkin_at', `${weekAgoStr}T00:00:00`);
 
-        // This month's bookings
+        // This month's bookings (month-aligned, not period-dependent)
         const monthStart = format(toZonedTime(new Date(), timezone), 'yyyy-MM-01');
 
         const { count: monthCount } = await supabase

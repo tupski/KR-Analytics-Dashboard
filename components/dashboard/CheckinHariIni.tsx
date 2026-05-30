@@ -4,6 +4,9 @@ import React from 'react';
 import Link from 'next/link';
 import { ArrowDown } from 'lucide-react';
 import { CheckinItem } from '@/types/dashboard';
+import { useAppSettings } from '@/lib/contexts/AppSettingsContext';
+import { REPORT_PERIOD_DESCRIPTIONS } from '@/lib/reporting-period';
+import type { ReportPeriodMode } from '@/lib/reporting-period';
 
 interface CheckinHariIniProps {
     items: CheckinItem[];
@@ -18,6 +21,9 @@ interface CheckinHariIniProps {
  * 
  */
 export default function CheckinHariIni({ items, isLoading = false }: CheckinHariIniProps) {
+    const { settings } = useAppSettings();
+    const periodMode: ReportPeriodMode = (settings?.report_period_mode as ReportPeriodMode) || 'calendar_day';
+    const periodDesc = REPORT_PERIOD_DESCRIPTIONS[periodMode];
     // Show skeleton loader when loading
     if (isLoading) {
         return (
@@ -135,7 +141,7 @@ export default function CheckinHariIni({ items, isLoading = false }: CheckinHari
             )}
 
             <p className="mt-3 text-xs text-gray-400 text-center">
-                Periode hotel hari ini: 12:00 WIB kemarin – 11:59 WIB hari ini
+                Periode {periodMode === 'hotel_day' ? 'hotel' : 'harian'}: {periodDesc}
             </p>
         </div>
     );
