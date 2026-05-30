@@ -336,16 +336,28 @@ export async function POST(request: NextRequest) {
                     return getModelPriority(a.provider, a.model) - getModelPriority(b.provider, b.model);
                 });
             } else {
-                // Explicit provider+model selected — use exact match from DB
-                const match = dbConfigs.find(c => c.providerId === config.provider);
-                if (match) {
+                // Explicit provider+model selected
+                // FIX 9: Client-supplied apiKey (test connection) → use as primary, ignore DB
+                if (config?.apiKey) {
                     candidates = [{
-                        provider: match.providerId,
-                        apiKey: match.apiKey,
-                        model: config.model || match.model || 'deepseek-v4-flash',
-                        baseUrl: config.baseUrl || match.baseUrl,
-                        label: `${match.providerId} / ${config.model || match.model}`,
+                        provider: config.provider,
+                        apiKey: config.apiKey,
+                        model: config.model || 'deepseek-v4-flash',
+                        baseUrl: config.baseUrl || undefined,
+                        label: `${config.provider} / ${config.model || 'specified'}`,
                     }];
+                } else {
+                    // No client key → use exact match from DB
+                    const match = dbConfigs.find(c => c.providerId === config.provider);
+                    if (match) {
+                        candidates = [{
+                            provider: match.providerId,
+                            apiKey: match.apiKey,
+                            model: config.model || match.model || 'deepseek-v4-flash',
+                            baseUrl: config.baseUrl || match.baseUrl,
+                            label: `${match.providerId} / ${config.model || match.model}`,
+                        }];
+                    }
                 }
             }
         } catch (dbErr) {

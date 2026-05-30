@@ -1,10 +1,8 @@
 'use server';
 
 import { createServerClient } from '@/lib/supabase/server';
-import { createCipheriv, createDecipheriv, randomBytes } from 'crypto';
-
-const ENCRYPTION_KEY = Buffer.from(process.env.AI_ENCRYPTION_KEY || '', 'hex');
-const ALGORITHM = 'aes-256-gcm';
+// FIX 8: Delegate encrypt/decrypt to canonical configServer.ts
+import { encryptApiKey, decryptApiKey } from '@/lib/ai/configServer';
 
 interface AIConfig {
     provider: string;
@@ -14,48 +12,13 @@ interface AIConfig {
     thinkingMode?: 'auto' | 'instant' | 'thinking';
 }
 
-// Encrypt API key
-function encryptApiKey(apiKey: string): { encrypted: string; iv: string; authTag: string } {
-    const iv = randomBytes(16);
-    const cipher = createCipheriv(ALGORITHM, ENCRYPTION_KEY, iv);
-
-    let encrypted = cipher.update(apiKey, 'utf8', 'base64');
-    encrypted += cipher.final('base64');
-
-    const authTag = cipher.getAuthTag().toString('base64');
-
-    return {
-        encrypted,
-        iv: iv.toString('base64'),
-        authTag,
-    };
-}
-
-// Decrypt API key
-function decryptApiKey(encrypted: string, iv: string, authTag: string): string {
-    const decipher = createDecipheriv(
-        ALGORITHM,
-        ENCRYPTION_KEY,
-        Buffer.from(iv, 'base64')
-    );
-
-    decipher.setAuthTag(Buffer.from(authTag, 'base64'));
-
-    let decrypted = decipher.update(encrypted, 'base64', 'utf8');
-    decrypted += decipher.final('utf8');
-
-    return decrypted;
-}
-
 export async function saveAIConfig(config: AIConfig) {
     try {
         const supabase = createServerClient();
 
-        // Encrypt API key
-        const { encrypted, iv, authTag } = encryptApiKey(config.apiKey);
-
-        // Combine encrypted + authTag for storage
-        const apiKeyEnc = `${encrypted}.${authTag}`;
+        // FIX 8: Use canonical encryptApiKey from configServer.ts (returns { enc, iv })
+        // The returned `enc` has authTag prepended to ciphertext (new canonical format)
+        const { enc, iv } = encryptApiKey(config.apiKey);
 
         // Upsert config
         const { error } = await supabase
@@ -63,7 +26,7 @@ export async function saveAIConfig(config: AIConfig) {
             .upsert({
                 scope: 'global',
                 provider_id: config.provider,
-                api_key_enc: apiKeyEnc,
+                api_key_enc: enc,
                 api_key_iv: iv,
                 model: config.model,
                 base_url: config.baseUrl || null,
@@ -98,9 +61,9 @@ export async function loadAIConfig(): Promise<AIConfig | null> {
 
         if (error || !data) return null;
 
-        // Decrypt API key
-        const [encrypted, authTag] = data.api_key_enc.split('.');
-        const apiKey = decryptApiKey(encrypted, data.api_key_iv, authTag);
+        // FIX 8: Use canonical decryptApiKey from configServer.ts
+        // Handles both legacy (dot-separated) and new (authTag prepended) formats
+        const apiKey = decryptApiKey(data.api_key_enc, data.api_key_iv);
 
         return {
             provider: data.provider_id,

@@ -176,7 +176,7 @@ export default function AISettingsPage() {
             // New provider (not yet configured)
             setApiKeySet(false);
             setApiKeyPreview('');
-            setIsEditingApiKey(false);
+            setIsEditingApiKey(true); // FIX 1: new providers start in editing mode so user can type key
             setDraftApiKey('');
             setDraftModel(PROVIDERS.find(p => p.id === id)?.models[0]?.id || '');
             setDraftBaseUrl('');
@@ -186,8 +186,8 @@ export default function AISettingsPage() {
     const handleSave = async () => {
         setSaveError(null);
 
-        // PART 10: Only send apiKey if user is actively editing and has typed something
-        const shouldSendKey = isEditingApiKey && draftApiKey.trim();
+        // FIX 2: Send apiKey if user typed anything, regardless of editing mode
+        const shouldSendKey = !!draftApiKey.trim();
 
         // PART 6: Reject masked keys
         if (shouldSendKey && isMaskedApiKey(draftApiKey)) {
