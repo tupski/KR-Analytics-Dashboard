@@ -160,17 +160,12 @@ export async function getDailyOccupancyTrend(days: number = 30): Promise<DailyOc
                 return [];
             }
 
-            // Count total rooms (distinct room_number per location)
-            const roomsByLoc = new Map<string, Set<string>>();
-            for (const row of dailyRows) {
-                if (!roomsByLoc.has(row.apartment_location)) {
-                    roomsByLoc.set(row.apartment_location, new Set());
-                }
-                roomsByLoc.get(row.apartment_location)!.add(row.room_number);
-            }
-            const totalRooms = Array.from(roomsByLoc.values()).reduce(
-                (sum, s) => sum + s.size, 0
-            );
+            // Fetch total rooms from master nomor_kamar (source of truth)
+            const supabase = createServerClient();
+            const { count: totalRoomsRaw } = await supabase
+                .from('nomor_kamar')
+                .select('id', { count: 'exact', head: true });
+            const totalRooms = totalRoomsRaw ?? 0;
 
             // Group by date, count occupied rooms
             const byDate = new Map<string, Set<string>>();
