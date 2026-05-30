@@ -1,12 +1,12 @@
 'use client';
 
 import SyncStatusBadge from './SyncStatusBadge';
+import ReportPeriodChip from '@/components/shared/ReportPeriodChip';
 
 /**
  * HeaderDashboard - Dashboard Header Component
- * 
- * Displays the dashboard title, subtitle, and sync freshness badge.
- * Clock is now in the AutoRefreshWrapper bar.
+ *
+ * Displays the dashboard title, subtitle, sync freshness badge, and period chip.
  */
 export default function HeaderDashboard() {
     return (
@@ -20,8 +20,11 @@ export default function HeaderDashboard() {
                         Pantau performa dan operasional Kakarama Room secara real-time
                     </p>
                 </div>
-                <div className="flex-shrink-0 hidden sm:block w-64">
-                    <SyncStatusBadge />
+                <div className="flex-shrink-0 flex items-start gap-3">
+                    <ReportPeriodChip className="hidden sm:inline-flex mt-1" />
+                    <div className="hidden sm:block w-64">
+                        <SyncStatusBadge />
+                    </div>
                 </div>
             </div>
         </div>

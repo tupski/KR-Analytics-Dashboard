@@ -4,7 +4,8 @@ import { createServerClient } from '@/lib/supabase/server';
 import { getLocations } from '@/lib/services/location';
 import { format } from 'date-fns';
 import { toZonedTime } from 'date-fns-tz';
-import { getTodayReportRange } from '@/lib/get-report-period-setting';
+import { getReportPeriodSetting, getTodayReportRange } from '@/lib/get-report-period-setting';
+import { getReportPeriodRange } from '@/lib/reporting-period';
 
 export interface BookingItem {
     id: number;
@@ -66,12 +67,16 @@ export async function fetchBookings(filters: BookingFilters = {}): Promise<Booki
             query = query.eq('apartment_location', filters.location);
         }
 
-        // Apply date range filter
+        // Apply date range filter — convert using report period mode
         if (filters.dateFrom) {
-            query = query.gte('checkin_at', `${filters.dateFrom}T00:00:00`);
+            const mode = await getReportPeriodSetting();
+            const range = getReportPeriodRange(filters.dateFrom, mode);
+            query = query.gte('checkin_at', range.start);
         }
         if (filters.dateTo) {
-            query = query.lte('checkin_at', `${filters.dateTo}T23:59:59`);
+            const mode = await getReportPeriodSetting();
+            const range = getReportPeriodRange(filters.dateTo, mode);
+            query = query.lte('checkin_at', range.end);
         }
 
         // Order and paginate
@@ -137,7 +142,7 @@ export async function fetchBookingStats() {
     const today = format(toZonedTime(new Date(), timezone), 'yyyy-MM-dd');
 
     try {
-        // Today's bookings count — use report period setting
+        // Today's bookings count — report-period-aware (calendar_day or hotel_day)
         const { start: todayStart, end: todayEnd } = await getTodayReportRange();
 
         const { count: todayCount } = await supabase
@@ -146,17 +151,20 @@ export async function fetchBookingStats() {
             .gte('checkin_at', todayStart)
             .lte('checkin_at', todayEnd);
 
-        // This week's bookings (same range start)
+        // This week's bookings — period-aware (rolling 7-day window, using report period boundaries)
         const weekAgo = new Date();
         weekAgo.setDate(weekAgo.getDate() - 7);
         const weekAgoStr = format(toZonedTime(weekAgo, timezone), 'yyyy-MM-dd');
+        const weekMode = await getReportPeriodSetting();
+        const weekRange = getReportPeriodRange(weekAgoStr, weekMode);
 
         const { count: weekCount } = await supabase
             .from('transactions')
             .select('id', { count: 'exact', head: true })
-            .gte('checkin_at', `${weekAgoStr}T00:00:00`);
+            .gte('checkin_at', weekRange.start);
 
-        // This month's bookings (month-aligned, not period-dependent)
+        // This month's bookings — calendar-aligned (month boundaries), intentional
+        // Not period-dependent: "Bulan Ini" uses calendar month boundaries for predictability
         const monthStart = format(toZonedTime(new Date(), timezone), 'yyyy-MM-01');
 
         const { count: monthCount } = await supabase
@@ -164,7 +172,7 @@ export async function fetchBookingStats() {
             .select('id', { count: 'exact', head: true })
             .gte('checkin_at', `${monthStart}T00:00:00`);
 
-        // Total revenue this month
+        // Total revenue this month — calendar-aligned, same as month count
         const { data: monthRevenue } = await supabase
             .from('transactions')
             .select('cash_amount, transfer_amount')

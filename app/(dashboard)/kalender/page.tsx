@@ -12,6 +12,10 @@ async function fetchCalendarData() {
     const monthStart = startOfMonth(now);
     const monthEnd = endOfMonth(now);
 
+    // Decision: calendar-month visual heatmap — shows booking count per calendar day.
+    // Uses calendar-aligned boundaries (00:00–23:59) intentionally.
+    // NOT a report-period query; this is a visual calendar month view,
+    // so report_period_mode (hotel_day) does NOT apply here.
     const { data } = await supabase
         .from('transactions')
         .select('checkin_at, apartment_location')

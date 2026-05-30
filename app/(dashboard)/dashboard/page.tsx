@@ -7,6 +7,7 @@ import CheckoutHariIni from '@/components/dashboard/CheckoutHariIni';
 import StatusUnit from '@/components/dashboard/StatusUnit';
 import AutoRefreshWrapper from '@/components/dashboard/AutoRefreshWrapper';
 import CompareSwitcher from '@/components/dashboard/CompareSwitcher';
+import DashboardInsightSummary from '@/components/dashboard/DashboardInsightSummary';
 import AIInsightCard from '@/components/ai/AIInsightCard';
 import {
     fetchKPIData,
@@ -16,6 +17,7 @@ import {
     fetchTodayCheckouts,
     fetchUnitStatus,
 } from './actions';
+import { generateInsights } from '@/lib/dashboard/insights';
 import type { KPICompareMode } from '@/types/dashboard';
 import { Calendar, DollarSign, TrendingUp, Home } from 'lucide-react';
 
@@ -53,6 +55,13 @@ export default async function DashboardPage({
         fetchTodayCheckouts(),
         fetchUnitStatus(),
     ]);
+
+    // Generate deterministic insights from fetched data
+    const insights = generateInsights({
+        kpiData,
+        checkinCount: checkinsData.length,
+        checkoutCount: checkoutsData.length,
+    });
 
     const formatRupiah = new Intl.NumberFormat('id-ID', {
         style: 'currency',
@@ -136,6 +145,9 @@ export default async function DashboardPage({
                             </p>
                         )}
                     </section>
+
+                    {/* Insight Summary Section */}
+                    <DashboardInsightSummary insights={insights} />
 
                     {/* Charts Section */}
                     <section className="grid grid-cols-1 lg:grid-cols-2 gap-3 sm:gap-4 lg:gap-6">

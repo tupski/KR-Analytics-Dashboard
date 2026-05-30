@@ -6,19 +6,32 @@
  * Supabase query and returns a small JSON result.
  *
  * READ ONLY — these tools must never write to the database.
+ *
+ * Phase 0.1 — Mode-aware boundaries:
+ *   Type A (user-explicit dates): calendar-day aligned, timezone-fixed
+ *   Type B (today/yesterday/report context): uses getReportPeriodRange()
+ *     via getReportPeriodSetting() from DB.
  */
 
 import { createServerClient } from '@/lib/supabase/server';
+import { getReportPeriodSetting } from '@/lib/get-report-period-setting';
+import { getTodayReportRange } from '@/lib/get-report-period-setting';
+import { getReportPeriodRange } from '@/lib/reporting-period';
+import type { ReportPeriodMode } from '@/lib/reporting-period';
 
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const MAX_RANGE_DAYS = 730; // 2 years
 
+/**
+ * Type A — user-explicit date range: calendar-day aligned.
+ * Validates input format and returns ISO strings with WIB offset.
+ */
 function validateDateRange(start: string, end: string) {
     if (!ISO_DATE_RE.test(start) || !ISO_DATE_RE.test(end)) {
         throw new Error('Tanggal harus format YYYY-MM-DD.');
     }
-    const s = new Date(start + 'T00:00:00Z').getTime();
-    const e = new Date(end + 'T23:59:59Z').getTime();
+    const s = new Date(start + 'T00:00:00+07:00').getTime();
+    const e = new Date(end + 'T23:59:59+07:00').getTime();
     if (Number.isNaN(s) || Number.isNaN(e)) throw new Error('Tanggal tidak valid.');
     if (e < s) throw new Error('end_date harus >= start_date.');
     if ((e - s) / 86400000 > MAX_RANGE_DAYS) {
@@ -27,20 +40,41 @@ function validateDateRange(start: string, end: string) {
     return { startIso: `${start}T00:00:00`, endIso: `${end}T23:59:59` };
 }
 
+/**
+ * fetchPeriodSummary — aggregate revenue, expenses, transaction counts.
+ *
+ * @param mode - when provided, uses getReportPeriodRange() for period-aware boundaries (Type B).
+ *               when omitted, uses validateDateRange() calendar-day boundaries (Type A).
+ */
 async function fetchPeriodSummary(
     start: string,
     end: string,
     location?: string,
+    mode?: ReportPeriodMode,
 ): Promise<any> {
-    const { startIso, endIso } = validateDateRange(start, end);
     const supabase = createServerClient();
+
+    // Type B: period-aware boundaries via helper
+    let checkinStart: string;
+    let checkinEnd: string;
+    if (mode) {
+        const range = getReportPeriodRange(start, mode);
+        checkinStart = range.start;
+        checkinEnd = range.end;
+    } else {
+        // Type A: user-explicit calendar-day boundaries
+        const { startIso, endIso } = validateDateRange(start, end);
+        checkinStart = startIso;
+        checkinEnd = endIso;
+    }
 
     let txQuery = supabase
         .from('transactions')
         .select('cash_amount, transfer_amount, customer_name, room_number, apartment_location, marketing_name, marketing_fee', { count: 'exact' })
-        .gte('checkin_at', startIso)
-        .lte('checkin_at', endIso);
+        .gte('checkin_at', checkinStart)
+        .lte('checkin_at', checkinEnd);
 
+    // pengeluaran.tanggal is date-only — always calendar-aligned
     let expQuery = supabase
         .from('pengeluaran')
         .select('jumlah, category', { count: 'exact' })
@@ -195,10 +229,11 @@ async function fetchUnitInventory(location?: string) {
     };
 }
 
-// ── New helper functions ─────────────────────────────────────────────────────
+// ── Report-period-aware helpers ──────────────────────────────────────────────
 
 /**
  * get_daily_summary — snap summary of today (and yesterday for comparison).
+ * Respects report_period_mode from DB (calendar_day or hotel_day).
  * No parameters needed — uses system clock in Asia/Jakarta timezone.
  */
 async function fetchDailySummary(): Promise<any> {
@@ -209,9 +244,12 @@ async function fetchDailySummary(): Promise<any> {
     const todayStr = format(today, 'yyyy-MM-dd');
     const yesterdayStr = format(subDays(today, 1), 'yyyy-MM-dd');
 
+    // Type B: fetch mode from DB for period-aware boundaries
+    const mode = await getReportPeriodSetting();
+
     const [todayData, yesterdayData] = await Promise.all([
-        fetchPeriodSummary(todayStr, todayStr),
-        fetchPeriodSummary(yesterdayStr, yesterdayStr),
+        fetchPeriodSummary(todayStr, todayStr, undefined, mode),
+        fetchPeriodSummary(yesterdayStr, yesterdayStr, undefined, mode),
     ]);
 
     return {
@@ -225,18 +263,23 @@ async function fetchDailySummary(): Promise<any> {
 }
 
 /**
- * get_revenue_trend — daily revenue data points for a range (useful for charts/trends).
+ * get_revenue_trend — daily revenue data points for a range.
+ * Uses getReportPeriodRange() for period-aware boundaries.
  */
 async function fetchRevenueTrend(start: string, end: string, location?: string): Promise<any> {
-    const { startIso } = validateDateRange(start, end);
     const supabase = createServerClient();
+
+    // Fetch mode for period-aware boundaries
+    const mode = await getReportPeriodSetting();
+    const rangeStart = getReportPeriodRange(start, mode).start;
+    const rangeEnd = getReportPeriodRange(end, mode).end;
 
     // Get distinct dates with revenue aggregated per day
     let q = supabase
         .from('transactions')
         .select('checkin_at, cash_amount, transfer_amount')
-        .gte('checkin_at', `${start}T00:00:00`)
-        .lte('checkin_at', `${end}T23:59:59`);
+        .gte('checkin_at', rangeStart)
+        .lte('checkin_at', rangeEnd);
 
     if (location) q = q.eq('apartment_location', location);
 
@@ -270,6 +313,7 @@ async function fetchRevenueTrend(start: string, end: string, location?: string):
 /**
  * get_latest_status — real-time snapshot of today's operations.
  * Equivalent to the dashboard "Ringkasan Hari Ini" card.
+ * Respects report_period_mode from DB.
  */
 async function fetchLatestStatus(): Promise<any> {
     const { format } = await import('date-fns');
@@ -280,12 +324,15 @@ async function fetchLatestStatus(): Promise<any> {
 
     const supabase = createServerClient();
 
+    // Type B: use mode-aware today boundaries
+    const { start: dayStart, end: dayEnd } = await getTodayReportRange();
+
     // Today's transactions (checked-in today)
     const { data: todayTx, count: txCount } = await supabase
         .from('transactions')
         .select('cash_amount, transfer_amount, status', { count: 'exact' })
-        .gte('checkin_at', `${today}T00:00:00`)
-        .lte('checkin_at', `${today}T23:59:59`);
+        .gte('checkin_at', dayStart)
+        .lte('checkin_at', dayEnd);
 
     // Active stays (currently checked-in)
     const nowIso = now.toISOString();
@@ -295,12 +342,12 @@ async function fetchLatestStatus(): Promise<any> {
         .lte('checkin_at', nowIso)
         .gte('checkout_at', nowIso);
 
-    // Checkouts today
+    // Checkouts today — use same period boundaries
     const { count: checkoutToday } = await supabase
         .from('transactions')
         .select('*', { count: 'exact', head: true })
-        .gte('checkout_at', `${today}T00:00:00`)
-        .lte('checkout_at', `${today}T23:59:59`);
+        .gte('checkout_at', dayStart)
+        .lte('checkout_at', dayEnd);
 
     const revenueToday = (todayTx || []).reduce(
         (s: number, t: any) => s + (t.cash_amount || 0) + (t.transfer_amount || 0), 0

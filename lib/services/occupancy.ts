@@ -237,6 +237,10 @@ async function getDailyOccupancyTrendLegacy(days: number = 30): Promise<DailyOcc
         }
 
         // Step 2: Fetch ALL transactions that could overlap the date range.
+        // Stay-span overlap query — not a report period boundary.
+        // This is a transactional overlap range (checkin ≤ rangeEnd AND checkout ≥ rangeStart).
+        // report_period_mode does NOT apply here because we need the FULL day boundaries
+        // to correctly determine if a stay occupies each calendar day.
         const rangeStart = `${formattedDays[0]}T00:00:00`;
         const rangeEnd = `${formattedDays[formattedDays.length - 1]}T23:59:59`;
 
@@ -252,6 +256,8 @@ async function getDailyOccupancyTrendLegacy(days: number = 30): Promise<DailyOcc
         }
 
         // Step 3: For each day, count unique occupied rooms (stay-span model)
+        // These boundaries define individual day windows for overlap check (checkin ≤ dayEnd AND checkout ≥ dayStart).
+        // Calendar-day boundaries are intentional — a room occupies a FULL calendar day regardless of report_period_mode.
         const result: DailyOccupancyTrendPoint[] = formattedDays.map((day) => {
             const dayStart = `${day}T00:00:00`;
             const dayEnd = `${day}T23:59:59`;
@@ -385,6 +391,8 @@ async function getRoomDayUtilizationLegacy(start: string, end: string): Promise<
     const { data: allRooms } = await supabase.from('nomor_kamar').select('name, lokasi');
 
     // Fetch ALL transactions that could overlap the date range.
+    // Stay-span overlap query — not a report period boundary.
+    // Calendar-day boundaries needed for correct per-day overlap check.
     const { data: transactions } = await supabase
         .from('transactions')
         .select('room_number, apartment_location, checkin_at, checkout_at')
@@ -455,6 +463,8 @@ export async function getDailyCheckinVolume(days: number = 30): Promise<DailyChe
     const startDate = subDays(today, days);
 
     try {
+        // Count by checkin_at date — calendar-day range for date-bounded query.
+        // NOT a report-period query: this counts transaction creation volume per calendar day.
         const { data: transactions, error } = await supabase
             .from('transactions')
             .select('checkin_at')

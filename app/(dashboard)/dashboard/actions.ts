@@ -2,6 +2,8 @@
 
 import { createServerClient } from '@/lib/supabase/server';
 import { getTodayReportRange } from '@/lib/get-report-period-setting';
+import { getReportPeriodRange } from '@/lib/reporting-period';
+import type { ReportPeriodMode } from '@/lib/reporting-period';
 import { getLiveOccupancy, getDailyOccupancyTrend } from '@/lib/services/occupancy';
 import { getRevenueTrend } from '@/lib/services/revenue';
 import { format, subDays, subWeeks, subMonths, subYears, startOfWeek, startOfMonth, startOfYear } from 'date-fns';
@@ -132,19 +134,26 @@ export async function fetchTodayCheckouts(): Promise<CheckoutItem[]> {
 }
 
 /**
- * Compute KPI snapshot for a specific Asia/Jakarta calendar day (yyyy-MM-dd).
+ * Compute KPI snapshot for a specific day.
  * - bookingCount: # transactions with checkin on that day
  * - revenue: sum of cash + transfer for those transactions
  * - distinctRoomsOccupied: # unique rooms used that day (proxy for end-of-day occupancy)
+ *
+ * Uses getReportPeriodRange() to respect report_period_mode (calendar_day or hotel_day)
+ * so comparison periods match the same boundaries as today's KPI.
  */
 async function fetchDailyKPISnapshot(
     supabase: ReturnType<typeof createServerClient>,
     targetDay: string,
     totalRoomsCount: number,
+    mode?: ReportPeriodMode,
 ): Promise<{ bookingCount: number; revenue: number; distinctRoomsOccupied: number; avgOccupancy: number; availableUnits: number }> {
-    // Use normal day: 00:00 on targetDay → 23:59:59 on same day
-    const dayStart = `${targetDay}T00:00:00`;
-    const dayEnd = `${targetDay}T23:59:59`;
+    // Use period-aware boundaries (calendar_day or hotel_day) when mode provided
+    const range = mode
+        ? getReportPeriodRange(targetDay, mode)
+        : getReportPeriodRange(targetDay, 'calendar_day');
+    const dayStart = range.start;
+    const dayEnd = range.end;
 
     const [{ count: bookingCount }, { data: txData }] = await Promise.all([
         supabase
@@ -225,17 +234,21 @@ export async function fetchKPIData(compareMode?: KPICompareMode): Promise<KPIDat
         // Today's snapshot — uses report_period_mode from DB (calendar_day or hotel_day)
         const { start: dayStart, end: dayEnd } = await getTodayReportRange();
 
+        // Fetch mode for comparison snapshot parity
+        const { getReportPeriodSetting } = await import('@/lib/get-report-period-setting');
+        const mode = await getReportPeriodSetting();
+
         const { count: bookingCount } = await supabase
             .from('transactions')
             .select('*', { count: 'exact', head: true })
             .gte('checkin_at', dayStart)
-            .lt('checkin_at', dayEnd);
+            .lte('checkin_at', dayEnd);
 
         const { data: revenueData } = await supabase
             .from('transactions')
             .select('cash_amount, transfer_amount')
             .gte('checkin_at', dayStart)
-            .lt('checkin_at', dayEnd);
+            .lte('checkin_at', dayEnd);
 
         const todayRevenue = revenueData?.reduce(
             (sum: number, t: any) => sum + (t.cash_amount || 0) + (t.transfer_amount || 0),
@@ -266,10 +279,10 @@ export async function fetchKPIData(compareMode?: KPICompareMode): Promise<KPIDat
             availableUnits,
         };
 
-        // Comparison snapshot
+        // Comparison snapshot — uses same mode as today's KPI for apples-to-apples comparison
         if (compareMode) {
             const { day: prevDay, label: prevLabel } = getCompareDay(today, compareMode);
-            const prevSnap = await fetchDailyKPISnapshot(supabase, prevDay, totalRoomsCount);
+            const prevSnap = await fetchDailyKPISnapshot(supabase, prevDay, totalRoomsCount, mode);
 
             result.prev = {
                 booking: prevSnap.bookingCount,

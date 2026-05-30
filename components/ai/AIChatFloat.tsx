@@ -8,68 +8,59 @@ import AIChatCore, { type ChatMessage } from './AIChatCore';
 import { hasConfiguredProviders } from '@/lib/ai/configClient';
 import KraiLogo from '@/components/shared/KraiLogo';
 
-const HINT_DISMISSED_KEY = 'kr-ai-hint-dismissed';
-const HINT_REMIND_AFTER_DAYS = 3;
+const GREETING_DISMISSED_KEY = 'kr_ai_greeting_dismissed';
 
 export default function AIChatFloat() {
     const pathname = usePathname();
     const [isOpen, setIsOpen] = useState(false);
     const [messages, setMessages] = useState<ChatMessage[]>([]);
     const [hasConfig, setHasConfig] = useState(false);
-    const [showHint, setShowHint] = useState(false);
+    const [showGreeting, setShowGreeting] = useState(false);
 
-    // Hide on /chat and /chat/[id] pages
-    const isOnChatPage = pathname?.startsWith('/chat');
+    // Hide greeting on KR-AI full page paths
+    const isOnAiPage = pathname?.startsWith('/chat') || pathname?.startsWith('/analytics-ai');
 
     useEffect(() => {
-        // Check if AI is configured
         async function checkConfig() {
             try {
                 const configured = await hasConfiguredProviders();
                 setHasConfig(configured);
-            } catch { 
+            } catch {
                 setHasConfig(false);
             }
         }
         checkConfig();
 
-        // Show hint bubble unless dismissed recently
-        try {
-            const dismissed = localStorage.getItem(HINT_DISMISSED_KEY);
-            if (!dismissed) {
-                setTimeout(() => setShowHint(true), 1500);
-            } else {
-                const ts = parseInt(dismissed);
-                if (!Number.isNaN(ts) && Date.now() - ts > HINT_REMIND_AFTER_DAYS * 86400000) {
-                    setTimeout(() => setShowHint(true), 1500);
+        // Greeting: once per session, not on AI pages
+        if (!isOnAiPage) {
+            try {
+                const dismissed = sessionStorage.getItem(GREETING_DISMISSED_KEY);
+                if (dismissed !== 'true') {
+                    const timer = setTimeout(() => setShowGreeting(true), 1500);
+                    return () => clearTimeout(timer);
                 }
-            }
-        } catch { }
-    }, [isOpen]);
+            } catch { }
+        }
+    }, [isOpen, isOnAiPage]);
 
-    const dismissHint = () => {
-        setShowHint(false);
-        try { localStorage.setItem(HINT_DISMISSED_KEY, String(Date.now())); } catch { }
+    const dismissGreeting = () => {
+        setShowGreeting(false);
+        try { sessionStorage.setItem(GREETING_DISMISSED_KEY, 'true'); } catch { }
     };
 
     const handleOpenChat = () => {
-        dismissHint();
+        dismissGreeting();
         setIsOpen(true);
     };
 
-    // Don't render on chat pages
-    if (isOnChatPage) {
-        return null;
-    }
-
     return (
         <>
-            {/* Hint bubble — appears on first visit & periodically */}
-            {showHint && !isOpen && (
+            {/* Greeting popup — once per session, not on full AI pages */}
+            {showGreeting && !isOpen && !isOnAiPage && (
                 <div className="fixed bottom-20 right-4 sm:bottom-24 sm:right-6 z-40 max-w-[260px] animate-fade-in">
                     <div className="relative bg-white rounded-2xl rounded-br-sm shadow-xl border border-blue-200 p-3 pr-8">
                         <button
-                            onClick={dismissHint}
+                            onClick={dismissGreeting}
                             className="absolute top-1 right-1 p-1 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition-colors"
                             aria-label="Tutup"
                         >
@@ -165,9 +156,9 @@ export default function AIChatFloat() {
                 </div>
             )}
 
-            {/* Floating button */}
+            {/* Floating button — always visible on all pages */}
             <button
-                onClick={() => { dismissHint(); setIsOpen(v => !v); }}
+                onClick={() => { dismissGreeting(); setIsOpen(v => !v); }}
                 className="fixed bottom-4 right-4 sm:bottom-6 sm:right-6 w-[52px] h-[52px] bg-blue-600 text-white rounded-full shadow-lg hover:shadow-xl transition-all hover:scale-110 flex items-center justify-center z-40"
                 title="KR·AI - AI Assistant"
                 aria-label="Buka KR·AI chat"

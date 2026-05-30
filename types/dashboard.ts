@@ -75,3 +75,16 @@ export interface UnitStatusCounts {
 }
 
 export type UnitStatus = 'tersedia' | 'ditempati';
+
+// ─── Dashboard Insight ───
+export type InsightSeverity = 'good' | 'info' | 'warning' | 'critical';
+export type InsightTrend = 'up' | 'down' | 'flat';
+
+export interface DashboardInsight {
+  id: string;
+  title: string;
+  description: string;
+  severity: InsightSeverity;
+  metric?: string;
+  trend?: InsightTrend;
+}
