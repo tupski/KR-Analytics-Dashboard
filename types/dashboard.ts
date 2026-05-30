@@ -77,6 +77,29 @@ export interface UnitStatusCounts {
 export type UnitStatus = 'tersedia' | 'ditempati';
 
 // ─── Location Health Matrix ───
+export type UnitIdleSeverity = 'normal' | 'watch' | 'action' | 'critical';
+
+export type IdleUnitItem = {
+  unitId: string;
+  unitCode: string;
+  location: string;
+  currentStatus: string;
+  lastCheckoutAt: string | null;
+  idleDays: number;
+  monthRevenue: number;
+  severity: UnitIdleSeverity;
+};
+
+export type UnitPerformanceItem = {
+  unitId: string;
+  unitCode: string;
+  location: string;
+  revenue: number;
+  bookingCount: number;
+  occupancyRate?: number;
+  idleDays?: number;
+};
+
 export type LocationHealthStatus =
   | 'healthy'
   | 'low_occupancy'

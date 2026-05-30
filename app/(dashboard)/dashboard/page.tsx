@@ -9,6 +9,7 @@ import AutoRefreshWrapper from '@/components/dashboard/AutoRefreshWrapper';
 import CompareSwitcher from '@/components/dashboard/CompareSwitcher';
 import DashboardInsightSummary from '@/components/dashboard/DashboardInsightSummary';
 import LocationHealthMatrix from '@/components/dashboard/LocationHealthMatrix';
+import UnitPerformancePanel from '@/components/dashboard/UnitPerformancePanel';
 import AIInsightCard from '@/components/ai/AIInsightCard';
 import {
     fetchKPIData,
@@ -18,6 +19,7 @@ import {
     fetchTodayCheckouts,
     fetchUnitStatus,
     fetchLocationHealthData,
+    fetchUnitPerformanceData,
 } from './actions';
 import { generateInsights } from '@/lib/dashboard/insights';
 import type { KPICompareMode } from '@/types/dashboard';
@@ -50,6 +52,7 @@ export default async function DashboardPage({
         checkoutsData,
         unitStatusData,
         locationHealthData,
+        unitPerformanceData,
     ] = await Promise.all([
         fetchKPIData(compareMode || undefined),
         fetchRevenueData('daily'),
@@ -58,6 +61,7 @@ export default async function DashboardPage({
         fetchTodayCheckouts(),
         fetchUnitStatus(),
         fetchLocationHealthData(),
+        fetchUnitPerformanceData(),
     ]);
 
     // Generate deterministic insights from fetched data
@@ -156,6 +160,12 @@ export default async function DashboardPage({
                     {/* Location Health Matrix Section */}
                     <LocationHealthMatrix
                         locations={locationHealthData}
+                        isLoading={false}
+                    />
+
+                    {/* Unit Performance Section */}
+                    <UnitPerformancePanel
+                        data={unitPerformanceData}
                         isLoading={false}
                     />
 

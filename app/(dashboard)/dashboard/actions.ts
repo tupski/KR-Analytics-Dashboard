@@ -8,7 +8,9 @@ import { getLiveOccupancy, getDailyOccupancyTrend } from '@/lib/services/occupan
 import { getRevenueTrend } from '@/lib/services/revenue';
 import { getLocations } from '@/lib/services/location';
 import { applyLocationHealthStatuses } from '@/lib/dashboard/location-health';
-import type { LocationHealthItem } from '@/types/dashboard';
+import { getIdleSeverity } from '@/lib/dashboard/unit-performance';
+import type { LocationHealthItem, IdleUnitItem, UnitPerformanceItem } from '@/types/dashboard';
+import type { UnitPerformanceData } from '@/lib/dashboard/unit-performance';
 import { format, subDays, subWeeks, subMonths, subYears, startOfWeek, startOfMonth, startOfYear } from 'date-fns';
 import { id as idLocale } from 'date-fns/locale';
 import { toZonedTime } from 'date-fns-tz';
@@ -646,5 +648,197 @@ export async function fetchLocationHealthData(): Promise<LocationHealthItem[]> {
     } catch (error) {
         console.error('Error in fetchLocationHealthData:', error);
         return [];
+    }
+}
+
+/**
+ * Fetch unit performance data: idle units, top 5 units by revenue, bottom 5 units.
+ *
+ * Idle detection:
+ * - For each room, find the most recent checkout (checkout_at < now).
+ * - idleDays = days since lastCheckoutAt.
+ * - Filter where idleDays >= 3, sorted descending.
+ *
+ * Revenue (calendar-aligned month — intentional, not report-period-dependent):
+ * - SUM(cash_amount + transfer_amount) per room for current month.
+ * - Top 5 by revenue descending, bottom 5 by revenue ascending (non-zero).
+ *
+ * This function does NOT use report_period_mode because:
+ * - Idle detection is absolute time, not period-defined.
+ * - Month revenue is calendar-aligned for consistency with "month to date" semantics.
+ */
+export async function fetchUnitPerformanceData(): Promise<UnitPerformanceData> {
+    const supabase = createServerClient();
+    const timezone = 'Asia/Jakarta';
+    const now = new Date();
+    const nowIso = now.toISOString();
+
+    try {
+        // ── 1. Fetch all rooms with location info ─────────────
+        const { data: rooms, error: roomError } = await supabase
+            .from('nomor_kamar')
+            .select('id, nomor_kamar, lokasi(id, nama), status, created_at');
+
+        if (roomError) {
+            console.error('Error fetching rooms for unit performance:', roomError);
+            return { idleUnits: [], topUnits: [], bottomUnits: [] };
+        }
+
+        if (!rooms || rooms.length === 0) {
+            return { idleUnits: [], topUnits: [], bottomUnits: [] };
+        }
+
+        // Normalize rooms: extract location name from joined object or string
+        type RoomRow = {
+            id: number;
+            nomor_kamar: string;
+            lokasi: { id: number; nama: string } | string;
+            status: string;
+            created_at: string;
+        };
+
+        const normalizedRooms: { id: number; unitCode: string; location: string; status: string; createdAt: string }[] =
+            (rooms as unknown as RoomRow[]).map((r) => ({
+                id: r.id,
+                unitCode: r.nomor_kamar,
+                location: typeof r.lokasi === 'object' && r.lokasi !== null
+                    ? (r.lokasi as { id: number; nama: string }).nama
+                    : String(r.lokasi),
+                status: r.status,
+                createdAt: r.created_at,
+            }));
+
+        // ── 2. For each room, find last checkout ──────────────
+        // Batch fetch: get all transactions with checkout_at < now for these rooms
+        const { data: allCheckouts, error: checkoutError } = await supabase
+            .from('transactions')
+            .select('room_number, apartment_location, checkout_at')
+            .lt('checkout_at', nowIso)
+            .order('checkout_at', { ascending: false });
+
+        if (checkoutError) {
+            console.error('Error fetching checkouts for idle detection:', checkoutError);
+        }
+
+        // Build map: location+roomNumber -> latest checkout_at
+        const latestCheckoutMap = new Map<string, string>();
+        (allCheckouts || []).forEach((tx: any) => {
+            const key = `${tx.apartment_location}-${tx.room_number}`;
+            // First occurrence is the most recent due to descending sort
+            if (!latestCheckoutMap.has(key)) {
+                latestCheckoutMap.set(key, tx.checkout_at);
+            }
+        });
+
+        // ── 3. Calculate idle for each room ───────────────────
+        // Also get current month revenue for idle units display
+        const nowWib = new Date(now.toLocaleString('en-US', { timeZone: timezone }));
+        const monthStart = new Date(nowWib.getFullYear(), nowWib.getMonth(), 1);
+        const monthStartIso = monthStart.toISOString();
+        // End of current month in WIB
+        const monthEnd = new Date(nowWib.getFullYear(), nowWib.getMonth() + 1, 0, 23, 59, 59, 999);
+        const monthEndIso = monthEnd.toISOString();
+
+        // Batch fetch: get revenue per room for current month (calendar-aligned)
+        const { data: monthTx, error: monthTxError } = await supabase
+            .from('transactions')
+            .select('room_number, apartment_location, cash_amount, transfer_amount')
+            .gte('checkin_at', monthStartIso)
+            .lte('checkin_at', monthEndIso);
+
+        if (monthTxError) {
+            console.error('Error fetching month transactions:', monthTxError);
+        }
+
+        // Build revenue map per room
+        const revenueMap = new Map<string, number>();
+        const bookingCountMap = new Map<string, number>();
+        (monthTx || []).forEach((tx: any) => {
+            const key = `${tx.apartment_location}-${tx.room_number}`;
+            const rev = (tx.cash_amount || 0) + (tx.transfer_amount || 0);
+            revenueMap.set(key, (revenueMap.get(key) || 0) + rev);
+            bookingCountMap.set(key, (bookingCountMap.get(key) || 0) + 1);
+        });
+
+        // ── 4. Build idle unit list ───────────────────────────
+        const idleUnits: IdleUnitItem[] = [];
+
+        for (const room of normalizedRooms) {
+            const key = `${room.location}-${room.unitCode}`;
+            const lastCheckout = latestCheckoutMap.get(key) || null;
+
+            let idleDays: number;
+            if (lastCheckout) {
+                idleDays = Math.floor(
+                    (now.getTime() - new Date(lastCheckout).getTime()) / (1000 * 60 * 60 * 24)
+                );
+            } else {
+                // No transaction ever — use room creation date as proxy
+                // If room created recently, idleDays may be 0 or small; skip in that case
+                const createdAt = room.createdAt;
+                idleDays = createdAt
+                    ? Math.floor(
+                        (now.getTime() - new Date(createdAt).getTime()) / (1000 * 60 * 60 * 24)
+                    )
+                    : 999; // unknown — show as potentially idle
+            }
+
+            if (idleDays >= 3) {
+                idleUnits.push({
+                    unitId: String(room.id),
+                    unitCode: room.unitCode,
+                    location: room.location,
+                    currentStatus: room.status,
+                    lastCheckoutAt: lastCheckout,
+                    idleDays,
+                    monthRevenue: revenueMap.get(key) || 0,
+                    severity: getIdleSeverity(idleDays),
+                });
+            }
+        }
+
+        // Sort by idleDays descending (most idle first)
+        idleUnits.sort((a, b) => b.idleDays - a.idleDays);
+
+        // ── 5. Build performance list (top/bottom) ────────────
+        const perfItems: UnitPerformanceItem[] = normalizedRooms.map((room) => {
+            const key = `${room.location}-${room.unitCode}`;
+            const revenue = revenueMap.get(key) || 0;
+            const bookingCount = bookingCountMap.get(key) || 0;
+            const lastCheckout = latestCheckoutMap.get(key) || null;
+            const idleDays = lastCheckout
+                ? Math.floor(
+                    (now.getTime() - new Date(lastCheckout).getTime()) / (1000 * 60 * 60 * 24)
+                )
+                : undefined;
+
+            return {
+                unitId: String(room.id),
+                unitCode: room.unitCode,
+                location: room.location,
+                revenue,
+                bookingCount,
+                idleDays,
+            };
+        });
+
+        // Top 5 by revenue descending
+        const topUnits = [...perfItems]
+            .sort((a, b) => b.revenue - a.revenue)
+            .slice(0, 5);
+
+        // Bottom 5 by revenue ascending (excluding zero-revenue items from sort,
+        // but still including them in result)
+        const nonZero = perfItems.filter((p) => p.revenue > 0);
+        const zeroRev = perfItems.filter((p) => p.revenue === 0);
+        const bottomUnits = [
+            ...nonZero.sort((a, b) => a.revenue - b.revenue).slice(0, 5),
+            ...zeroRev.slice(0, 5),
+        ].slice(0, 5);
+
+        return { idleUnits, topUnits, bottomUnits };
+    } catch (error) {
+        console.error('Error in fetchUnitPerformanceData:', error);
+        return { idleUnits: [], topUnits: [], bottomUnits: [] };
     }
 }
