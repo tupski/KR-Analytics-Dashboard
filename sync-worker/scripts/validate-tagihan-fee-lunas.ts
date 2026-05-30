@@ -27,6 +27,7 @@
  */
 
 import { createClient } from '@supabase/supabase-js';
+import { fetchAllPaginated } from '../src/supabase-pagination';
 import { Pool } from 'pg';
 
 // --- Config ---
@@ -100,13 +101,10 @@ async function main() {
     // --- A2. Total Amount (total_fee) ---
     console.log('\n─── A2. Total Amount (total_fee) ───');
 
-    const prodParentFeeQuery = await supabase
-        .from('tagihan_fee_lunas')
-        .select('total_fee');
-    if (prodParentFeeQuery.error) throw new Error(`Prod parent fee fetch error: ${prodParentFeeQuery.error.message}`);
-
-    const prodParentTotalFee = (prodParentFeeQuery.data as { total_fee: number }[] || [])
-        .reduce((acc, r) => acc + Number(r.total_fee), 0);
+    const prodParentFeeRows = await fetchAllPaginated<{ total_fee: number }>(
+        supabase, 'tagihan_fee_lunas', 'total_fee'
+    );
+    const prodParentTotalFee = prodParentFeeRows.reduce((acc, r) => acc + Number(r.total_fee), 0);
 
     const localParentFeeResult = await localPool.query(
         `SELECT COALESCE(SUM(total_fee), 0) as total FROM tagihan_fee_lunas WHERE is_deleted = FALSE`
@@ -121,13 +119,12 @@ async function main() {
     // --- A3. Count by Marketing Name ---
     console.log('\n─── A3. Count by Marketing Name ───');
 
-    const prodParentAll = await supabase
-        .from('tagihan_fee_lunas')
-        .select('marketing_name, total_fee');
-    if (prodParentAll.error) throw new Error(`Prod parent fetch error: ${prodParentAll.error.message}`);
+    const prodParentAllRows = await fetchAllPaginated<{ marketing_name: string; total_fee: number }>(
+        supabase, 'tagihan_fee_lunas', 'marketing_name, total_fee'
+    );
 
     const prodMktgMap = new Map<string, { count: number; total: number }>();
-    for (const r of prodParentAll.data as { marketing_name: string; total_fee: number }[]) {
+    for (const r of prodParentAllRows) {
         const key = r.marketing_name || '(NULL)';
         const existing = prodMktgMap.get(key) || { count: 0, total: 0 };
         existing.count++;
@@ -162,12 +159,12 @@ async function main() {
     // --- A4. Count by Month (paid_date) ---
     console.log('\n─── A4. Count by Month (paid_date) ───');
 
-    const prodPaidDateData = await supabase
-        .from('tagihan_fee_lunas')
-        .select('paid_date, total_fee');
-    if (!prodPaidDateData.error && prodPaidDateData.data) {
+    const prodPaidDateRows = await fetchAllPaginated<{ paid_date: string | null; total_fee: number }>(
+        supabase, 'tagihan_fee_lunas', 'paid_date, total_fee'
+    );
+    {
         const prodMonthMap = new Map<string, { count: number; total: number }>();
-        for (const r of prodPaidDateData.data as { paid_date: string | null; total_fee: number }[]) {
+        for (const r of prodPaidDateRows) {
             const monthKey = r.paid_date ? r.paid_date.substring(0, 7) : 'unknown';
             const existing = prodMonthMap.get(monthKey) || { count: 0, total: 0 };
             existing.count++;
@@ -268,13 +265,10 @@ async function main() {
     // --- B2. Total Amount (fee_amount) ---
     console.log('\n─── B2. Total Amount (fee_amount) ───');
 
-    const prodItemsFeeQuery = await supabase
-        .from('tagihan_fee_lunas_items')
-        .select('fee_amount');
-    if (prodItemsFeeQuery.error) throw new Error(`Prod items fee fetch error: ${prodItemsFeeQuery.error.message}`);
-
-    const prodItemsTotalFee = (prodItemsFeeQuery.data as { fee_amount: number }[] || [])
-        .reduce((acc, r) => acc + Number(r.fee_amount), 0);
+    const prodItemsFeeRows = await fetchAllPaginated<{ fee_amount: number }>(
+        supabase, 'tagihan_fee_lunas_items', 'fee_amount'
+    );
+    const prodItemsTotalFee = prodItemsFeeRows.reduce((acc, r) => acc + Number(r.fee_amount), 0);
 
     const localItemsFeeResult = await localPool.query(
         `SELECT COALESCE(SUM(fee_amount), 0) as total FROM tagihan_fee_lunas_items WHERE is_deleted = FALSE`

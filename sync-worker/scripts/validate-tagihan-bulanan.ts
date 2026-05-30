@@ -18,6 +18,7 @@
  */
 
 import { createClient } from '@supabase/supabase-js';
+import { fetchAllPaginated } from '../src/supabase-pagination';
 import { Pool } from 'pg';
 
 // --- Config ---
@@ -91,12 +92,10 @@ async function main() {
     // ============================================
     console.log('\n─── 2. Total Nominal Tagihan (All Time) ───');
 
-    const prodSumQuery = await supabase
-        .from('tagihan_bulanan')
-        .select('amount');
-    if (prodSumQuery.error) throw new Error(`Prod sum fetch error: ${prodSumQuery.error.message}`);
-    const prodTotalAmount = (prodSumQuery.data as { amount: number }[] || [])
-        .reduce((acc, r) => acc + Number(r.amount), 0);
+    const prodAmountRows = await fetchAllPaginated<{ amount: number }>(
+        supabase, 'tagihan_bulanan', 'amount'
+    );
+    const prodTotalAmount = prodAmountRows.reduce((acc, r) => acc + Number(r.amount), 0);
 
     const localSumResult = await localPool.query(
         `SELECT COALESCE(SUM(amount), 0) as total_amount FROM tagihan_bulanan WHERE is_deleted = FALSE`
@@ -113,11 +112,9 @@ async function main() {
     // ============================================
     console.log('\n─── 3. Total Tagihan by Payment Status ───');
 
-    const prodAll = await supabase
-        .from('tagihan_bulanan')
-        .select('status, amount');
-    if (prodAll.error) throw new Error(`Prod fetch error: ${prodAll.error.message}`);
-    const prodRows = prodAll.data as { status: string | null; amount: number }[];
+    const prodRows = await fetchAllPaginated<{ status: string | null; amount: number }>(
+        supabase, 'tagihan_bulanan', 'status, amount'
+    );
 
     // Count by status — production
     const prodStatusCounts = new Map<string, { count: number; total: number }>();
@@ -201,11 +198,11 @@ async function main() {
         // We don't have due_date in prodRows fetch; need to refetch
     }
     // Refetch with due_date
-    const prodMonthData = await supabase
-        .from('tagihan_bulanan')
-        .select('due_date, amount');
-    if (!prodMonthData.error && prodMonthData.data) {
-        for (const r of prodMonthData.data as { due_date: string; amount: number }[]) {
+    const prodMonthRows = await fetchAllPaginated<{ due_date: string; amount: number }>(
+        supabase, 'tagihan_bulanan', 'due_date, amount'
+    );
+    {
+        for (const r of prodMonthRows) {
             const monthKey = r.due_date ? r.due_date.substring(0, 7) : 'unknown';
             const existing = prodMonthMap.get(monthKey) || { count: 0, total: 0 };
             existing.count++;

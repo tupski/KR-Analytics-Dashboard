@@ -3,6 +3,7 @@ import { SupabaseClient } from '@supabase/supabase-js';
 import { config } from '../config';
 import { getMetadata, updateMetadata } from './metadata';
 import { startSyncLog, completeSyncLog } from './logger';
+import { fetchAllPaginated } from '../supabase-pagination';
 
 // ─── Master Table Config ────────────────────────────────────────────
 interface MasterTableConfig {
@@ -51,15 +52,11 @@ async function syncMasterTable(
 
     try {
         // ── Step 1: Fetch ALL production rows ──
-        const { data: prodRows, error } = await supabase
-            .from(cfg.tableName)
-            .select(cfg.columns.join(', '));
-
-        if (error) {
-            throw new Error(`Supabase fetch error [${cfg.tableName}]: ${error.message}`);
-        }
-
-        const rows = (prodRows || []) as unknown as Record<string, unknown>[];
+        const rows = (await fetchAllPaginated(
+            supabase,
+            cfg.tableName,
+            cfg.columns.join(', ')
+        )) as unknown as Record<string, unknown>[];
         console.log(`[sync:master] ${cfg.tableName}: fetched ${rows.length} rows from production`);
 
         // ── Step 2: Upsert in batches ──

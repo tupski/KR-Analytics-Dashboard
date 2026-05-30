@@ -16,6 +16,7 @@
  */
 
 import { createClient } from '@supabase/supabase-js';
+import { fetchAllPaginated } from '../src/supabase-pagination';
 import { Pool } from 'pg';
 
 // --- Config ---
@@ -103,12 +104,10 @@ async function main() {
     console.log('\n─── 2. Total Amount (All Time) ───');
 
     // Fetch all jumlah from production and sum in-memory
-    const prodSumQuery = await supabase
-        .from('pengeluaran')
-        .select('jumlah');
-    if (prodSumQuery.error) throw new Error(`Prod sum fetch error: ${prodSumQuery.error.message}`);
-    const prodTotalAmount = (prodSumQuery.data as { jumlah: number }[] || [])
-        .reduce((acc, r) => acc + Number(r.jumlah), 0);
+    const prodAllJumlah = await fetchAllPaginated<{ jumlah: number }>(
+        supabase, 'pengeluaran', 'jumlah'
+    );
+    const prodTotalAmount = prodAllJumlah.reduce((acc, r) => acc + Number(r.jumlah), 0);
 
     const localSumResult = await localPool.query(
         `SELECT COALESCE(SUM(jumlah), 0) as total_amount FROM pengeluaran WHERE is_deleted = FALSE`
@@ -129,13 +128,11 @@ async function main() {
     const monthStart = `${thisMonth}-01`;
     const nextMonth = getWibDate(32).substring(0, 7);
 
-    const { data: prodMonth } = await supabase
-        .from('pengeluaran')
-        .select('jumlah')
-        .gte('tanggal', monthStart)
-        .lt('tanggal', `${nextMonth}-01`);
-    const prodMonthAmount = (prodMonth as { jumlah: number }[] || [])
-        .reduce((acc, r) => acc + Number(r.jumlah), 0);
+    const prodMonthRows = await fetchAllPaginated<{ jumlah: number }>(
+        supabase, 'pengeluaran', 'jumlah',
+        { queryModifier: (q) => q.gte('tanggal', monthStart).lt('tanggal', `${nextMonth}-01`) }
+    );
+    const prodMonthAmount = prodMonthRows.reduce((acc, r) => acc + Number(r.jumlah), 0);
 
     const localMonthResult = await localPool.query(
         `SELECT COALESCE(SUM(jumlah), 0) as total FROM pengeluaran
@@ -158,13 +155,11 @@ async function main() {
     const sixMonthsAgo = getWibSixMonthsAgo();
     const todayEnd = getWibDate(1);
 
-    const { data: prod6m } = await supabase
-        .from('pengeluaran')
-        .select('jumlah')
-        .gte('tanggal', sixMonthsAgo)
-        .lt('tanggal', todayEnd);
-    const prod6mAmount = (prod6m as { jumlah: number }[] || [])
-        .reduce((acc, r) => acc + Number(r.jumlah), 0);
+    const prod6mRows = await fetchAllPaginated<{ jumlah: number }>(
+        supabase, 'pengeluaran', 'jumlah',
+        { queryModifier: (q) => q.gte('tanggal', sixMonthsAgo).lt('tanggal', todayEnd) }
+    );
+    const prod6mAmount = prod6mRows.reduce((acc, r) => acc + Number(r.jumlah), 0);
 
     const local6mResult = await localPool.query(
         `SELECT COALESCE(SUM(jumlah), 0) as total FROM pengeluaran
@@ -185,11 +180,11 @@ async function main() {
     console.log('\n─── 5. Amount per Category ───');
 
     // Production: fetch all and group in-memory (no updated_at needed)
-    const { data: prodCat } = await supabase
-        .from('pengeluaran')
-        .select('category, jumlah');
+    const prodCatRows = await fetchAllPaginated<{ category: string | null; jumlah: number }>(
+        supabase, 'pengeluaran', 'category, jumlah'
+    );
     const prodCatMap = new Map<string, number>();
-    for (const row of (prodCat as { category: string | null; jumlah: number }[] || [])) {
+    for (const row of prodCatRows) {
         const cat = row.category || '(tanpa kategori)';
         prodCatMap.set(cat, (prodCatMap.get(cat) || 0) + Number(row.jumlah));
     }
@@ -229,11 +224,11 @@ async function main() {
     if (colCheck.rows.length === 0) {
         console.log('  apartment_location column not available in local DB');
     } else {
-        const { data: prodLoc } = await supabase
-            .from('pengeluaran')
-            .select('apartment_location, jumlah');
+        const prodLocRows = await fetchAllPaginated<{ apartment_location: string | null; jumlah: number }>(
+            supabase, 'pengeluaran', 'apartment_location, jumlah'
+        );
         const prodLocMap = new Map<string, number>();
-        for (const row of (prodLoc as { apartment_location: string | null; jumlah: number }[] || [])) {
+        for (const row of prodLocRows) {
             const loc = row.apartment_location || '(tanpa lokasi)';
             prodLocMap.set(loc, (prodLocMap.get(loc) || 0) + Number(row.jumlah));
         }
