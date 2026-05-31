@@ -1,9 +1,37 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { RefreshCw, Sparkles, ChevronDown, ChevronUp, Lightbulb, GitCompareArrows, ChevronRight } from 'lucide-react';
+import { RefreshCw, Sparkles, ChevronDown, ChevronUp, Lightbulb, GitCompareArrows, ChevronRight, Zap } from 'lucide-react';
 import MarkdownRenderer from './MarkdownRenderer';
 import { resolveActive } from '@/lib/ai/config';
+
+/**
+ * Generate rule-based insight text based on the page context.
+ * Used as fallback when no AI API key is configured.
+ */
+function getRuleBasedFallback(title: string, prompt: string): string {
+    const now = new Date();
+    const dayName = now.toLocaleDateString('id-ID', { weekday: 'long', timeZone: 'Asia/Jakarta' });
+    const dateStr = now.toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Asia/Jakarta' });
+
+    if (title.includes('Booking') || prompt.includes('booking')) {
+        return `📊 **Insight Rule-based** (${dayName}, ${dateStr})\n\n📈 **Performa Booking Hari Ini:**\n- Periksa jumlah booking hari ini vs rata-rata harian\n- Identifikasi jam check-in tersibuk dari data operasional\n- Lokasi paling aktif biasanya terlihat dari tabel booking\n\n💡 **Rekomendasi:**\n- Pastikan semua unit siap untuk check-in hari ini\n- Review booking yang akan datang 7 hari kedepan\n- Monitor pembatalan yang perlu ditindaklanjuti\n\n⚠️ *Konfigurasi AI API key untuk mendapatkan insight otomatis yang lebih cerdas.*`;
+    }
+
+    if (title.includes('Laporan') || prompt.includes('laporan') || prompt.includes('keuangan')) {
+        return `📊 **Insight Rule-based** (${dayName}, ${dateStr})\n\n💰 **Ringkasan Keuangan:**\n- Periksa total pendapatan vs bulan sebelumnya\n- Identifikasi kategori pengeluaran terbesar\n- Cek apakah ada tagihan yang belum dibayar\n\n💡 **Rekomendasi:**\n- Review pengeluaran yang melebihi budget\n- Pastikan semua pendapatan tercatat dengan benar\n- Verifikasi tagihan yang jatuh tempo bulan ini\n\n⚠️ *Konfigurasi AI API key untuk mendapatkan insight otomatis yang lebih cerdas.*`;
+    }
+
+    if (title.includes('Okupansi') || prompt.includes('okupansi') || prompt.includes('unit')) {
+        return `📊 **Insight Rule-based** (${dayName}, ${dateStr})\n\n🏠 **Performa Okupansi:**\n- Periksa tingkat okupansi hari ini vs rata-rata\n- Identifikasi unit yang idle terlalu lama\n- Lihat lokasi dengan okupansi tertinggi dan terendah\n\n💡 **Rekomendasi:**\n- Optimalkan harga untuk unit yang jarang terisi\n- Pertimbangkan promosi untuk meningkatkan okupansi\n- Review maintenance unit yang sering kosong\n\n⚠️ *Konfigurasi AI API key untuk mendapatkan insight otomatis yang lebih cerdas.*`;
+    }
+
+    if (title.includes('Customer')) {
+        return `📊 **Insight Rule-based** (${dayName}, ${dateStr})\n\n👥 **Analisis Customer:**\n- Periksa jumlah tamu unik bulan ini\n- Identifikasi tamu yang sering kembali (repeat guest)\n- Lihat lokasi favorit berdasarkan data booking\n\n💡 **Rekomendasi:**\n- Beri perhatian khusus pada repeat guest\n- Kumpulkan feedback dari tamu untuk meningkatkan layanan\n- Buat program loyalitas untuk tamu setia\n\n⚠️ *Konfigurasi AI API key untuk mendapatkan insight otomatis yang lebih cerdas.*`;
+    }
+
+    return `📊 **Insight Rule-based** (${dayName}, ${dateStr})\n\n📈 **Ringkasan Performa:**\n- Periksa metrik utama: booking, pendapatan, okupansi\n- Bandingkan dengan periode sebelumnya menggunakan fitur "Bandingkan"\n- Review aktivitas check-in dan check-out hari ini\n\n💡 **Rekomendasi:**\n- Monitor unit yang tersedia untuk antisipasi permintaan\n- Pastikan semua data tercatat dengan benar\n- Review tren mingguan untuk perencanaan\n\n⚠️ *Konfigurasi AI API key di Pengaturan untuk mendapatkan insight AI otomatis.*`;
+}
 
 interface AIInsightCardProps {
     prompt: string;
@@ -31,6 +59,7 @@ export default function AIInsightCard({
     className = '',
     alternativeQuestions,
 }: AIInsightCardProps) {
+    const [hasCheckedConfig, setHasCheckedConfig] = useState(false);
     const [insight, setInsight] = useState<string | null>(null);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -187,7 +216,56 @@ Insight: ${insightText.slice(0, 300)}
         fetchInsight(currentPrompt, next);
     };
 
-    if (!hasConfig && !loading) return null;
+    if (!hasConfig && !loading) {
+        // Show rule-based fallback instead of hiding the card entirely
+        if (!hasCheckedConfig) {
+            setHasCheckedConfig(true);
+        }
+        const fallbackText = getRuleBasedFallback(title, prompt);
+        return (
+            <div className={`bg-gradient-to-r from-amber-50 to-yellow-50 rounded-xl border border-amber-200 p-4 shadow-sm ${className}`}>
+                <div className="flex items-center justify-between mb-3 gap-2">
+                    <div className="flex items-center gap-2 min-w-0">
+                        <Zap className="w-4 h-4 text-amber-600 shrink-0" />
+                        <h3 className="text-sm font-semibold text-amber-900 truncate">{title}</h3>
+                        <span className="text-[10px] uppercase font-bold bg-amber-500 text-white px-1.5 py-0.5 rounded">
+                            Rule-based
+                        </span>
+                    </div>
+                    <div className="flex items-center gap-1">
+                        <a
+                            href="/pengaturan"
+                            className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium bg-white text-amber-700 border border-amber-200 hover:bg-amber-100 transition-colors"
+                        >
+                            <Zap className="w-3 h-3" />
+                            <span className="hidden sm:inline">Setup AI</span>
+                        </a>
+                    </div>
+                </div>
+                <div className="text-sm text-amber-800 leading-relaxed whitespace-pre-wrap">{fallbackText}</div>
+                <div className="mt-3 pt-3 border-t border-amber-100">
+                    <div className="flex items-center gap-1.5 mb-2">
+                        <Lightbulb className="w-3 h-3 text-amber-500" />
+                        <span className="text-xs text-amber-600 font-medium">Tips:</span>
+                    </div>
+                    <div className="flex flex-col gap-1.5 sm:flex-row sm:flex-wrap">
+                        {(alternativeQuestions || [
+                            'Apa yang perlu diperhatikan hari ini?',
+                            'Berikan rekomendasi untuk meningkatkan pendapatan.',
+                        ]).slice(0, 2).map((q) => (
+                            <div
+                                key={q}
+                                className="text-xs px-3 py-2 bg-white border border-amber-200 rounded-xl text-amber-700 text-left flex items-start gap-1.5 sm:max-w-xs"
+                            >
+                                <ChevronRight className="w-3 h-3 flex-shrink-0 mt-0.5" />
+                                <span>{q}</span>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            </div>
+        );
+    }
 
     const isLong = insight && insight.length > 300;
     const displayText = insight && isLong && !expanded ? insight.slice(0, 280) + '...' : insight;

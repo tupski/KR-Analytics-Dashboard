@@ -1,7 +1,9 @@
 import Link from 'next/link';
 import { createServerClient } from '@/lib/supabase/server';
 import AIInsightCard from '@/components/ai/AIInsightCard';
+import ExportButton from '@/components/shared/ExportButton';
 import { Users, Search, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from 'lucide-react';
+import { exportToXLSX, getExportFilename, currencyCol, dateCol, type ExportSheet } from '@/lib/export/xlsx';
 
 const PAGE_SIZE_OPTIONS = [10, 25, 50, 100];
 const DEFAULT_PAGE_SIZE = 10;
@@ -78,6 +80,65 @@ export default async function CustomerPage({
                     title="Insight Customer"
                     prompt="Analisis data customer: sebutkan jumlah tamu unik bulan ini, apakah ada tamu repeat, dan lokasi favorit tamu. Maksimal 3 kalimat."
                 />
+
+                {/* Export Button */}
+                <div className="flex justify-end mb-2">
+                    <ExportButton
+                        onExport={async () => {
+                            'use server';
+                            const supabase = createServerClient();
+
+                            let query = supabase
+                                .from('transactions')
+                                .select('id, customer_name, apartment_location, room_number, checkin_at, checkout_at, cash_amount, transfer_amount')
+                                .order('checkin_at', { ascending: false })
+                                .limit(5000);
+
+                            if (search) {
+                                query = query.ilike('customer_name', `%${search}%`);
+                            }
+
+                            const { data, error } = await query;
+
+                            if (error) {
+                                console.error('Error fetching customers for export:', error);
+                                return { sheets: [], filename: '' };
+                            }
+
+                            const customers = (data || []).map((c: any) => ({
+                                customerName: c.customer_name || '',
+                                apartmentLocation: c.apartment_location || '',
+                                roomNumber: c.room_number || '',
+                                checkinAt: c.checkin_at || '',
+                                checkoutAt: c.checkout_at || '',
+                                cashAmount: c.cash_amount || 0,
+                                transferAmount: c.transfer_amount || 0,
+                                totalAmount: (c.cash_amount || 0) + (c.transfer_amount || 0),
+                            }));
+
+                            const sheets: ExportSheet[] = [
+                                {
+                                    name: 'Customer',
+                                    columns: [
+                                        { header: 'Nama Tamu', key: 'customerName' },
+                                        { header: 'Lokasi', key: 'apartmentLocation' },
+                                        { header: 'Kamar', key: 'roomNumber' },
+                                        dateCol('Check-in', 'checkinAt'),
+                                        dateCol('Check-out', 'checkoutAt'),
+                                        currencyCol('Tunai', 'cashAmount'),
+                                        currencyCol('Transfer', 'transferAmount'),
+                                        currencyCol('Total', 'totalAmount'),
+                                    ],
+                                    data: customers,
+                                },
+                            ];
+
+                            const filename = getExportFilename('customer');
+                            return { sheets, filename };
+                        }}
+                        label="Export Customer"
+                    />
+                </div>
 
                 {/* Search */}
                 <form action="/customer" className="bg-white rounded-lg border border-gray-200 p-3 sm:p-4 shadow-sm">

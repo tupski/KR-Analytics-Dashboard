@@ -607,3 +607,40 @@ export async function fetchExpenseDetailsByCategory(
         category,
     };
 }
+
+/**
+ * Fetch all expenses for export (no pagination)
+ */
+export async function fetchAllExpenses(filter: DateFilter) {
+    const supabase = createServerClient();
+    const { start, end } = getDateRange(filter);
+
+    try {
+        let query = supabase
+            .from('pengeluaran')
+            .select('id, nama_pengeluaran, jumlah, tanggal, keterangan, apartment_location, room_number, category')
+            .gte('tanggal', start.split('T')[0])
+            .lte('tanggal', end.split('T')[0])
+            .order('tanggal', { ascending: false });
+
+        const { data, error } = await query;
+
+        if (error) {
+            console.error('Error fetching expenses for export:', error);
+            return [];
+        }
+
+        return (data || []).map((e: any) => ({
+            tanggal: e.tanggal || '',
+            category: e.category || 'Lainnya',
+            namaPengeluaran: e.nama_pengeluaran || '',
+            jumlah: e.jumlah || 0,
+            apartmentLocation: e.apartment_location || '',
+            roomNumber: e.room_number || '',
+            keterangan: e.keterangan || '',
+        }));
+    } catch (error) {
+        console.error('Error in fetchAllExpenses:', error);
+        return [];
+    }
+}

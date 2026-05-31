@@ -6,6 +6,8 @@ import UnitGrid from '@/components/unit/UnitGrid';
 import UnitStickyHeader from '@/components/unit/UnitStickyHeader';
 import AIInsightCard from '@/components/ai/AIInsightCard';
 import ReportPeriodChip from '@/components/shared/ReportPeriodChip';
+import ExportButton from '@/components/shared/ExportButton';
+import { exportToXLSX, getExportFilename, type ExportSheet } from '@/lib/export/xlsx';
 
 const VALID_FILTERS: UnitDateFilter[] = ['today', 'yesterday', '7days', 'month', 'year'];
 
@@ -46,6 +48,46 @@ export default async function UnitPage({
                     currentFilter={dateFilter}
                     dateLabel={unitData.dateLabel}
                 />
+
+                {/* Export Button */}
+                <div className="flex justify-end mb-2">
+                    <ExportButton
+                        onExport={async () => {
+                            'use server';
+                            const unitData = await fetchUnits(undefined, dateFilter);
+
+                            const sheets: ExportSheet[] = [
+                                {
+                                    name: 'Unit',
+                                    columns: [
+                                        { header: 'Nama Unit', key: 'name' },
+                                        { header: 'Lokasi', key: 'lokasi' },
+                                        { header: 'Status', key: 'status' },
+                                        { header: 'Terisi Hari Ini', key: 'isOccupiedToday', format: (v: boolean) => v ? 'Ya' : 'Tidak' },
+                                        { header: 'Tamu Saat Ini', key: 'currentGuest' },
+                                        { header: 'Jumlah Booking', key: 'occupancyCount' },
+                                    ],
+                                    data: unitData.units,
+                                },
+                                {
+                                    name: 'Ringkasan Lokasi',
+                                    columns: [
+                                        { header: 'Lokasi', key: 'name' },
+                                        { header: 'Total Kamar', key: 'totalRooms' },
+                                        { header: 'Terisi', key: 'occupiedToday' },
+                                        { header: 'Tersedia', key: 'availableToday' },
+                                        { header: 'Okupansi (%)', key: 'occupancyRate', format: (v: number) => `${v}%` },
+                                    ],
+                                    data: unitData.locationSummaries,
+                                },
+                            ];
+
+                            const filename = getExportFilename('unit');
+                            return { sheets, filename };
+                        }}
+                        label="Export Unit"
+                    />
+                </div>
 
                 {/* AI Insight - Top */}
                 <AIInsightCard

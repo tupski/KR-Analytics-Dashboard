@@ -193,3 +193,63 @@ export async function fetchBookingStats() {
         return { todayCount: 0, weekCount: 0, monthCount: 0, monthRevenue: 0 };
     }
 }
+
+/**
+ * Fetch all bookings for export (no pagination limit)
+ * Respects the same filters as fetchBookings
+ */
+export async function fetchBookingsForExport(filters: BookingFilters = {}) {
+    const supabase = createServerClient();
+    const timezone = 'Asia/Jakarta';
+
+    try {
+        let query = supabase
+            .from('transactions')
+            .select('*');
+
+        if (filters.search) {
+            query = query.or(`customer_name.ilike.%${filters.search}%,room_number.ilike.%${filters.search}%`);
+        }
+        if (filters.location) {
+            query = query.eq('apartment_location', filters.location);
+        }
+        if (filters.dateFrom) {
+            const mode = await getReportPeriodSetting();
+            const range = getReportPeriodRange(filters.dateFrom, mode);
+            query = query.gte('checkin_at', range.start);
+        }
+        if (filters.dateTo) {
+            const mode = await getReportPeriodSetting();
+            const range = getReportPeriodRange(filters.dateTo, mode);
+            query = query.lte('checkin_at', range.end);
+        }
+
+        query = query.order('checkin_at', { ascending: false });
+
+        const { data, error } = await query;
+
+        if (error) {
+            console.error('Error fetching bookings for export:', error);
+            return [];
+        }
+
+        return (data || []).map((tx: any) => ({
+            bookingNumber: `TRX-${tx.id}`,
+            customerName: tx.customer_name || '',
+            apartmentLocation: tx.apartment_location || '',
+            roomNumber: tx.room_number || '',
+            checkinAt: tx.checkin_at || '',
+            checkoutAt: tx.checkout_at || '',
+            rentalDuration: tx.rental_duration || 0,
+            cashAmount: tx.cash_amount || 0,
+            transferAmount: tx.transfer_amount || 0,
+            totalAmount: (tx.cash_amount || 0) + (tx.transfer_amount || 0),
+            marketingName: tx.marketing_name || 'Tidak Diketahui',
+            shift: tx.shift || '-',
+            status: tx.checkout_at ? 'Selesai' : 'Aktif',
+        }));
+    } catch (error) {
+        console.error('Error in fetchBookingsForExport:', error);
+        return [];
+    }
+}

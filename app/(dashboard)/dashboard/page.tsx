@@ -1,6 +1,7 @@
 import HeaderDashboard from '@/components/dashboard/HeaderDashboard';
 import AutoRefreshWrapper from '@/components/dashboard/AutoRefreshWrapper';
 import TabContent from '@/components/dashboard/TabContent';
+import ExportButton from '@/components/shared/ExportButton';
 import {
     fetchKPIData,
     fetchRevenueData,
@@ -11,8 +12,11 @@ import {
     fetchLocationHealthData,
     fetchUnitPerformanceData,
     fetchMarketingPerformanceData,
+    fetchRevenueDataForExport,
+    fetchOccupancyDataForExport,
 } from './actions';
 import { generateInsights } from '@/lib/dashboard/insights';
+import { exportToXLSX, getExportFilename, currencyCol, dateCol, type ExportSheet } from '@/lib/export/xlsx';
 import type { KPICompareMode } from '@/types/dashboard';
 
 const VALID_COMPARE: KPICompareMode[] = ['yesterday', 'lastweek', 'lastmonth', 'lastyear'];
@@ -72,6 +76,48 @@ export default async function DashboardPage({
 
                 {/* Main Content */}
                 <main className="px-4 sm:px-6 lg:px-8 py-4 sm:py-6">
+                    {/* Export Button */}
+                    <div className="flex justify-end mb-4">
+                        <ExportButton
+                            onExport={async () => {
+                                'use server';
+                                const [revData, occData] = await Promise.all([
+                                    fetchRevenueDataForExport(),
+                                    fetchOccupancyDataForExport(),
+                                ]);
+
+                                const sheets: ExportSheet[] = [
+                                    {
+                                        name: 'Pendapatan',
+                                        columns: [
+                                            { header: 'Tanggal', key: 'date' },
+                                            currencyCol('Pendapatan Kotor', 'grossRevenue'),
+                                            currencyCol('Biaya Platform', 'platformFee'),
+                                            currencyCol('Pendapatan Bersih', 'netRevenue'),
+                                            { header: 'Jumlah Transaksi', key: 'transactionCount' },
+                                        ],
+                                        data: revData || [],
+                                    },
+                                    {
+                                        name: 'Okupansi',
+                                        columns: [
+                                            { header: 'Tanggal', key: 'date' },
+                                            { header: 'Total Unit', key: 'totalUnits' },
+                                            { header: 'Unit Terisi', key: 'occupiedUnits' },
+                                            { header: 'Unit Tersedia', key: 'availableUnits' },
+                                            { header: 'Okupansi (%)', key: 'occupancyRate', format: (v: number) => `${v.toFixed(1)}%` },
+                                        ],
+                                        data: occData || [],
+                                    },
+                                ];
+
+                                const filename = getExportFilename('dashboard');
+                                return { sheets, filename };
+                            }}
+                            label="Export Dashboard"
+                        />
+                    </div>
+
                     <TabContent
                         kpiData={kpiData}
                         compareMode={compareMode}

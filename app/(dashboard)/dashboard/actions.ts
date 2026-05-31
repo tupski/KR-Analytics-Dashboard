@@ -922,3 +922,46 @@ export async function fetchMarketingPerformanceData(): Promise<{
         return { items: [], totalRevenue: 0, totalTransactions: 0, activeChannels: 0 };
     }
 }
+
+// ─── Export Functions ─────────────────────────────────────────────
+
+/**
+ * Fetch revenue data formatted for XLSX export (last 30 days daily)
+ */
+export async function fetchRevenueDataForExport() {
+    try {
+        const now = new Date();
+        const startDate = format(subDays(now, 29), 'yyyy-MM-dd');
+        const endDate = format(now, 'yyyy-MM-dd');
+        const revenueTrend = await getRevenueTrend(startDate, endDate);
+        return revenueTrend.map((point) => ({
+            date: format(new Date(point.date), 'dd MMM yyyy'),
+            grossRevenue: point.revenue || 0,
+            platformFee: 0,
+            netRevenue: point.revenue || 0,
+            transactionCount: point.transactionCount || 0,
+        }));
+    } catch (error) {
+        console.error('Error fetching revenue data for export:', error);
+        return [];
+    }
+}
+
+/**
+ * Fetch occupancy data formatted for XLSX export (last 30 days)
+ */
+export async function fetchOccupancyDataForExport() {
+    try {
+        const trend = await getDailyOccupancyTrend(30);
+        return trend.map((point) => ({
+            date: format(new Date(point.date), 'dd MMM yyyy'),
+            totalUnits: point.totalUnits || 0,
+            occupiedUnits: point.occupiedUnits || 0,
+            availableUnits: (point.totalUnits || 0) - (point.occupiedUnits || 0),
+            occupancyRate: point.occupancyRate || 0,
+        }));
+    } catch (error) {
+        console.error('Error fetching occupancy data for export:', error);
+        return [];
+    }
+}

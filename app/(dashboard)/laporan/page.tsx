@@ -1,8 +1,10 @@
-import { fetchLaporanData, fetchHighOccupancyLocations } from './actions';
+import { fetchLaporanData, fetchHighOccupancyLocations, fetchAllExpenses } from './actions';
 import type { DateFilter } from './actions';
 import AIInsightCard from '@/components/ai/AIInsightCard';
 import LaporanClient from '@/components/laporan/LaporanClient';
 import ReportPeriodChip from '@/components/shared/ReportPeriodChip';
+import ExportButton from '@/components/shared/ExportButton';
+import { exportToXLSX, getExportFilename, currencyCol, dateCol, type ExportSheet } from '@/lib/export/xlsx';
 
 export default async function LaporanPage({
     searchParams,
@@ -30,6 +32,41 @@ export default async function LaporanPage({
             </div>
 
             <main className="px-4 sm:px-6 lg:px-8 py-4 sm:py-6 space-y-4 sm:space-y-6">
+                {/* Export Button */}
+                <div className="flex justify-end mb-2">
+                    <ExportButton
+                        onExport={async () => {
+                            'use server';
+                            const [expenses] = await Promise.all([
+                                fetchAllExpenses(filter),
+                            ]);
+
+                            const sheets: ExportSheet[] = [
+                                {
+                                    name: 'Pengeluaran',
+                                    columns: [
+                                        {
+                                            header: 'Tanggal', key: 'tanggal', format: (v: string) => {
+                                                try { return new Date(v + 'T00:00:00').toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' }); } catch { return v; }
+                                            }
+                                        },
+                                        { header: 'Kategori', key: 'category' },
+                                        { header: 'Nama Pengeluaran', key: 'namaPengeluaran' },
+                                        { header: 'Jumlah', key: 'jumlah', format: (v: number) => `Rp ${v.toLocaleString('id-ID')}` },
+                                        { header: 'Lokasi', key: 'apartmentLocation' },
+                                        { header: 'Keterangan', key: 'keterangan' },
+                                    ],
+                                    data: expenses,
+                                },
+                            ];
+
+                            const filename = getExportFilename('laporan');
+                            return { sheets, filename };
+                        }}
+                        label="Export Laporan"
+                    />
+                </div>
+
                 <AIInsightCard
                     title="Insight Laporan"
                     prompt="Buat ringkasan laporan keuangan: total pendapatan, pengeluaran terbesar, lokasi terbaik, dan apakah ada tagihan yang belum dibayar. Berikan 1 rekomendasi. Maksimal 4 kalimat."
