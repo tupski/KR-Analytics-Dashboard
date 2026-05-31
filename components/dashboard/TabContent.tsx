@@ -146,6 +146,9 @@ export default function TabContent({
                     {/* Insight Summary */}
                     <DashboardInsightSummary insights={insights} />
 
+                    {/* AI Insights — Expandable (deterministic rule-based insights) */}
+                    <AIInsightsExpandable insights={insights} maxVisible={3} />
+
                     {/* Charts — Side-by-side */}
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                         <GrafikPendapatan initialData={revenueData} initialFilter="daily" />

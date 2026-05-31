@@ -268,7 +268,8 @@ export default function AIChatCore({
     const [showMemory, setShowMemory] = useState(false);
     const [config, setConfig] = useState<MultiAIConfig | null>(null);
     const [thinkingMode, setThinkingModeState] = useState<ThinkingMode>('auto');
-    const [showModelPicker, setShowModelPicker] = useState(false);
+    const [showModelPicker, setShowModelPicker] = useState(false);       // Toolbar model selector
+    const [showErrorModelPicker, setShowErrorModelPicker] = useState(false); // Error section model selector
     const [retryingIdx, setRetryingIdx] = useState<number | null>(null);
     const [editingIdx, setEditingIdx] = useState<number | null>(null);
     const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -515,6 +516,7 @@ export default function AIChatCore({
             setActive(providerId, modelId);
         }
         setShowModelPicker(false);
+        setShowErrorModelPicker(false);
         // Trigger config reload
         window.dispatchEvent(new Event('kr-ai-config-changed'));
     };
@@ -625,6 +627,8 @@ export default function AIChatCore({
                                         <button
                                             onClick={() => {
                                                 setInput(msg.content);
+                                                // Close error model picker to avoid duplicate dropdowns
+                                                setShowErrorModelPicker(false);
                                                 setShowModelPicker(true);
                                                 if (inputRef.current) {
                                                     inputRef.current.focus();
@@ -686,25 +690,30 @@ export default function AIChatCore({
                                 Retry (model sama)
                             </button>
                             <button
-                                onClick={() => setShowModelPicker(v => !v)}
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    // Close toolbar picker before opening error picker
+                                    setShowModelPicker(false);
+                                    setShowErrorModelPicker(v => !v);
+                                }}
                                 className="inline-flex items-center gap-1 px-2.5 py-1 text-xs text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
                             >
                                 <Brain className="w-3 h-3" />
                                 Ganti model
                             </button>
-                            {showModelPicker && config && (
+                            {showErrorModelPicker && config && (
                                 <div className="absolute z-50 mt-8">
                                     <ModelPickerDropdown
                                         config={config}
                                         onSelect={(pid, mid) => {
                                             handleSelectModel(pid, mid);
-                                            setShowModelPicker(false);
+                                            setShowErrorModelPicker(false);
                                             setTimeout(() => {
                                                 const lastUser = [...messages].reverse().find(m => m.role === 'user');
                                                 if (lastUser) handleSend(lastUser.content);
                                             }, 200);
                                         }}
-                                        onClose={() => setShowModelPicker(false)}
+                                        onClose={() => setShowErrorModelPicker(false)}
                                     />
                                 </div>
                             )}
@@ -785,7 +794,12 @@ export default function AIChatCore({
                             {/* Model selector */}
                             <div className="relative flex-1 min-w-0">
                                 <button
-                                    onClick={() => setShowModelPicker(v => !v)}
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        // Close error picker before opening toolbar picker
+                                        setShowErrorModelPicker(false);
+                                        setShowModelPicker(v => !v);
+                                    }}
                                     className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs text-gray-600 hover:bg-gray-100 transition-colors w-full max-w-[200px] border border-gray-200"
                                     aria-label="Pilih model AI"
                                 >
