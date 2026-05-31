@@ -123,17 +123,17 @@ export type LocationHealthItem = {
 export type InsightSeverity = 'good' | 'info' | 'warning' | 'critical';
 export type InsightTrend = 'up' | 'down' | 'flat';
 
-// ─── Channel Performance ───
-export type ChannelPerformanceStatus = 'strong' | 'normal' | 'weak' | 'unknown';
+// ─── Marketing Performance ───
+export type MarketingPerformanceStatus = 'strong' | 'normal' | 'weak' | 'unknown';
 
-export interface ChannelPerformanceItem {
+export interface MarketingPerformanceItem {
   channel: string;
   transactionCount: number;
   totalRevenue: number;
   averageTransaction: number;
   percentageOfRevenue: number;
   percentageOfTransactions: number;
-  status: ChannelPerformanceStatus;
+  status: MarketingPerformanceStatus;
 }
 
 export interface DashboardInsight {

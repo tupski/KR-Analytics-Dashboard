@@ -2,15 +2,15 @@
 
 import React from 'react';
 import { BarChart3, TrendingUp, TrendingDown, HelpCircle } from 'lucide-react';
-import type { ChannelPerformanceItem } from '@/types/dashboard';
+import type { MarketingPerformanceItem } from '@/types/dashboard';
 import {
-    CHANNEL_STATUS_LABELS,
-    CHANNEL_STATUS_STYLES,
-    generateChannelInsights,
-} from '@/lib/dashboard/channel-performance';
+    MARKETING_STATUS_LABELS,
+    MARKETING_STATUS_STYLES,
+    generateMarketingInsights,
+} from '@/lib/dashboard/marketing-performance';
 
-interface ChannelPerformancePanelProps {
-    items: ChannelPerformanceItem[];
+interface MarketingPerformancePanelProps {
+    items: MarketingPerformanceItem[];
     totalRevenue: number;
     totalTransactions: number;
     activeChannels: number;
@@ -46,17 +46,17 @@ function SkeletonSection() {
 
 // ─── Status Badge ─────────────────────────────────────────────
 
-function StatusBadge({ status }: { status: ChannelPerformanceItem['status'] }) {
+function StatusBadge({ status }: { status: MarketingPerformanceItem['status'] }) {
     return (
-        <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-semibold ${CHANNEL_STATUS_STYLES[status]}`}>
-            {CHANNEL_STATUS_LABELS[status]}
+        <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-semibold ${MARKETING_STATUS_STYLES[status]}`}>
+            {MARKETING_STATUS_LABELS[status]}
         </span>
     );
 }
 
 // ─── Channel Card (mobile) ────────────────────────────────────
 
-function ChannelCard({ item }: { item: ChannelPerformanceItem }) {
+function ChannelCard({ item }: { item: MarketingPerformanceItem }) {
     return (
         <div className="bg-white rounded-lg border border-gray-200 p-3 shadow-sm">
             <div className="flex items-center justify-between mb-1.5">
@@ -77,13 +77,13 @@ function ChannelCard({ item }: { item: ChannelPerformanceItem }) {
 
 // ─── Main Component ───────────────────────────────────────────
 
-export default function ChannelPerformancePanel({
+export default function MarketingPerformancePanel({
     items,
     totalRevenue,
     totalTransactions,
     activeChannels,
     isLoading,
-}: ChannelPerformancePanelProps) {
+}: MarketingPerformancePanelProps) {
     // ── Derived data ─────────────────────────────────────────
     const sorted = [...items].sort((a, b) => b.totalRevenue - a.totalRevenue);
     const strongest = sorted.find(i => i.channel !== 'Tidak Diketahui' && i.transactionCount > 0);
@@ -92,14 +92,14 @@ export default function ChannelPerformancePanel({
         .find(i => i.channel !== 'Tidak Diketahui' && i.transactionCount > 0);
 
     // ── Insights ─────────────────────────────────────────────
-    const insights = React.useMemo(() => generateChannelInsights(items), [items]);
+    const insights = React.useMemo(() => generateMarketingInsights(items), [items]);
 
     return (
         <section>
             <div className="flex items-center gap-2 mb-1">
                 <BarChart3 className="w-5 h-5 text-gray-600" />
                 <h2 className="text-base sm:text-lg font-semibold text-gray-900">
-                    Performa Channel
+                    Performa Marketing
                 </h2>
             </div>
             <p className="text-xs sm:text-sm text-gray-500 mb-3">
@@ -114,7 +114,7 @@ export default function ChannelPerformancePanel({
                     {items.length === 0 && (
                         <div className="rounded-lg border border-gray-200 bg-white p-6 text-center">
                             <HelpCircle className="w-8 h-8 text-gray-300 mx-auto mb-2" />
-                            <p className="text-sm text-gray-500">Belum ada data channel pada periode ini.</p>
+                            <p className="text-sm text-gray-500">Belum ada data marketing pada periode ini.</p>
                             <p className="text-xs text-gray-400 mt-1">
                                 Data akan muncul setelah ada transaksi dengan check-in pada periode ini.
                             </p>
@@ -123,14 +123,14 @@ export default function ChannelPerformancePanel({
 
                     {items.length > 0 && (
                         <>
-                            {/* ── A. Ringkasan Channel ──────────────── */}
+                            {/* ── A. Ringkasan Marketing ──────────────── */}
                             <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
                                 <div className="bg-white rounded-lg border border-gray-200 p-3 shadow-sm">
-                                    <p className="text-xs text-gray-500">Channel Aktif</p>
+                                    <p className="text-xs text-gray-500">Total Marketing Aktif</p>
                                     <p className="text-lg font-bold text-gray-900">{activeChannels}</p>
                                 </div>
                                 <div className="bg-white rounded-lg border border-gray-200 p-3 shadow-sm">
-                                    <p className="text-xs text-gray-500">Channel Terkuat</p>
+                                    <p className="text-xs text-gray-500">Marketing Terkuat</p>
                                     <p className="text-sm font-semibold text-green-700 truncate">
                                         {strongest ? strongest.channel : '-'}
                                     </p>
@@ -142,17 +142,17 @@ export default function ChannelPerformancePanel({
                                     </p>
                                 </div>
                                 <div className="bg-white rounded-lg border border-gray-200 p-3 shadow-sm">
-                                    <p className="text-xs text-gray-500">Channel Terlemah</p>
+                                    <p className="text-xs text-gray-500">Marketing Terlemah</p>
                                     <p className="text-sm font-semibold text-amber-700 truncate">
                                         {weakest ? weakest.channel : '-'}
                                     </p>
                                 </div>
                             </div>
 
-                            {/* ── B. Ranking Channel ─────────────────── */}
+                            {/* ── B. Ranking Marketing ─────────────────── */}
                             <div className="mb-4">
                                 <h3 className="text-sm font-semibold text-gray-800 mb-2">
-                                    Ranking Channel
+                                    Ranking Marketing
                                 </h3>
 
                                 {/* Desktop table */}
@@ -161,7 +161,7 @@ export default function ChannelPerformancePanel({
                                         <thead className="bg-gray-50 border-b border-gray-200">
                                             <tr>
                                                 <th className="text-left px-3 py-2 font-semibold text-gray-600">#</th>
-                                                <th className="text-left px-3 py-2 font-semibold text-gray-600">Channel</th>
+                                                <th className="text-left px-3 py-2 font-semibold text-gray-600">Marketing</th>
                                                 <th className="text-right px-3 py-2 font-semibold text-gray-600">Transaksi</th>
                                                 <th className="text-right px-3 py-2 font-semibold text-gray-600">Revenue</th>
                                                 <th className="text-right px-3 py-2 font-semibold text-gray-600">Rata-rata</th>
@@ -225,10 +225,10 @@ export default function ChannelPerformancePanel({
                                         <HelpCircle className="w-5 h-5 text-amber-500 mt-0.5 flex-shrink-0" />
                                         <div>
                                             <p className="text-sm font-medium text-amber-800">
-                                                Sebagian besar transaksi belum memiliki sumber channel.
+                                                Sebagian besar transaksi belum memiliki sumber marketing.
                                             </p>
                                             <p className="text-xs text-amber-700 mt-1">
-                                                Pertimbangkan menambahkan input channel pada transaksi berikutnya.
+                                                Pertimbangkan menambahkan input marketing pada transaksi berikutnya.
                                             </p>
                                         </div>
                                     </div>

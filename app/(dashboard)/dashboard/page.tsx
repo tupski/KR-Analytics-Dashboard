@@ -10,7 +10,7 @@ import CompareSwitcher from '@/components/dashboard/CompareSwitcher';
 import DashboardInsightSummary from '@/components/dashboard/DashboardInsightSummary';
 import LocationHealthMatrix from '@/components/dashboard/LocationHealthMatrix';
 import UnitPerformancePanel from '@/components/dashboard/UnitPerformancePanel';
-import ChannelPerformancePanel from '@/components/dashboard/ChannelPerformancePanel';
+import MarketingPerformancePanel from '@/components/dashboard/MarketingPerformancePanel';
 import AIInsightCard from '@/components/ai/AIInsightCard';
 import {
     fetchKPIData,
@@ -21,7 +21,7 @@ import {
     fetchUnitStatus,
     fetchLocationHealthData,
     fetchUnitPerformanceData,
-    fetchChannelPerformanceData,
+    fetchMarketingPerformanceData,
 } from './actions';
 import { generateInsights } from '@/lib/dashboard/insights';
 import type { KPICompareMode } from '@/types/dashboard';
@@ -55,7 +55,7 @@ export default async function DashboardPage({
         unitStatusData,
         locationHealthData,
         unitPerformanceData,
-        channelPerformanceData,
+        marketingPerformanceData,
     ] = await Promise.all([
         fetchKPIData(compareMode || undefined),
         fetchRevenueData('daily'),
@@ -65,7 +65,7 @@ export default async function DashboardPage({
         fetchUnitStatus(),
         fetchLocationHealthData(),
         fetchUnitPerformanceData(),
-        fetchChannelPerformanceData(),
+        fetchMarketingPerformanceData(),
     ]);
 
     // Generate deterministic insights from fetched data
@@ -173,12 +173,12 @@ export default async function DashboardPage({
                         isLoading={false}
                     />
 
-                    {/* Channel Performance Section */}
-                    <ChannelPerformancePanel
-                        items={channelPerformanceData.items}
-                        totalRevenue={channelPerformanceData.totalRevenue}
-                        totalTransactions={channelPerformanceData.totalTransactions}
-                        activeChannels={channelPerformanceData.activeChannels}
+                    {/* Marketing Performance Section */}
+                    <MarketingPerformancePanel
+                        items={marketingPerformanceData.items}
+                        totalRevenue={marketingPerformanceData.totalRevenue}
+                        totalTransactions={marketingPerformanceData.totalTransactions}
+                        activeChannels={marketingPerformanceData.activeChannels}
                         isLoading={false}
                     />
 

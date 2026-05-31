@@ -9,8 +9,8 @@ import { getRevenueTrend } from '@/lib/services/revenue';
 import { getLocations } from '@/lib/services/location';
 import { applyLocationHealthStatuses } from '@/lib/dashboard/location-health';
 import { getIdleSeverity } from '@/lib/dashboard/unit-performance';
-import type { LocationHealthItem, IdleUnitItem, UnitPerformanceItem, ChannelPerformanceItem, ChannelPerformanceStatus } from '@/types/dashboard';
-import { normalizeChannelName, getChannelStatus } from '@/lib/dashboard/channel-performance';
+import type { LocationHealthItem, IdleUnitItem, UnitPerformanceItem, MarketingPerformanceItem, MarketingPerformanceStatus } from '@/types/dashboard';
+import { normalizeMarketingName, getMarketingStatus } from '@/lib/dashboard/marketing-performance';
 import type { UnitPerformanceData } from '@/lib/dashboard/unit-performance';
 import { format, subDays, subWeeks, subMonths, subYears, startOfWeek, startOfMonth, startOfYear } from 'date-fns';
 import { id as idLocale } from 'date-fns/locale';
@@ -845,14 +845,14 @@ export async function fetchUnitPerformanceData(): Promise<UnitPerformanceData> {
 }
 
 /**
- * Fetch channel (marketing/source) performance data for the current report period.
+ * Fetch marketing (source) performance data for the current report period.
  *
  * Uses getTodayReportRange() for period-aware boundaries.
  * Aggregates marketing_name from transactions, summing cash_amount + transfer_amount.
  * Null/empty marketing_name → 'Tidak Diketahui'.
  */
-export async function fetchChannelPerformanceData(): Promise<{
-    items: ChannelPerformanceItem[];
+export async function fetchMarketingPerformanceData(): Promise<{
+    items: MarketingPerformanceItem[];
     totalRevenue: number;
     totalTransactions: number;
     activeChannels: number;
@@ -868,8 +868,8 @@ export async function fetchChannelPerformanceData(): Promise<{
             .lte('checkin_at', end);
 
         if (error) {
-            console.error('Error fetching channel performance:', error);
-            throw new Error(`Gagal mengambil data channel: ${error.message}`);
+            console.error('Error fetching marketing performance:', error);
+            throw new Error(`Gagal mengambil data marketing: ${error.message}`);
         }
 
         if (!data || data.length === 0) {
@@ -882,7 +882,7 @@ export async function fetchChannelPerformanceData(): Promise<{
         let totalTx = 0;
 
         data.forEach((tx: { marketing_name: string | null; cash_amount: number | null; transfer_amount: number | null }) => {
-            const channel = normalizeChannelName(tx.marketing_name);
+            const channel = normalizeMarketingName(tx.marketing_name);
             const revenue = (tx.cash_amount || 0) + (tx.transfer_amount || 0);
             const existing = channelMap.get(channel) || { count: 0, revenue: 0 };
             existing.count += 1;
@@ -892,7 +892,7 @@ export async function fetchChannelPerformanceData(): Promise<{
             totalTx += 1;
         });
 
-        const items: ChannelPerformanceItem[] = Array.from(channelMap.entries())
+        const items: MarketingPerformanceItem[] = Array.from(channelMap.entries())
             .map(([channel, data]) => ({
                 channel,
                 transactionCount: data.count,
@@ -900,13 +900,13 @@ export async function fetchChannelPerformanceData(): Promise<{
                 averageTransaction: data.count > 0 ? data.revenue / data.count : 0,
                 percentageOfRevenue: totalRevenue > 0 ? (data.revenue / totalRevenue) * 100 : 0,
                 percentageOfTransactions: totalTx > 0 ? (data.count / totalTx) * 100 : 0,
-                status: 'normal' as ChannelPerformanceStatus,
+                status: 'normal' as MarketingPerformanceStatus,
             }))
             .sort((a, b) => b.totalRevenue - a.totalRevenue);
 
         // Apply statuses
         items.forEach(item => {
-            item.status = getChannelStatus(item, items);
+            item.status = getMarketingStatus(item, items);
         });
 
         return {
@@ -916,7 +916,7 @@ export async function fetchChannelPerformanceData(): Promise<{
             activeChannels: items.filter(i => i.channel !== 'Tidak Diketahui').length,
         };
     } catch (error) {
-        console.error('Error in fetchChannelPerformanceData:', error);
+        console.error('Error in fetchMarketingPerformanceData:', error);
         return { items: [], totalRevenue: 0, totalTransactions: 0, activeChannels: 0 };
     }
 }
