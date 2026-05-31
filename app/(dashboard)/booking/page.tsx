@@ -2,6 +2,7 @@ import { fetchBookings, fetchLocations, fetchBookingStats, fetchBookingsForExpor
 import BookingTable from '@/components/booking/BookingTable';
 import BookingStatsCards from '@/components/booking/BookingStatsCards';
 import BookingFilters from '@/components/booking/BookingFilters';
+import DateFilterBar from '@/components/shared/DateFilterBar';
 import AIInsightCard from '@/components/ai/AIInsightCard';
 import ReportPeriodChip from '@/components/shared/ReportPeriodChip';
 import ExportButton from '@/components/shared/ExportButton';
@@ -16,6 +17,7 @@ import { exportToXLSX, getExportFilename, currencyCol, dateCol, type ExportSheet
  * - Sortable table with booking details
  * - Pagination
  *
+ * Accepts unified date filter params for flexible date range + comparison.
  * READ ONLY - no data modification
  */
 export default async function BookingPage({
@@ -30,8 +32,27 @@ export default async function BookingPage({
     const dateTo = typeof params.dateTo === 'string' ? params.dateTo : '';
     const page = typeof params.page === 'string' ? parseInt(params.page) : 1;
 
+    // Unified date filter params
+    const rangePreset = typeof params.rangePreset === 'string' ? params.rangePreset : undefined;
+    const startDate = typeof params.startDate === 'string' ? params.startDate : undefined;
+    const endDate = typeof params.endDate === 'string' ? params.endDate : undefined;
+    const comparisonMode = typeof params.comparisonMode === 'string' ? params.comparisonMode : undefined;
+    const comparisonStartDate = typeof params.comparisonStartDate === 'string' ? params.comparisonStartDate : undefined;
+    const comparisonEndDate = typeof params.comparisonEndDate === 'string' ? params.comparisonEndDate : undefined;
+
     const [bookingResult, locations, stats] = await Promise.all([
-        fetchBookings({ search, location, dateFrom, dateTo, page, pageSize: 20 }),
+        fetchBookings({
+            search,
+            location,
+            dateFrom,
+            dateTo,
+            page,
+            pageSize: 20,
+            // Pass unified date params to the action
+            rangePreset,
+            startDate,
+            endDate,
+        }),
         fetchLocations(),
         fetchBookingStats(),
     ]);
@@ -95,6 +116,20 @@ export default async function BookingPage({
 
                 {/* Stats Cards */}
                 <BookingStatsCards stats={stats} />
+
+                {/* Date Filter Bar — unified date range + comparison */}
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                    <DateFilterBar
+                        basePath="/booking"
+                        defaultPreset={rangePreset as any || 'last30days'}
+                        defaultStartDate={startDate}
+                        defaultEndDate={endDate}
+                        defaultComparisonMode={comparisonMode as any || 'none'}
+                        defaultComparisonStartDate={comparisonStartDate}
+                        defaultComparisonEndDate={comparisonEndDate}
+                        extraPreservedParams={['search', 'location', 'page', 'pageSize']}
+                    />
+                </div>
 
                 {/* Filters */}
                 <BookingFilters

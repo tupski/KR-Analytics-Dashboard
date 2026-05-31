@@ -1,7 +1,8 @@
-import { format, subDays, startOfMonth, endOfMonth, isSameDay } from 'date-fns';
+import { format, subDays, startOfWeek, endOfWeek, startOfMonth, endOfMonth, startOfYear, endOfYear, subWeeks, subMonths, subYears, parse, isSameDay } from 'date-fns';
 import { toZonedTime } from 'date-fns-tz';
 import { getReportPeriodRange, DEFAULT_REPORT_PERIOD } from '@/lib/reporting-period';
 import type { ReportPeriodMode } from '@/lib/reporting-period';
+import { id as localeId } from 'date-fns/locale';
 
 // ============================================================
 // lib/services/date-range.ts
@@ -24,6 +25,18 @@ export interface DateRangeResult {
     end: string;     // ISO datetime string like "2026-05-27T23:59:59"
     label: string;   // Human-readable label like "Hari Ini"
     dateStr?: string; // yyyy-MM-dd string (only for hotelDayRange)
+}
+
+// ============================================================
+// DateFilterParams — URL string params for unified date filtering
+// ============================================================
+export interface DateFilterParams {
+    rangePreset?: string;
+    startDate?: string;
+    endDate?: string;
+    comparisonMode?: string;
+    comparisonStartDate?: string;
+    comparisonEndDate?: string;
 }
 
 // ============================================================
@@ -50,12 +63,6 @@ export function getHotelDayRange(): DateRangeResult {
 // Returns start/end/label for a named date filter.
 // mode defaults to calendar_day (00:00–23:59 WIB).
 // When mode = hotel_day, boundaries shift to 12:00–11:59.
-//
-// Examples (today = 2026-05-30):
-//   today  + calendar_day → 2026-05-30T00:00:00 → 2026-05-30T23:59:59
-//   today  + hotel_day    → 2026-05-30T12:00:00 → 2026-05-31T11:59:59
-//   7days  + calendar_day → 2026-05-24T00:00:00 → 2026-05-30T23:59:59
-//   7days  + hotel_day    → 2026-05-24T12:00:00 → 2026-05-31T11:59:59
 // ============================================================
 export function getDateRange(filter: DateFilter, mode: ReportPeriodMode = DEFAULT_REPORT_PERIOD): DateRangeResult {
     const now = toZonedTime(new Date(), TIMEZONE);
@@ -106,22 +113,15 @@ export function getPreviousDateRange(filter: DateFilter, mode: ReportPeriodMode 
 
     switch (filter) {
         case 'today': {
-            // Compare to yesterday
             const r = getDateRange('yesterday', mode);
             return { ...r, label: 'Kemarin' };
         }
         case 'yesterday': {
-            // Compare to day before yesterday
             const dayBefore = subDays(now, 2);
             const range = getReportPeriodRange(dayBefore, mode);
-            return {
-                start: range.start,
-                end: range.end,
-                label: 'H-2',
-            };
+            return { start: range.start, end: range.end, label: 'H-2' };
         }
         case '7days': {
-            // Previous 7 days (8-14 days ago)
             const start14 = subDays(now, 13);
             const end7 = subDays(now, 7);
             return {
@@ -131,7 +131,6 @@ export function getPreviousDateRange(filter: DateFilter, mode: ReportPeriodMode 
             };
         }
         case 'month': {
-            // Previous month: from 1st last month to last day last month
             const firstThisMonth = new Date(now.getFullYear(), now.getMonth(), 1);
             const lastDayLastMonth = subDays(firstThisMonth, 1);
             const firstLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
@@ -142,7 +141,6 @@ export function getPreviousDateRange(filter: DateFilter, mode: ReportPeriodMode 
             };
         }
         case 'year': {
-            // Previous year
             const firstThisYear = new Date(now.getFullYear(), 0, 1);
             const lastDayLastYear = subDays(firstThisYear, 1);
             const firstLastYear = new Date(now.getFullYear() - 1, 0, 1);
@@ -152,6 +150,177 @@ export function getPreviousDateRange(filter: DateFilter, mode: ReportPeriodMode 
                 label: 'Tahun Lalu',
             };
         }
+    }
+}
+
+// ============================================================
+// computeDateRange()
+//
+// Converts URL string params to date range boundaries.
+// Supports all DateRangePicker presets plus the legacy 5 filters.
+// Falls back to last30days.
+// ============================================================
+function computeTrailingDaysRange(days: number, mode: ReportPeriodMode): DateRangeResult {
+    const now = toZonedTime(new Date(), TIMEZONE);
+    const start = subDays(now, days - 1);
+    return {
+        start: getReportPeriodRange(start, mode).start,
+        end: getReportPeriodRange(now, mode).end,
+        label: `${days} Hari Terakhir`,
+    };
+}
+
+function computeThisWeekRange(mode: ReportPeriodMode): DateRangeResult {
+    const now = toZonedTime(new Date(), TIMEZONE);
+    const weekStart = startOfWeek(now, { locale: localeId });
+    return {
+        start: getReportPeriodRange(weekStart, mode).start,
+        end: getReportPeriodRange(now, mode).end,
+        label: 'Minggu Ini',
+    };
+}
+
+function computeLastWeekRange(mode: ReportPeriodMode): DateRangeResult {
+    const now = toZonedTime(new Date(), TIMEZONE);
+    const prevWeekStart = startOfWeek(subWeeks(now, 1), { locale: localeId });
+    const prevWeekEnd = endOfWeek(prevWeekStart, { locale: localeId });
+    return {
+        start: getReportPeriodRange(prevWeekStart, mode).start,
+        end: getReportPeriodRange(prevWeekEnd, mode).end,
+        label: 'Minggu Lalu',
+    };
+}
+
+function computeLastMonthRange(mode: ReportPeriodMode): DateRangeResult {
+    const now = toZonedTime(new Date(), TIMEZONE);
+    const monthStart = startOfMonth(subMonths(now, 1));
+    const monthEnd = endOfMonth(monthStart);
+    return {
+        start: getReportPeriodRange(monthStart, mode).start,
+        end: getReportPeriodRange(monthEnd, mode).end,
+        label: 'Bulan Lalu',
+    };
+}
+
+/**
+ * Compute date range from URL filter params.
+ * Accepts both DateRangePicker presets and legacy DateFilter values.
+ */
+export function computeDateRange(
+    rangePreset?: string,
+    startDate?: string,
+    endDate?: string,
+    mode: ReportPeriodMode = DEFAULT_REPORT_PERIOD,
+): DateRangeResult {
+    const preset = rangePreset || 'last30days';
+
+    switch (preset) {
+        case 'today':
+        case 'yesterday':
+        case '7days':
+            return getDateRange(preset as any, mode);
+        case 'month':
+        case 'thisMonth':
+            return getDateRange('month', mode);
+        case 'year':
+        case 'thisYear':
+            return getDateRange('year', mode);
+        case 'last7days':
+            return getDateRange('7days', mode);
+        case 'last30days':
+            return computeTrailingDaysRange(30, mode);
+        case 'thisWeek':
+            return computeThisWeekRange(mode);
+        case 'lastWeek':
+            return computeLastWeekRange(mode);
+        case 'lastMonth':
+            return computeLastMonthRange(mode);
+        case 'custom':
+            if (startDate && endDate) {
+                const start = parse(startDate, 'yyyy-MM-dd', new Date());
+                const end = parse(endDate, 'yyyy-MM-dd', new Date());
+                return {
+                    start: getReportPeriodRange(start, mode).start,
+                    end: getReportPeriodRange(end, mode).end,
+                    label: `${format(start, 'dd MMM')} – ${format(end, 'dd MMM yyyy')}`,
+                };
+            }
+            return computeTrailingDaysRange(30, mode);
+        default:
+            return computeTrailingDaysRange(30, mode);
+    }
+}
+
+// ============================================================
+// computeComparisonRange()
+//
+// Computes the comparison date range based on comparison mode.
+// Returns null when mode is 'none' or falsy.
+// ============================================================
+export function computeComparisonRange(
+    comparisonMode?: string,
+    currentStart?: string,
+    currentEnd?: string,
+    comparisonStartDate?: string,
+    comparisonEndDate?: string,
+    mode: ReportPeriodMode = DEFAULT_REPORT_PERIOD,
+): DateRangeResult | null {
+    if (!comparisonMode || comparisonMode === 'none' || !currentStart || !currentEnd) return null;
+
+    if (comparisonMode === 'custom') {
+        if (!comparisonStartDate || !comparisonEndDate) return null;
+        const start = parse(comparisonStartDate, 'yyyy-MM-dd', new Date());
+        const end = parse(comparisonEndDate, 'yyyy-MM-dd', new Date());
+        return {
+            start: getReportPeriodRange(start, mode).start,
+            end: getReportPeriodRange(end, mode).end,
+            label: `${format(start, 'dd MMM')} – ${format(end, 'dd MMM yyyy')}`,
+        };
+    }
+
+    const startDate = new Date(currentStart);
+    const endDate = new Date(currentEnd);
+    const durationDays = Math.max(1, Math.round((endDate.getTime() - startDate.getTime()) / 86400000));
+
+    switch (comparisonMode) {
+        case 'previousPeriod': {
+            const compEnd = subDays(startDate, 1);
+            const compStart = subDays(compEnd, durationDays - 1);
+            return {
+                start: getReportPeriodRange(compStart, mode).start,
+                end: getReportPeriodRange(compEnd, mode).end,
+                label: 'Periode sebelumnya',
+            };
+        }
+        case 'previousWeek': {
+            const compEnd = subWeeks(endDate, 1);
+            const compStart = subWeeks(startDate, 1);
+            return {
+                start: getReportPeriodRange(compStart, mode).start,
+                end: getReportPeriodRange(compEnd, mode).end,
+                label: 'Minggu sebelumnya',
+            };
+        }
+        case 'previousMonth': {
+            const compEnd = subMonths(endDate, 1);
+            const compStart = subMonths(startDate, 1);
+            return {
+                start: getReportPeriodRange(compStart, mode).start,
+                end: getReportPeriodRange(compEnd, mode).end,
+                label: 'Bulan sebelumnya',
+            };
+        }
+        case 'previousYear': {
+            const compEnd = subYears(endDate, 1);
+            const compStart = subYears(startDate, 1);
+            return {
+                start: getReportPeriodRange(compStart, mode).start,
+                end: getReportPeriodRange(compEnd, mode).end,
+                label: 'Tahun sebelumnya',
+            };
+        }
+        default:
+            return null;
     }
 }
 

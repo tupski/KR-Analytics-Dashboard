@@ -1,6 +1,6 @@
 import Link from 'next/link';
-import { createServerClient } from '@/lib/supabase/server';
-import AIInsightCard from '@/components/ai/AIInsightCard';
+import { fetchCustomers, fetchCustomersForExport } from './actions';
+import DateFilterBar from '@/components/shared/DateFilterBar';
 import ExportButton from '@/components/shared/ExportButton';
 import { Users, Search, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from 'lucide-react';
 import { exportToXLSX, getExportFilename, currencyCol, dateCol, type ExportSheet } from '@/lib/export/xlsx';
@@ -8,30 +8,14 @@ import { exportToXLSX, getExportFilename, currencyCol, dateCol, type ExportSheet
 const PAGE_SIZE_OPTIONS = [10, 25, 50, 100];
 const DEFAULT_PAGE_SIZE = 10;
 
-async function fetchCustomers(search: string | undefined, page: number, pageSize: number) {
-    const supabase = createServerClient();
-    const offset = (page - 1) * pageSize;
-
-    let query = supabase
-        .from('transactions')
-        .select('id, customer_name, apartment_location, room_number, checkin_at, checkout_at, cash_amount, transfer_amount', { count: 'exact' });
-
-    if (search) {
-        query = query.ilike('customer_name', `%${search}%`);
-    }
-
-    const { data, count } = await query
-        .order('checkin_at', { ascending: false })
-        .range(offset, offset + pageSize - 1);
-
-    return { data: data || [], count: count || 0 };
-}
-
-function buildHref(base: { search: string; pageSize: number }, page: number) {
+function buildHref(base: { search: string; pageSize: number; rangePreset?: string; startDate?: string; endDate?: string }, page: number) {
     const params = new URLSearchParams();
     if (base.search) params.set('search', base.search);
     if (page > 1) params.set('page', String(page));
     if (base.pageSize !== DEFAULT_PAGE_SIZE) params.set('pageSize', String(base.pageSize));
+    if (base.rangePreset) params.set('rangePreset', base.rangePreset);
+    if (base.startDate) params.set('startDate', base.startDate);
+    if (base.endDate) params.set('endDate', base.endDate);
     const qs = params.toString();
     return qs ? `/customer?${qs}` : '/customer';
 }
@@ -47,7 +31,17 @@ export default async function CustomerPage({
     const rawPageSize = typeof params.pageSize === 'string' ? parseInt(params.pageSize) : DEFAULT_PAGE_SIZE;
     const pageSize = PAGE_SIZE_OPTIONS.includes(rawPageSize) ? rawPageSize : DEFAULT_PAGE_SIZE;
 
-    const { data: customers, count } = await fetchCustomers(search || undefined, page, pageSize);
+    // Unified date filter params
+    const rangePreset = typeof params.rangePreset === 'string' ? params.rangePreset : undefined;
+    const startDate = typeof params.startDate === 'string' ? params.startDate : undefined;
+    const endDate = typeof params.endDate === 'string' ? params.endDate : undefined;
+    const comparisonMode = typeof params.comparisonMode === 'string' ? params.comparisonMode : undefined;
+    const comparisonStartDate = typeof params.comparisonStartDate === 'string' ? params.comparisonStartDate : undefined;
+    const comparisonEndDate = typeof params.comparisonEndDate === 'string' ? params.comparisonEndDate : undefined;
+
+    const dateParams = rangePreset ? { rangePreset, startDate, endDate, comparisonMode, comparisonStartDate, comparisonEndDate } : undefined;
+
+    const { items: customers, totalCount: count } = await fetchCustomers(search || undefined, page, pageSize, dateParams);
 
     const formatCurrency = (val: number) => `Rp ${val.toLocaleString('id-ID')}`;
     const formatDateTime = (d: string | null) => {
@@ -66,7 +60,7 @@ export default async function CustomerPage({
     const startIdx = count === 0 ? 0 : (page - 1) * pageSize + 1;
     const endIdx = Math.min(page * pageSize, count);
 
-    const baseLink = { search, pageSize };
+    const baseLink = { search, pageSize, rangePreset, startDate, endDate };
 
     return (
         <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50/30">
@@ -76,67 +70,17 @@ export default async function CustomerPage({
             </div>
 
             <main className="px-4 sm:px-6 lg:px-8 py-4 sm:py-6 space-y-4 sm:space-y-6">
-                <AIInsightCard
-                    title="Insight Customer"
-                    prompt="Analisis data customer: sebutkan jumlah tamu unik bulan ini, apakah ada tamu repeat, dan lokasi favorit tamu. Maksimal 3 kalimat."
-                />
-
-                {/* Export Button */}
-                <div className="flex justify-end mb-2">
-                    <ExportButton
-                        onExport={async () => {
-                            'use server';
-                            const supabase = createServerClient();
-
-                            let query = supabase
-                                .from('transactions')
-                                .select('id, customer_name, apartment_location, room_number, checkin_at, checkout_at, cash_amount, transfer_amount')
-                                .order('checkin_at', { ascending: false })
-                                .limit(5000);
-
-                            if (search) {
-                                query = query.ilike('customer_name', `%${search}%`);
-                            }
-
-                            const { data, error } = await query;
-
-                            if (error) {
-                                console.error('Error fetching customers for export:', error);
-                                return { sheets: [], filename: '' };
-                            }
-
-                            const customers = (data || []).map((c: any) => ({
-                                customerName: c.customer_name || '',
-                                apartmentLocation: c.apartment_location || '',
-                                roomNumber: c.room_number || '',
-                                checkinAt: c.checkin_at || '',
-                                checkoutAt: c.checkout_at || '',
-                                cashAmount: c.cash_amount || 0,
-                                transferAmount: c.transfer_amount || 0,
-                                totalAmount: (c.cash_amount || 0) + (c.transfer_amount || 0),
-                            }));
-
-                            const sheets: ExportSheet[] = [
-                                {
-                                    name: 'Customer',
-                                    columns: [
-                                        { header: 'Nama Tamu', key: 'customerName' },
-                                        { header: 'Lokasi', key: 'apartmentLocation' },
-                                        { header: 'Kamar', key: 'roomNumber' },
-                                        dateCol('Check-in', 'checkinAt'),
-                                        dateCol('Check-out', 'checkoutAt'),
-                                        currencyCol('Tunai', 'cashAmount'),
-                                        currencyCol('Transfer', 'transferAmount'),
-                                        currencyCol('Total', 'totalAmount'),
-                                    ],
-                                    data: customers,
-                                },
-                            ];
-
-                            const filename = getExportFilename('customer');
-                            return { sheets, filename };
-                        }}
-                        label="Export Customer"
+                {/* Date Filter Bar */}
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                    <DateFilterBar
+                        basePath="/customer"
+                        defaultPreset={rangePreset as any || 'last30days'}
+                        defaultStartDate={startDate}
+                        defaultEndDate={endDate}
+                        defaultComparisonMode={comparisonMode as any || 'none'}
+                        defaultComparisonStartDate={comparisonStartDate}
+                        defaultComparisonEndDate={comparisonEndDate}
+                        extraPreservedParams={['search', 'page', 'pageSize']}
                     />
                 </div>
 
@@ -153,17 +97,20 @@ export default async function CustomerPage({
                                 className="w-full pl-10 pr-4 py-2 sm:py-2.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
                             />
                         </div>
-                        {/* Preserve pageSize when searching */}
+                        {/* Preserve pageSize and date params when searching */}
                         {pageSize !== DEFAULT_PAGE_SIZE && (
                             <input type="hidden" name="pageSize" value={pageSize} />
                         )}
+                        {rangePreset && <input type="hidden" name="rangePreset" value={rangePreset} />}
+                        {startDate && <input type="hidden" name="startDate" value={startDate} />}
+                        {endDate && <input type="hidden" name="endDate" value={endDate} />}
                         <button type="submit" className="px-4 sm:px-5 py-2 sm:py-2.5 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 flex-shrink-0">
                             Cari
                         </button>
                     </div>
                 </form>
 
-                {/* Stats + page size */}
+                {/* Stats + page size + export */}
                 <div className="flex flex-wrap items-center justify-between gap-3 text-sm text-gray-600">
                     <div className="flex items-center gap-2">
                         <Users className="w-4 h-4" />
@@ -172,20 +119,35 @@ export default async function CustomerPage({
                             <span className="text-gray-400">· menampilkan {startIdx.toLocaleString('id-ID')}–{endIdx.toLocaleString('id-ID')}</span>
                         )}
                     </div>
-                    <form action="/customer" className="flex items-center gap-2 text-xs text-gray-600">
-                        {search && <input type="hidden" name="search" value={search} />}
-                        <label htmlFor="pageSize">Per halaman:</label>
-                        <select
-                            id="pageSize"
-                            name="pageSize"
-                            defaultValue={pageSize}
-                            className="border border-gray-300 rounded px-2 py-1 text-xs"
-                        // form submits on change
-                        >
-                            {PAGE_SIZE_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
-                        </select>
-                        <button type="submit" className="text-xs text-blue-600 hover:underline">Terapkan</button>
-                    </form>
+                    <div className="flex items-center gap-2">
+                        <ExportButton
+                            onExport={async () => {
+                                'use server';
+                                const customers = await fetchCustomersForExport(search || undefined, dateParams);
+
+                                const sheets: ExportSheet[] = [
+                                    {
+                                        name: 'Customer',
+                                        columns: [
+                                            { header: 'Nama Tamu', key: 'customerName' },
+                                            { header: 'Lokasi', key: 'apartmentLocation' },
+                                            { header: 'Kamar', key: 'roomNumber' },
+                                            dateCol('Check-in', 'checkinAt'),
+                                            dateCol('Check-out', 'checkoutAt'),
+                                            currencyCol('Tunai', 'cashAmount'),
+                                            currencyCol('Transfer', 'transferAmount'),
+                                            currencyCol('Total', 'totalAmount'),
+                                        ],
+                                        data: customers,
+                                    },
+                                ];
+
+                                const filename = getExportFilename('customer');
+                                return { sheets, filename };
+                            }}
+                            label="Export Customer"
+                        />
+                    </div>
                 </div>
 
                 {/* Table */}
@@ -211,12 +173,12 @@ export default async function CustomerPage({
                             ) : (
                                 customers.map((c: any) => (
                                     <tr key={c.id} className="hover:bg-gray-50">
-                                        <td className="px-4 py-3 font-medium text-gray-900">{c.customer_name}</td>
-                                        <td className="px-4 py-3 text-gray-700">{c.apartment_location}</td>
-                                        <td className="px-4 py-3"><span className="text-xs font-semibold text-blue-600 bg-blue-50 px-2 py-0.5 rounded">{c.room_number}</span></td>
-                                        <td className="px-4 py-3 text-gray-700 whitespace-nowrap">{formatDateTime(c.checkin_at)}</td>
-                                        <td className="px-4 py-3 text-gray-700 whitespace-nowrap">{formatDateTime(c.checkout_at)}</td>
-                                        <td className="px-4 py-3 text-right font-medium text-gray-900">{formatCurrency((c.cash_amount || 0) + (c.transfer_amount || 0))}</td>
+                                        <td className="px-4 py-3 font-medium text-gray-900">{c.customerName}</td>
+                                        <td className="px-4 py-3 text-gray-700">{c.apartmentLocation}</td>
+                                        <td className="px-4 py-3"><span className="text-xs font-semibold text-blue-600 bg-blue-50 px-2 py-0.5 rounded">{c.roomNumber}</span></td>
+                                        <td className="px-4 py-3 text-gray-700 whitespace-nowrap">{formatDateTime(c.checkinAt)}</td>
+                                        <td className="px-4 py-3 text-gray-700 whitespace-nowrap">{formatDateTime(c.checkoutAt)}</td>
+                                        <td className="px-4 py-3 text-right font-medium text-gray-900">{formatCurrency((c.cashAmount || 0) + (c.transferAmount || 0))}</td>
                                     </tr>
                                 ))
                             )}

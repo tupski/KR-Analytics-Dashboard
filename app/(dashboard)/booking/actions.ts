@@ -6,6 +6,8 @@ import { format } from 'date-fns';
 import { toZonedTime } from 'date-fns-tz';
 import { getReportPeriodSetting, getTodayReportRange } from '@/lib/get-report-period-setting';
 import { getReportPeriodRange } from '@/lib/reporting-period';
+import { computeDateRange, computeComparisonRange } from '@/lib/services/date-range';
+import type { DateFilterParams } from '@/lib/services/date-range';
 
 export interface BookingItem {
     id: number;
@@ -31,6 +33,10 @@ export interface BookingFilters {
     dateTo?: string;
     page?: number;
     pageSize?: number;
+    // Unified date filter params
+    rangePreset?: string;
+    startDate?: string;
+    endDate?: string;
 }
 
 export interface BookingListResult {
@@ -67,16 +73,33 @@ export async function fetchBookings(filters: BookingFilters = {}): Promise<Booki
             query = query.eq('apartment_location', filters.location);
         }
 
-        // Apply date range filter — convert using report period mode
-        if (filters.dateFrom) {
+        // Apply date range filter — support both legacy dateFrom/dateTo and unified rangePreset
+        let rangeStart: string | undefined;
+        let rangeEnd: string | undefined;
+
+        if (filters.rangePreset) {
             const mode = await getReportPeriodSetting();
-            const range = getReportPeriodRange(filters.dateFrom, mode);
-            query = query.gte('checkin_at', range.start);
+            const range = computeDateRange(filters.rangePreset, filters.startDate, filters.endDate, mode);
+            rangeStart = range.start;
+            rangeEnd = range.end;
+        } else {
+            if (filters.dateFrom) {
+                const mode = await getReportPeriodSetting();
+                const range = getReportPeriodRange(filters.dateFrom, mode);
+                rangeStart = range.start;
+            }
+            if (filters.dateTo) {
+                const mode = await getReportPeriodSetting();
+                const range = getReportPeriodRange(filters.dateTo, mode);
+                rangeEnd = range.end;
+            }
         }
-        if (filters.dateTo) {
-            const mode = await getReportPeriodSetting();
-            const range = getReportPeriodRange(filters.dateTo, mode);
-            query = query.lte('checkin_at', range.end);
+
+        if (rangeStart) {
+            query = query.gte('checkin_at', rangeStart);
+        }
+        if (rangeEnd) {
+            query = query.lte('checkin_at', rangeEnd);
         }
 
         // Order and paginate
@@ -213,15 +236,33 @@ export async function fetchBookingsForExport(filters: BookingFilters = {}) {
         if (filters.location) {
             query = query.eq('apartment_location', filters.location);
         }
-        if (filters.dateFrom) {
+        // Apply date range filter
+        let rangeStart: string | undefined;
+        let rangeEnd: string | undefined;
+
+        if (filters.rangePreset) {
             const mode = await getReportPeriodSetting();
-            const range = getReportPeriodRange(filters.dateFrom, mode);
-            query = query.gte('checkin_at', range.start);
+            const range = computeDateRange(filters.rangePreset, filters.startDate, filters.endDate, mode);
+            rangeStart = range.start;
+            rangeEnd = range.end;
+        } else {
+            if (filters.dateFrom) {
+                const mode = await getReportPeriodSetting();
+                const range = getReportPeriodRange(filters.dateFrom, mode);
+                rangeStart = range.start;
+            }
+            if (filters.dateTo) {
+                const mode = await getReportPeriodSetting();
+                const range = getReportPeriodRange(filters.dateTo, mode);
+                rangeEnd = range.end;
+            }
         }
-        if (filters.dateTo) {
-            const mode = await getReportPeriodSetting();
-            const range = getReportPeriodRange(filters.dateTo, mode);
-            query = query.lte('checkin_at', range.end);
+
+        if (rangeStart) {
+            query = query.gte('checkin_at', rangeStart);
+        }
+        if (rangeEnd) {
+            query = query.lte('checkin_at', rangeEnd);
         }
 
         query = query.order('checkin_at', { ascending: false });

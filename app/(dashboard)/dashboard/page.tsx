@@ -2,6 +2,7 @@ import HeaderDashboard from '@/components/dashboard/HeaderDashboard';
 import AutoRefreshWrapper from '@/components/dashboard/AutoRefreshWrapper';
 import TabContent from '@/components/dashboard/TabContent';
 import ExportButton from '@/components/shared/ExportButton';
+import DateFilterBar from '@/components/shared/DateFilterBar';
 import {
     fetchKPIData,
     fetchRevenueData,
@@ -26,6 +27,9 @@ const VALID_COMPARE: KPICompareMode[] = ['yesterday', 'lastweek', 'lastmonth', '
  *
  * Fetches all data in parallel, then delegates rendering to TabContent
  * which manages the operational/analitik tab system with bento-grid layout.
+ *
+ * Accepts date filter params: rangePreset, startDate, endDate, comparisonMode,
+ * comparisonStartDate, comparisonEndDate for unified date range + comparison.
  */
 export default async function DashboardPage({
     searchParams,
@@ -37,6 +41,16 @@ export default async function DashboardPage({
     const compareMode = (VALID_COMPARE.includes(rawCompare as KPICompareMode)
         ? rawCompare
         : null) as KPICompareMode | null;
+
+    // Unified date filter params from URL
+    const rangePreset = typeof params.rangePreset === 'string' ? params.rangePreset : undefined;
+    const startDate = typeof params.startDate === 'string' ? params.startDate : undefined;
+    const endDate = typeof params.endDate === 'string' ? params.endDate : undefined;
+    const comparisonMode = typeof params.comparisonMode === 'string' ? params.comparisonMode : undefined;
+    const comparisonStartDate = typeof params.comparisonStartDate === 'string' ? params.comparisonStartDate : undefined;
+    const comparisonEndDate = typeof params.comparisonEndDate === 'string' ? params.comparisonEndDate : undefined;
+
+    const dateParams = rangePreset ? { rangePreset, startDate, endDate, comparisonMode, comparisonStartDate, comparisonEndDate } : undefined;
 
     // Fetch all dashboard data in parallel
     const [
@@ -50,7 +64,7 @@ export default async function DashboardPage({
         unitPerformanceData,
         marketingPerformanceData,
     ] = await Promise.all([
-        fetchKPIData(compareMode || undefined),
+        fetchKPIData(compareMode || undefined, dateParams),
         fetchRevenueData('daily'),
         fetchOccupancyData(30),
         fetchTodayCheckins(),
@@ -76,8 +90,17 @@ export default async function DashboardPage({
 
                 {/* Main Content */}
                 <main className="px-4 sm:px-6 lg:px-8 py-4 sm:py-6">
-                    {/* Export Button */}
-                    <div className="flex justify-end mb-4">
+                    {/* Date Filter Bar + Export */}
+                    <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+                        <DateFilterBar
+                            basePath="/dashboard"
+                            defaultPreset={rangePreset as any || 'last30days'}
+                            defaultStartDate={startDate}
+                            defaultEndDate={endDate}
+                            defaultComparisonMode={comparisonMode as any || 'none'}
+                            defaultComparisonStartDate={comparisonStartDate}
+                            defaultComparisonEndDate={comparisonEndDate}
+                        />
                         <ExportButton
                             onExport={async () => {
                                 'use server';

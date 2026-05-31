@@ -4,6 +4,7 @@ import UnitOverview from '@/components/unit/UnitOverview';
 import UnitLocationCards from '@/components/unit/UnitLocationCards';
 import UnitGrid from '@/components/unit/UnitGrid';
 import UnitStickyHeader from '@/components/unit/UnitStickyHeader';
+import DateFilterBar from '@/components/shared/DateFilterBar';
 import AIInsightCard from '@/components/ai/AIInsightCard';
 import ReportPeriodChip from '@/components/shared/ReportPeriodChip';
 import ExportButton from '@/components/shared/ExportButton';
@@ -21,8 +22,18 @@ export default async function UnitPage({
     const rawFilter = typeof params.filter === 'string' ? params.filter : 'today';
     const dateFilter = (VALID_FILTERS.includes(rawFilter as UnitDateFilter) ? rawFilter : 'today') as UnitDateFilter;
 
+    // Unified date filter params
+    const rangePreset = typeof params.rangePreset === 'string' ? params.rangePreset : undefined;
+    const startDate = typeof params.startDate === 'string' ? params.startDate : undefined;
+    const endDate = typeof params.endDate === 'string' ? params.endDate : undefined;
+    const comparisonMode = typeof params.comparisonMode === 'string' ? params.comparisonMode : undefined;
+    const comparisonStartDate = typeof params.comparisonStartDate === 'string' ? params.comparisonStartDate : undefined;
+    const comparisonEndDate = typeof params.comparisonEndDate === 'string' ? params.comparisonEndDate : undefined;
+
+    const dateParams = rangePreset ? { rangePreset, startDate, endDate, comparisonMode, comparisonStartDate, comparisonEndDate } : undefined;
+
     const [unitData, locations] = await Promise.all([
-        fetchUnits(locationFilter || undefined, dateFilter),
+        fetchUnits(locationFilter || undefined, dateFilter, dateParams),
         fetchUnitLocations(),
     ]);
 
@@ -41,6 +52,20 @@ export default async function UnitPage({
             </div>
 
             <main className="px-4 sm:px-6 lg:px-8 py-4 sm:py-6 space-y-4 sm:space-y-6">
+                {/* Date Filter Bar — unified date range + comparison */}
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                    <DateFilterBar
+                        basePath="/unit"
+                        defaultPreset={rangePreset as any || dateFilter as any || 'today'}
+                        defaultStartDate={startDate}
+                        defaultEndDate={endDate}
+                        defaultComparisonMode={comparisonMode as any || 'none'}
+                        defaultComparisonStartDate={comparisonStartDate}
+                        defaultComparisonEndDate={comparisonEndDate}
+                        extraPreservedParams={['location', 'filter']}
+                    />
+                </div>
+
                 {/* Sticky filter header — visible on all device sizes */}
                 <UnitStickyHeader
                     locations={locations}

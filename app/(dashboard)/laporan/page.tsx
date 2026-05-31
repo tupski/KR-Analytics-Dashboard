@@ -3,6 +3,7 @@ import type { DateFilter } from './actions';
 import AIInsightCard from '@/components/ai/AIInsightCard';
 import LaporanClient from '@/components/laporan/LaporanClient';
 import ReportPeriodChip from '@/components/shared/ReportPeriodChip';
+import DateFilterBar from '@/components/shared/DateFilterBar';
 import ExportButton from '@/components/shared/ExportButton';
 import { exportToXLSX, getExportFilename, currencyCol, dateCol, type ExportSheet } from '@/lib/export/xlsx';
 
@@ -14,8 +15,18 @@ export default async function LaporanPage({
     const params = await searchParams;
     const filter = (typeof params.filter === 'string' ? params.filter : 'today') as DateFilter;
 
+    // Unified date filter params
+    const rangePreset = typeof params.rangePreset === 'string' ? params.rangePreset : undefined;
+    const startDate = typeof params.startDate === 'string' ? params.startDate : undefined;
+    const endDate = typeof params.endDate === 'string' ? params.endDate : undefined;
+    const comparisonMode = typeof params.comparisonMode === 'string' ? params.comparisonMode : undefined;
+    const comparisonStartDate = typeof params.comparisonStartDate === 'string' ? params.comparisonStartDate : undefined;
+    const comparisonEndDate = typeof params.comparisonEndDate === 'string' ? params.comparisonEndDate : undefined;
+
+    const dateParams = rangePreset ? { rangePreset, startDate, endDate, comparisonMode, comparisonStartDate, comparisonEndDate } : undefined;
+
     const [data, highOccupancy] = await Promise.all([
-        fetchLaporanData(filter),
+        fetchLaporanData(filter, dateParams),
         fetchHighOccupancyLocations(30),
     ]);
 
@@ -32,6 +43,20 @@ export default async function LaporanPage({
             </div>
 
             <main className="px-4 sm:px-6 lg:px-8 py-4 sm:py-6 space-y-4 sm:space-y-6">
+                {/* Date Filter Bar */}
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                    <DateFilterBar
+                        basePath="/laporan"
+                        defaultPreset={rangePreset as any || filter as any || 'today'}
+                        defaultStartDate={startDate}
+                        defaultEndDate={endDate}
+                        defaultComparisonMode={comparisonMode as any || 'none'}
+                        defaultComparisonStartDate={comparisonStartDate}
+                        defaultComparisonEndDate={comparisonEndDate}
+                        extraPreservedParams={['filter']}
+                    />
+                </div>
+
                 {/* Export Button */}
                 <div className="flex justify-end mb-2">
                     <ExportButton

@@ -12,9 +12,11 @@ import { getIdleSeverity } from '@/lib/dashboard/unit-performance';
 import type { LocationHealthItem, IdleUnitItem, UnitPerformanceItem, MarketingPerformanceItem, MarketingPerformanceStatus } from '@/types/dashboard';
 import { normalizeMarketingName, getMarketingStatus } from '@/lib/dashboard/marketing-performance';
 import type { UnitPerformanceData } from '@/lib/dashboard/unit-performance';
-import { format, subDays, subWeeks, subMonths, subYears, startOfWeek, startOfMonth, startOfYear } from 'date-fns';
+import { format, subDays, subWeeks, subMonths, subYears, startOfWeek, startOfMonth, startOfYear, parse } from 'date-fns';
 import { id as idLocale } from 'date-fns/locale';
 import { toZonedTime } from 'date-fns-tz';
+import { computeDateRange, computeComparisonRange } from '@/lib/services/date-range';
+import type { DateFilterParams } from '@/lib/services/date-range';
 import type {
     UnitStatusCounts,
     CheckinItem,
@@ -217,18 +219,24 @@ function pctChange(curr: number, prev: number): number | null {
 
 /**
  * Fetch KPI data for dashboard cards
- * 
- * Fetches: booking count today, revenue today, average occupancy, available units.
- * Uses Asia/Jakarta timezone for "today" date calculations.
  *
- * If compareMode provided, also fetches the same metrics for the comparison day
- * and includes percentage change.
+ * Fetches: booking count, revenue, average occupancy, available units.
+ * Uses Asia/Jakarta timezone for date calculations.
+ *
+ * Accepts compareMode (legacy single-day) OR dateParams (new unified date filter params).
+ * When dateParams are provided, compareMode is ignored for date range but comparison
+ * mode from dateParams takes precedence.
  *
  */
-export async function fetchKPIData(compareMode?: KPICompareMode): Promise<KPIData> {
+export async function fetchKPIData(
+    compareMode?: KPICompareMode,
+    dateParams?: DateFilterParams,
+): Promise<KPIData> {
     const supabase = createServerClient();
     const timezone = 'Asia/Jakarta';
     const today = format(toZonedTime(new Date(), timezone), 'yyyy-MM-dd');
+    const { getReportPeriodSetting } = await import('@/lib/get-report-period-setting');
+    const mode = await getReportPeriodSetting();
 
     try {
         // Total rooms (used for occupancy denominator across snapshots)
@@ -237,26 +245,26 @@ export async function fetchKPIData(compareMode?: KPICompareMode): Promise<KPIDat
             .select('id', { count: 'exact', head: true });
         const totalRoomsCount = totalRooms || 0;
 
-        // Today's snapshot — uses report_period_mode from DB (calendar_day or hotel_day)
-        const { start: dayStart, end: dayEnd } = await getTodayReportRange();
-
-        // Fetch mode for comparison snapshot parity
-        const { getReportPeriodSetting } = await import('@/lib/get-report-period-setting');
-        const mode = await getReportPeriodSetting();
+        // Compute main date range from dateParams or fall back to today
+        const range = dateParams?.rangePreset
+            ? computeDateRange(dateParams.rangePreset, dateParams.startDate, dateParams.endDate, mode)
+            : null;
+        const actualDayStart = range?.start || (await getTodayReportRange()).start;
+        const actualDayEnd = range?.end || (await getTodayReportRange()).end;
 
         const { count: bookingCount } = await supabase
             .from('transactions')
             .select('*', { count: 'exact', head: true })
-            .gte('checkin_at', dayStart)
-            .lte('checkin_at', dayEnd);
+            .gte('checkin_at', actualDayStart)
+            .lte('checkin_at', actualDayEnd);
 
         const { data: revenueData } = await supabase
             .from('transactions')
             .select('cash_amount, transfer_amount')
-            .gte('checkin_at', dayStart)
-            .lte('checkin_at', dayEnd);
+            .gte('checkin_at', actualDayStart)
+            .lte('checkin_at', actualDayEnd);
 
-        const todayRevenue = revenueData?.reduce(
+        const periodRevenue = revenueData?.reduce(
             (sum: number, t: any) => sum + (t.cash_amount || 0) + (t.transfer_amount || 0),
             0,
         ) || 0;
@@ -280,29 +288,61 @@ export async function fetchKPIData(compareMode?: KPICompareMode): Promise<KPIDat
 
         const result: KPIData = {
             bookingToday: bookingCount || 0,
-            revenueToday: todayRevenue,
+            revenueToday: periodRevenue,
             avgOccupancy,
             availableUnits,
         };
 
-        // Comparison snapshot — uses same mode as today's KPI for apples-to-apples comparison
-        if (compareMode) {
+        // Compute comparison range from dateParams or legacy compareMode
+        let compRange: { start: string; end: string; label: string } | null = null;
+
+        if (dateParams?.comparisonMode && dateParams.comparisonMode !== 'none') {
+            const cr = computeComparisonRange(
+                dateParams.comparisonMode,
+                actualDayStart,
+                actualDayEnd,
+                dateParams.comparisonStartDate,
+                dateParams.comparisonEndDate,
+                mode,
+            );
+            if (cr) compRange = cr;
+        } else if (compareMode) {
             const { day: prevDay, label: prevLabel } = getCompareDay(today, compareMode);
-            const prevSnap = await fetchDailyKPISnapshot(supabase, prevDay, totalRoomsCount, mode);
+            const snap = getReportPeriodRange(prevDay, mode);
+            compRange = { start: snap.start, end: snap.end, label: prevLabel };
+        }
+
+        if (compRange) {
+            const { count: prevBookingCount } = await supabase
+                .from('transactions')
+                .select('*', { count: 'exact', head: true })
+                .gte('checkin_at', compRange.start)
+                .lte('checkin_at', compRange.end);
+
+            const { data: prevRevenueData } = await supabase
+                .from('transactions')
+                .select('cash_amount, transfer_amount')
+                .gte('checkin_at', compRange.start)
+                .lte('checkin_at', compRange.end);
+
+            const prevRevenue = prevRevenueData?.reduce(
+                (sum: number, t: any) => sum + (t.cash_amount || 0) + (t.transfer_amount || 0),
+                0,
+            ) || 0;
 
             result.prev = {
-                booking: prevSnap.bookingCount,
-                revenue: prevSnap.revenue,
-                avgOccupancy: prevSnap.avgOccupancy,
-                availableUnits: prevSnap.availableUnits,
-                label: prevLabel,
-                mode: compareMode,
+                booking: prevBookingCount || 0,
+                revenue: prevRevenue,
+                avgOccupancy: 0,
+                availableUnits: 0,
+                label: compRange.label || 'Periode sebelumnya',
+                mode: compareMode || 'yesterday',
             };
             result.change = {
-                bookingChangePct: pctChange(result.bookingToday, prevSnap.bookingCount),
-                revenueChangePct: pctChange(result.revenueToday, prevSnap.revenue),
-                occupancyChangePct: pctChange(result.avgOccupancy, prevSnap.avgOccupancy),
-                availableChangePct: pctChange(result.availableUnits, prevSnap.availableUnits),
+                bookingChangePct: pctChange(result.bookingToday, prevBookingCount || 0),
+                revenueChangePct: pctChange(result.revenueToday, prevRevenue),
+                occupancyChangePct: null,
+                availableChangePct: null,
             };
         }
 

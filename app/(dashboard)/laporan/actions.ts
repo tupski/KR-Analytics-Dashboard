@@ -2,7 +2,8 @@
 
 import { createServerClient } from '@/lib/supabase/server';
 import { format, subDays, startOfMonth, endOfMonth, parseISO } from 'date-fns';
-import { getDateRange, getPreviousDateRange, isMonthAligned, type DateFilter } from '@/lib/services/date-range';
+import { getDateRange, getPreviousDateRange, computeDateRange, computeComparisonRange, isMonthAligned, type DateFilter } from '@/lib/services/date-range';
+import type { DateFilterParams } from '@/lib/services/date-range';
 import { getReportPeriodSetting } from '@/lib/get-report-period-setting';
 import { getRevenueSummary } from '@/lib/services/revenue';
 import { getExpenseSummary } from '@/lib/services/expense';
@@ -88,10 +89,18 @@ export interface LaporanData {
     };
 }
 
-export async function fetchLaporanData(filter: DateFilter = 'today'): Promise<LaporanData> {
+export async function fetchLaporanData(
+    filter: DateFilter = 'today',
+    dateParams?: DateFilterParams,
+): Promise<LaporanData> {
     const supabase = createServerClient();
     const mode = await getReportPeriodSetting();
-    const { start, end, label } = getDateRange(filter, mode);
+
+    // Use unified date params if provided, else fall back to legacy DateFilter
+    const range = dateParams?.rangePreset
+        ? computeDateRange(dateParams.rangePreset, dateParams.startDate, dateParams.endDate, mode)
+        : getDateRange(filter, mode);
+    const { start, end, label } = range;
 
     // Fetch transactions in range
     const { data: transactions } = await supabase
@@ -386,7 +395,23 @@ export async function fetchLaporanData(filter: DateFilter = 'today'): Promise<La
     }
 
     // ── COMPARISON (analytics-first, legacy Supabase fallback) ──
-    const prev = getPreviousDateRange(filter, mode);
+    // Use unified comparison range if provided, else fall back to legacy
+    let prevRange: { start: string; end: string; label: string };
+
+    if (dateParams?.comparisonMode && dateParams.comparisonMode !== 'none') {
+        const cr = computeComparisonRange(
+            dateParams.comparisonMode,
+            start,
+            end,
+            dateParams.comparisonStartDate,
+            dateParams.comparisonEndDate,
+            mode,
+        );
+        prevRange = cr || { start, end, label: 'Periode sama' };
+    } else {
+        prevRange = getPreviousDateRange(filter, mode);
+    }
+
     let prevRevenue = 0, prevTransactions = 0, prevExpenses = 0;
     let analyticsComparisonUsed = false;
 
@@ -394,8 +419,8 @@ export async function fetchLaporanData(filter: DateFilter = 'today'): Promise<La
     if (mode !== 'hotel_day') {
         try {
             if (process.env.ANALYTICS_DATABASE_URL) {
-                const prevStartStr = prev.start.split('T')[0];
-                const prevEndExcl = new Date(prev.end);
+                const prevStartStr = prevRange.start.split('T')[0];
+                const prevEndExcl = new Date(prevRange.end);
                 prevEndExcl.setDate(prevEndExcl.getDate() + 1);
                 const prevEndStr = prevEndExcl.toISOString().split('T')[0];
 
@@ -418,13 +443,13 @@ export async function fetchLaporanData(filter: DateFilter = 'today'): Promise<La
             supabase
                 .from('transactions')
                 .select('cash_amount, transfer_amount')
-                .gte('checkin_at', prev.start)
-                .lte('checkin_at', prev.end),
+                .gte('checkin_at', prevRange.start)
+                .lte('checkin_at', prevRange.end),
             supabase
                 .from('pengeluaran')
                 .select('jumlah')
-                .gte('tanggal', prev.start.split('T')[0])
-                .lte('tanggal', prev.end.split('T')[0]),
+                .gte('tanggal', prevRange.start.split('T')[0])
+                .lte('tanggal', prevRange.end.split('T')[0]),
         ]);
 
         prevRevenue = prevTxResult.data?.reduce((s, t: any) => s + (t.cash_amount || 0) + (t.transfer_amount || 0), 0) || 0;
@@ -436,7 +461,7 @@ export async function fetchLaporanData(filter: DateFilter = 'today'): Promise<La
         prevRevenue,
         prevTransactions,
         prevExpenses,
-        prevLabel: prev.label,
+        prevLabel: prevRange.label,
     };
 
     return {

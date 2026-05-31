@@ -1,8 +1,10 @@
 'use server';
 
 import { createServerClient } from '@/lib/supabase/server';
-import { getDateRange } from '@/lib/services/date-range';
+import { getDateRange, computeDateRange } from '@/lib/services/date-range';
+import type { DateFilterParams } from '@/lib/services/date-range';
 import { getLocations } from '@/lib/services/location';
+import { getReportPeriodSetting } from '@/lib/get-report-period-setting';
 
 export type UnitDateFilter = 'today' | 'yesterday' | '7days' | 'month' | 'year';
 
@@ -37,8 +39,15 @@ export interface UnitPageData {
  * Fetch all units with their occupancy status for a given period.
  * - When filter = 'today': occupied = active right now (checkin <= now <= checkout).
  * - Other filters: occupied = had any transaction in the period.
+ *
+ * Accepts either legacy dateFilter (today/yesterday/7days/month/year) or
+ * unified DateFilterParams (rangePreset, startDate, endDate).
  */
-export async function fetchUnits(locationFilter?: string, dateFilter: UnitDateFilter = 'today'): Promise<UnitPageData & { dateLabel: string }> {
+export async function fetchUnits(
+    locationFilter?: string,
+    dateFilter: UnitDateFilter = 'today',
+    dateParams?: DateFilterParams,
+): Promise<UnitPageData & { dateLabel: string }> {
     const supabase = createServerClient();
 
     try {
@@ -60,7 +69,11 @@ export async function fetchUnits(locationFilter?: string, dateFilter: UnitDateFi
             throw new Error('Failed to fetch rooms');
         }
 
-        const range = getDateRange(dateFilter);
+        // Use unified date params if provided, else fall back to legacy dateFilter
+        const mode = await getReportPeriodSetting();
+        const range = dateParams?.rangePreset
+            ? computeDateRange(dateParams.rangePreset, dateParams.startDate, dateParams.endDate, mode)
+            : getDateRange(dateFilter, mode);
 
         // For "today" filter, occupancy = active right now (existing behavior)
         // For other filters, occupancy = had at least one transaction in period
