@@ -15,6 +15,12 @@ const defaults: AppSettings = {
     favicon_url: null,
     primary_color: '#2563eb',
     report_period_mode: 'calendar_day',
+    ai_insight_enabled: 'false',
+    ai_insight_mode: 'ai-with-fallback',
+    ai_insight_provider: '',
+    ai_insight_model: '',
+    ai_insight_cache_ttl_minutes: '30',
+    ai_insight_auto_refresh: 'true',
 };
 
 const AppSettingsCtx = createContext<AppSettingsContextValue>({
@@ -49,6 +55,12 @@ export function AppSettingsProvider({ children }: { children: ReactNode }) {
                             favicon_url: data.favicon_url || null,
                             primary_color: data.primary_color || defaults.primary_color,
                             report_period_mode: data.report_period_mode || defaults.report_period_mode,
+                            ai_insight_enabled: data.ai_insight_enabled || defaults.ai_insight_enabled,
+                            ai_insight_mode: data.ai_insight_mode || defaults.ai_insight_mode,
+                            ai_insight_provider: data.ai_insight_provider || defaults.ai_insight_provider,
+                            ai_insight_model: data.ai_insight_model || defaults.ai_insight_model,
+                            ai_insight_cache_ttl_minutes: data.ai_insight_cache_ttl_minutes || defaults.ai_insight_cache_ttl_minutes,
+                            ai_insight_auto_refresh: data.ai_insight_auto_refresh || defaults.ai_insight_auto_refresh,
                         });
                     }
                 }

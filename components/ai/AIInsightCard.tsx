@@ -1,13 +1,12 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { RefreshCw, Sparkles, ChevronDown, ChevronUp, Lightbulb, GitCompareArrows, ChevronRight, Zap } from 'lucide-react';
+import { useState, useEffect, useCallback } from 'react';
+import { RefreshCw, Sparkles, ChevronDown, ChevronUp, Lightbulb, GitCompareArrows, ChevronRight, Zap, Settings } from 'lucide-react';
 import MarkdownRenderer from './MarkdownRenderer';
-import { resolveActive } from '@/lib/ai/config';
 
 /**
- * Generate rule-based insight text based on the page context.
- * Used as fallback when no AI API key is configured.
+ * Rule-based fallback text based on page context.
+ * Used when AI disabled or AI generation fails.
  */
 function getRuleBasedFallback(title: string, prompt: string): string {
     const now = new Date();
@@ -38,32 +37,40 @@ interface AIInsightCardProps {
     title?: string;
     className?: string;
     alternativeQuestions?: string[];
+    /** Page identifier for cache scoping (e.g. 'dashboard', 'booking') */
+    page?: string;
+    /** Optional range/date info forwarded to the API */
+    rangePreset?: string;
+    startDate?: string;
+    endDate?: string;
+    comparisonMode?: string;
+    comparisonStartDate?: string;
+    comparisonEndDate?: string;
+    reportPeriodMode?: string;
 }
 
-const CACHE_PREFIX = 'kr-ai-insight-cache-';
-const CACHE_TTL = 10 * 60 * 1000; // 10 minutes
-
-const COMPARE_PROMPT_SUFFIX = `
-
-PERMINTAAN TAMBAHAN: Lakukan analisis komparatif dengan periode sebelumnya yang relevan (kemarin, minggu lalu, bulan lalu, atau tahun lalu).
-Gunakan tools compare_periods untuk mendapat delta otomatis.
-Dalam jawaban:
-- Sertakan severity label (🚨/⚠️/✅/📈/🏆) berdasarkan besarnya perubahan
-- Jelaskan makna bisnis dari perubahan tersebut, bukan hanya angka
-- Identifikasi penyebab potensial dari tren yang terdeteksi
-- Beri 1-2 rekomendasi actionable spesifik berdasarkan temuan perbandingan ini`;
+const CACHE_PREFIX = 'kr-ai-insight-client-';
+const CLIENT_CACHE_TTL = 5 * 60 * 1000; // 5 min client-side fallback
 
 export default function AIInsightCard({
     prompt,
     title = 'KR-AI Insight',
     className = '',
     alternativeQuestions,
+    page = 'default',
+    rangePreset,
+    startDate,
+    endDate,
+    comparisonMode,
+    comparisonStartDate,
+    comparisonEndDate,
+    reportPeriodMode,
 }: AIInsightCardProps) {
-    const [hasCheckedConfig, setHasCheckedConfig] = useState(false);
     const [insight, setInsight] = useState<string | null>(null);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
-    const [hasConfig, setHasConfig] = useState(false);
+    const [aiEnabled, setAiEnabled] = useState<boolean | null>(null);
+    const [insightMode, setInsightMode] = useState<string>('ai-with-fallback');
     const [expanded, setExpanded] = useState(false);
     const [currentPrompt, setCurrentPrompt] = useState(prompt);
     const [compareMode, setCompareMode] = useState(false);
@@ -75,33 +82,61 @@ export default function AIInsightCard({
         'Performa minggu ini vs minggu lalu.',
     ];
 
-    const getCacheKey = (p: string, withCompare: boolean) =>
-        CACHE_PREFIX + btoa(encodeURIComponent(p + (withCompare ? '|cmp' : ''))).slice(0, 32);
+    // Client-side cache helpers (secondary cache — primary is server-side)
+    const getClientCacheKey = (p: string, cmp: boolean) =>
+        CACHE_PREFIX + btoa(encodeURIComponent(page + '|' + p + (cmp ? '|cmp' : ''))).slice(0, 32);
 
-    const getCachedInsight = (p: string, withCompare: boolean): string | null => {
+    const getClientCached = (p: string, cmp: boolean): string | null => {
         try {
-            const cached = sessionStorage.getItem(getCacheKey(p, withCompare));
-            if (cached) {
-                const { text, timestamp } = JSON.parse(cached);
-                if (Date.now() - timestamp < CACHE_TTL) return text;
+            const raw = sessionStorage.getItem(getClientCacheKey(p, cmp));
+            if (raw) {
+                const { text, timestamp } = JSON.parse(raw);
+                if (Date.now() - timestamp < CLIENT_CACHE_TTL) return text;
             }
         } catch { }
         return null;
     };
 
-    const setCachedInsight = (p: string, withCompare: boolean, text: string) => {
+    const setClientCache = (p: string, cmp: boolean, text: string) => {
         try {
-            sessionStorage.setItem(getCacheKey(p, withCompare), JSON.stringify({ text, timestamp: Date.now() }));
+            sessionStorage.setItem(
+                getClientCacheKey(p, cmp),
+                JSON.stringify({ text, timestamp: Date.now() }),
+            );
         } catch { }
     };
 
-    const fetchInsight = async (p: string, withCompare: boolean, forceRefresh = false) => {
-        // Check cache first
+    // Load AI Insight settings on mount
+    useEffect(() => {
+        async function loadSettings() {
+            try {
+                const res = await fetch('/api/app-settings');
+                if (res.ok) {
+                    const data = await res.json();
+                    const enabled = data.ai_insight_enabled === 'true';
+                    setAiEnabled(enabled);
+                    setInsightMode(data.ai_insight_mode || 'ai-with-fallback');
+                } else {
+                    setAiEnabled(false);
+                }
+            } catch {
+                setAiEnabled(false);
+            }
+        }
+        loadSettings();
+    }, []);
+
+    const fetchInsight = useCallback(async (
+        p: string,
+        cmp: boolean,
+        forceRefresh = false,
+    ) => {
+        // Client-side cache check (only if not force refresh)
         if (!forceRefresh) {
-            const cached = getCachedInsight(p, withCompare);
+            const cached = getClientCached(p, cmp);
             if (cached) {
                 setInsight(cached);
-                setHasConfig(true);
+                setAiEnabled(true);
                 generateDynamicSuggestions(p, cached);
                 return;
             }
@@ -112,58 +147,85 @@ export default function AIInsightCard({
         setDynamicSuggestions([]);
 
         try {
-            const resolved = resolveActive(withCompare ? 'thinking' : 'auto', false);
-            if (!resolved) {
-                setHasConfig(false);
-                setLoading(false);
-                return;
-            }
-            const finalPrompt = withCompare ? p + COMPARE_PROMPT_SUFFIX : p;
-            const res = await fetch('/api/ai/chat', {
+            const res = await fetch('/api/ai/insight', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    messages: [{ role: 'user', content: finalPrompt }],
-                    config: {
-                        provider: resolved.providerId,
-                        apiKey: resolved.conf.apiKey,
-                        model: resolved.modelId,
-                        baseUrl: resolved.conf.baseUrl,
-                    },
-                    contextOptions: { includeHistory: withCompare },
-                    thinkingMode: withCompare ? 'thinking' : 'auto',
+                    page,
+                    prompt: p,
+                    title,
+                    rangePreset,
+                    startDate,
+                    endDate,
+                    comparisonMode,
+                    comparisonStartDate,
+                    comparisonEndDate,
+                    reportPeriodMode,
+                    withCompare: cmp,
+                    forceRefresh,
                 }),
             });
 
-            if (res.ok) {
-                const data = await res.json();
-                setInsight(data.message);
-                setCachedInsight(p, withCompare, data.message);
-                setHasConfig(true);
-                generateDynamicSuggestions(p, data.message);
+            if (!res.ok) {
+                // Server error — use rule-based fallback
+                setAiEnabled(false);
+                setLoading(false);
+                return;
+            }
+
+            const data = await res.json();
+
+            // Insight disabled → rule-based fallback
+            if (data.disabled) {
+                setAiEnabled(false);
+                setLoading(false);
+                return;
+            }
+
+            // AI error with fallback flag → rule-based
+            if (data.error && data.fallback) {
+                setAiEnabled(false);
+                setLoading(false);
+                return;
+            }
+
+            // AI error without fallback → show error
+            if (data.error && !data.fallback) {
+                setError(data.message || 'Gagal mendapatkan insight');
+                setAiEnabled(true);
+                setLoading(false);
+                return;
+            }
+
+            // Success
+            const msg = data.response?.message || data.response?.text || '';
+            if (msg) {
+                setInsight(msg);
+                setClientCache(p, cmp, msg);
+                setAiEnabled(true);
+                generateDynamicSuggestions(p, msg);
             } else {
-                const data = await res.json();
-                if (res.status === 400 && data.error?.includes('API key')) {
-                    setHasConfig(false);
-                } else {
-                    setError(data.error || 'Gagal mendapatkan insight');
-                    setHasConfig(true);
-                }
+                setAiEnabled(false);
             }
         } catch (err: any) {
             setError(err.message);
-            setHasConfig(true);
+            setAiEnabled(true);
         } finally {
             setLoading(false);
         }
-    };
+    }, [page, title, rangePreset, startDate, endDate, comparisonMode, comparisonStartDate, comparisonEndDate, reportPeriodMode]);
+
+    useEffect(() => {
+        if (aiEnabled !== null) {
+            fetchInsight(currentPrompt, compareMode);
+        }
+        // Only run on mount when aiEnabled is resolved
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [aiEnabled]);
 
     /** Generate 2 context-aware follow-up question suggestions */
     const generateDynamicSuggestions = async (originalPrompt: string, insightText: string) => {
         try {
-            const resolved = resolveActive('instant', false);
-            if (!resolved) return;
-
             const suggPrompt = `Kamu adalah KR·AI. Berdasarkan pertanyaan dan jawabannya, hasilkan TEPAT 2 pertanyaan lanjutan yang spesifik dan actionable untuk owner. Kembalikan HANYA 2 baris teks tanpa nomor/bullet.
 
 Pertanyaan: ${originalPrompt.slice(0, 150)}
@@ -176,12 +238,7 @@ Insight: ${insightText.slice(0, 300)}
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     messages: [{ role: 'user', content: suggPrompt }],
-                    config: {
-                        provider: resolved.providerId,
-                        apiKey: resolved.conf.apiKey,
-                        model: resolved.modelId,
-                        baseUrl: resolved.conf.baseUrl,
-                    },
+                    config: {},
                     memoryContext: '',
                     thinkingMode: 'instant',
                 }),
@@ -200,27 +257,20 @@ Insight: ${insightText.slice(0, 300)}
         }
     };
 
-    useEffect(() => {
-        fetchInsight(currentPrompt, compareMode);
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, []);
-
     const handleAlternativeClick = (q: string) => {
         setCurrentPrompt(q);
         setExpanded(false);
         fetchInsight(q, compareMode);
     };
+
     const handleToggleCompare = () => {
         const next = !compareMode;
         setCompareMode(next);
         fetchInsight(currentPrompt, next);
     };
 
-    if (!hasConfig && !loading) {
-        // Show rule-based fallback instead of hiding the card entirely
-        if (!hasCheckedConfig) {
-            setHasCheckedConfig(true);
-        }
+    // ── Rule-based fallback display (AI disabled or error with fallback) ──
+    if (aiEnabled === false && !loading && !insight) {
         const fallbackText = getRuleBasedFallback(title, prompt);
         return (
             <div className={`bg-gradient-to-r from-amber-50 to-yellow-50 rounded-xl border border-amber-200 p-4 shadow-sm ${className}`}>
@@ -237,8 +287,8 @@ Insight: ${insightText.slice(0, 300)}
                             href="/pengaturan"
                             className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium bg-white text-amber-700 border border-amber-200 hover:bg-amber-100 transition-colors"
                         >
-                            <Zap className="w-3 h-3" />
-                            <span className="hidden sm:inline">Setup AI</span>
+                            <Settings className="w-3 h-3" />
+                            <span className="hidden sm:inline">Pengaturan AI</span>
                         </a>
                     </div>
                 </div>
@@ -262,6 +312,22 @@ Insight: ${insightText.slice(0, 300)}
                             </div>
                         ))}
                     </div>
+                </div>
+            </div>
+        );
+    }
+
+    // Loading state when aiEnabled not yet resolved
+    if (aiEnabled === null && !loading) {
+        return (
+            <div className={`bg-gradient-to-r from-gray-50 to-gray-100 rounded-xl border border-gray-200 p-4 shadow-sm ${className}`}>
+                <div className="flex items-center gap-2 text-sm text-gray-500">
+                    <div className="flex gap-1">
+                        <div className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></div>
+                        <div className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></div>
+                        <div className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></div>
+                    </div>
+                    <span>Memuat konfigurasi...</span>
                 </div>
             </div>
         );
@@ -299,7 +365,7 @@ Insight: ${insightText.slice(0, 300)}
                         onClick={() => fetchInsight(currentPrompt, compareMode, true)}
                         disabled={loading}
                         className="p-1.5 text-blue-600 hover:bg-blue-100 rounded-md transition-colors disabled:opacity-50"
-                        title="Refresh insight"
+                        title="Generate ulang (refresh cache)"
                     >
                         <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
                     </button>
@@ -317,7 +383,11 @@ Insight: ${insightText.slice(0, 300)}
                 </div>
             )}
 
-            {error && !loading && <p className="text-xs text-red-600">{error}</p>}
+            {error && !loading && (
+                <div className="flex items-start gap-2 p-3 rounded-lg bg-red-50 border border-red-200">
+                    <span className="text-xs text-red-700">{error}</span>
+                </div>
+            )}
 
             {displayText && !loading && (
                 <>
@@ -334,7 +404,21 @@ Insight: ${insightText.slice(0, 300)}
                 </>
             )}
 
-            {/* Dynamic follow-up suggestions — max 2, full text on desktop, truncated on mobile */}
+            {/* Force refresh button when insight already loaded */}
+            {!loading && insight && (
+                <div className="mt-2 flex justify-end">
+                    <button
+                        onClick={() => fetchInsight(currentPrompt, compareMode, true)}
+                        className="flex items-center gap-1 text-[11px] text-blue-500 hover:text-blue-700 transition-colors"
+                        title="Generate ulang (abaikan cache)"
+                    >
+                        <RefreshCw className="w-3 h-3" />
+                        <span>Generate ulang</span>
+                    </button>
+                </div>
+            )}
+
+            {/* Dynamic follow-up suggestions */}
             {!loading && insight && (
                 <div className="mt-3 pt-3 border-t border-blue-100">
                     <div className="flex items-center gap-1.5 mb-2">
@@ -349,7 +433,6 @@ Insight: ${insightText.slice(0, 300)}
                                 className="text-xs px-3 py-2 bg-white border border-blue-200 rounded-xl text-blue-700 hover:bg-blue-100 transition-colors text-left flex items-start gap-1.5 sm:max-w-xs"
                             >
                                 <ChevronRight className="w-3 h-3 flex-shrink-0 mt-0.5" />
-                                {/* Full text on sm+, max 2 lines on mobile */}
                                 <span className="line-clamp-2 sm:line-clamp-none">{q}</span>
                             </button>
                         ))}

@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Brain, Key, Server, Check, AlertCircle, ExternalLink, Eye, Lightbulb, Wrench, Zap, DollarSign, Trash2, Clock, Plus, Copy, Cloud, CloudOff, Download, Upload, Pencil } from 'lucide-react';
+import { Brain, Key, Server, Check, AlertCircle, ExternalLink, Eye, Lightbulb, Wrench, Zap, DollarSign, Trash2, Clock, Plus, Copy, Cloud, CloudOff, Download, Upload, Pencil, Sparkles } from 'lucide-react';
 import { PROVIDERS, priceTier, allModelsSorted, type ProviderId, type ModelInfo } from '@/lib/ai/models';
 import {
     loadConfigFromDb,
@@ -103,6 +103,28 @@ export default function AISettingsPage() {
     const [pruning, setPruning] = useState(false);
     const [pruneResult, setPruneResult] = useState<string | null>(null);
 
+    // AI Insight settings state
+    const [insightSettings, setInsightSettings] = useState({
+        enabled: false,
+        mode: 'ai-with-fallback' as 'rule-based' | 'ai-generated' | 'ai-with-fallback',
+        provider: '',
+        model: '',
+        cacheTtlMinutes: 30,
+        autoRefresh: true,
+    });
+    const [insightSaved, setInsightSaved] = useState<string | null>(null);
+    const [testingInsight, setTestingInsight] = useState(false);
+    const [insightTestResult, setInsightTestResult] = useState<{ success: boolean; message: string } | null>(null);
+
+    /** Helper to save a single AI Insight setting via POST /api/app-settings */
+    const saveInsightSetting = async (key: string, value: string) => {
+        await fetch('/api/app-settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ key, value }),
+        });
+    };
+
     // Fetched models state (per-provider, keyed by providerId)
     const [fetchedModels, setFetchedModels] = useState<ProviderModel[]>([]);
     const [fetchedModelsLastFetched, setFetchedModelsLastFetched] = useState<string | null>(null);
@@ -139,6 +161,22 @@ export default function AISettingsPage() {
                 .then(r => r.json())
                 .then(data => { if (data.retentionDays) setRetentionDays(data.retentionDays); })
                 .catch(() => { });
+
+            // Load AI Insight settings from app_settings
+            try {
+                const settingsRes = await fetch('/api/app-settings');
+                if (settingsRes.ok) {
+                    const s = await settingsRes.json();
+                    setInsightSettings({
+                        enabled: s.ai_insight_enabled === 'true',
+                        mode: (s.ai_insight_mode || 'ai-with-fallback') as 'rule-based' | 'ai-generated' | 'ai-with-fallback',
+                        provider: s.ai_insight_provider || '',
+                        model: s.ai_insight_model || '',
+                        cacheTtlMinutes: parseInt(s.ai_insight_cache_ttl_minutes || '30', 10),
+                        autoRefresh: s.ai_insight_auto_refresh !== 'false',
+                    });
+                }
+            } catch { }
         }
 
         loadData();
@@ -940,6 +978,236 @@ export default function AISettingsPage() {
                 {pruneResult && (
                     <p className="text-xs text-gray-600 bg-gray-50 rounded px-3 py-2">{pruneResult}</p>
                 )}
+            </div>
+
+            {/* ── Pengaturan AI Insight ── */}
+            <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 space-y-4">
+                <h2 className="text-base font-semibold text-gray-900 flex items-center gap-2">
+                    <Sparkles className="w-4 h-4 text-purple-600" />
+                    Pengaturan AI Insight
+                </h2>
+                <p className="text-xs text-gray-500">
+                    Atur bagaimana insight otomatis dihasilkan untuk kartu insight di dashboard dan halaman lainnya.
+                    Pengaturan ini disimpan di database dan digunakan oleh server-side AI Insight engine.
+                </p>
+
+                {/* 1. Enable AI Insight */}
+                <div className="flex items-center justify-between py-2">
+                    <div>
+                        <label className="text-sm font-medium text-gray-700">Aktifkan AI Insight</label>
+                        <p className="text-xs text-gray-500">Generate insight otomatis menggunakan AI</p>
+                    </div>
+                    <button
+                        onClick={async () => {
+                            const next = insightSettings.enabled ? 'false' : 'true';
+                            await saveInsightSetting('ai_insight_enabled', next);
+                            setInsightSettings(prev => ({ ...prev, enabled: !prev.enabled }));
+                            setInsightSaved('Aktifkan AI Insight');
+                            setTimeout(() => setInsightSaved(null), 2000);
+                        }}
+                        className={`relative w-11 h-6 rounded-full transition-colors ${insightSettings.enabled ? 'bg-purple-600' : 'bg-gray-300'}`}
+                    >
+                        <span className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${insightSettings.enabled ? 'translate-x-5' : ''}`} />
+                    </button>
+                </div>
+
+                {/* 2. Insight Mode */}
+                <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1.5">Mode Insight</label>
+                    <div className="flex flex-col gap-2">
+                        {[
+                            { value: 'rule-based', label: 'Hanya Rule-based', desc: 'Insight berdasarkan aturan statis, tanpa AI' },
+                            { value: 'ai-generated', label: 'AI Generated saja', desc: 'Hanya insight dari AI, tanpa fallback' },
+                            { value: 'ai-with-fallback', label: 'AI + Rule Fallback', desc: 'AI dulu, fallback ke rule-based jika gagal' },
+                        ].map(opt => (
+                            <label key={opt.value} className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${insightSettings.mode === opt.value ? 'border-purple-500 bg-purple-50' : 'border-gray-200 hover:bg-gray-50'}`}>
+                                <input
+                                    type="radio"
+                                    name="insight_mode"
+                                    value={opt.value}
+                                    checked={insightSettings.mode === opt.value}
+                                    onChange={async () => {
+                                        await saveInsightSetting('ai_insight_mode', opt.value);
+                                        setInsightSettings(prev => ({ ...prev, mode: opt.value as any }));
+                                        setInsightSaved('Mode Insight');
+                                        setTimeout(() => setInsightSaved(null), 2000);
+                                    }}
+                                    className="mt-0.5"
+                                />
+                                <div>
+                                    <span className="text-sm font-medium text-gray-900">{opt.label}</span>
+                                    <p className="text-xs text-gray-500">{opt.desc}</p>
+                                </div>
+                            </label>
+                        ))}
+                    </div>
+                </div>
+
+                {/* 3. Provider */}
+                <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                        Provider AI untuk Insight
+                    </label>
+                    <select
+                        value={insightSettings.provider}
+                        onChange={async (e) => {
+                            const val = e.target.value;
+                            await saveInsightSetting('ai_insight_provider', val);
+                            setInsightSettings(prev => ({ ...prev, provider: val }));
+                            setInsightSaved('Provider Insight');
+                            setTimeout(() => setInsightSaved(null), 2000);
+                        }}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-purple-500 outline-none bg-white"
+                    >
+                        <option value="">Auto (pakai provider aktif)</option>
+                        {config.providers.filter(p => p.apiKeySet).map(p => (
+                            <option key={p.providerId} value={p.providerId}>
+                                {PROVIDERS.find(pr => pr.id === p.providerId)?.name || p.providerId}
+                            </option>
+                        ))}
+                    </select>
+                    <p className="text-xs text-gray-500 mt-1">Kosongkan untuk menggunakan provider AI Chat yang aktif.</p>
+                </div>
+
+                {/* 4. Model */}
+                <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                        Model AI untuk Insight
+                    </label>
+                    <ModelDropdown
+                        providerId={insightSettings.provider as any || activeProviderId}
+                        value={insightSettings.model}
+                        onChange={async (modelId) => {
+                            await saveInsightSetting('ai_insight_model', modelId);
+                            setInsightSettings(prev => ({ ...prev, model: modelId }));
+                            setInsightSaved('Model Insight');
+                            setTimeout(() => setInsightSaved(null), 2000);
+                        }}
+                        placeholder="Kosongkan untuk pakai default provider"
+                    />
+                    <p className="text-xs text-gray-500 mt-1">Kosongkan untuk menggunakan model default dari provider.</p>
+                </div>
+
+                {/* 5. Cache duration */}
+                <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                        Durasi Cache Insight
+                    </label>
+                    <p className="text-xs text-gray-500 mb-2">Insight yang sama akan disajikan dari cache selama durasi ini. &ldquo;Generate ulang&rdquo; akan melewati cache.</p>
+                    <div className="flex flex-wrap gap-2">
+                        {[
+                            { value: 15, label: '15 menit' },
+                            { value: 30, label: '30 menit' },
+                            { value: 60, label: '1 jam' },
+                            { value: 360, label: '6 jam' },
+                            { value: 1440, label: '24 jam' },
+                        ].map(opt => (
+                            <button
+                                key={opt.value}
+                                onClick={async () => {
+                                    await saveInsightSetting('ai_insight_cache_ttl_minutes', String(opt.value));
+                                    setInsightSettings(prev => ({ ...prev, cacheTtlMinutes: opt.value }));
+                                    setInsightSaved('Cache');
+                                    setTimeout(() => setInsightSaved(null), 2000);
+                                }}
+                                className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${insightSettings.cacheTtlMinutes === opt.value
+                                    ? 'bg-purple-600 text-white border-purple-600'
+                                    : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50'
+                                    }`}
+                            >
+                                {opt.label}
+                            </button>
+                        ))}
+                    </div>
+                </div>
+
+                {/* 6. Auto refresh */}
+                <div className="flex items-center justify-between py-2">
+                    <div>
+                        <label className="text-sm font-medium text-gray-700">Auto Refresh Insight</label>
+                        <p className="text-xs text-gray-500">Generate ulang insight secara berkala saat halaman terbuka</p>
+                    </div>
+                    <button
+                        onClick={async () => {
+                            const next = insightSettings.autoRefresh ? 'false' : 'true';
+                            await saveInsightSetting('ai_insight_auto_refresh', next);
+                            setInsightSettings(prev => ({ ...prev, autoRefresh: !prev.autoRefresh }));
+                            setInsightSaved('Auto Refresh');
+                            setTimeout(() => setInsightSaved(null), 2000);
+                        }}
+                        className={`relative w-11 h-6 rounded-full transition-colors ${insightSettings.autoRefresh ? 'bg-purple-600' : 'bg-gray-300'}`}
+                    >
+                        <span className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${insightSettings.autoRefresh ? 'translate-x-5' : ''}`} />
+                    </button>
+                </div>
+
+                {/* Save indicator */}
+                {insightSaved && (
+                    <div className="flex items-center gap-2 text-xs text-emerald-700 bg-emerald-50 px-3 py-2 rounded-lg border border-emerald-200">
+                        <Check className="w-3.5 h-3.5" />
+                        <span>Pengaturan &ldquo;{insightSaved}&rdquo; tersimpan</span>
+                    </div>
+                )}
+
+                {/* Test Generate Insight button */}
+                <div className="pt-2 border-t border-gray-100">
+                    <button
+                        onClick={async () => {
+                            setTestingInsight(true);
+                            setInsightTestResult(null);
+                            try {
+                                const res = await fetch('/api/ai/insight', {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({
+                                        page: 'settings-test',
+                                        prompt: 'Analisis singkat performa bisnis hari ini: booking, pendapatan, dan okupansi. Berikan dalam 2-3 paragraf.',
+                                        title: 'Test Insight',
+                                        forceRefresh: true,
+                                    }),
+                                });
+                                const data = await res.json();
+                                if (data.error && data.fallback) {
+                                    setInsightTestResult({ success: false, message: 'AI Insight tidak aktif atau gagal. Cek pengaturan provider dan API key.' });
+                                } else if (data.response?.message) {
+                                    setInsightTestResult({ success: true, message: data.response.message.substring(0, 300) });
+                                } else {
+                                    setInsightTestResult({ success: false, message: 'Respons tidak valid dari server.' });
+                                }
+                            } catch (err: any) {
+                                setInsightTestResult({ success: false, message: err.message || 'Gagal menghubungi server' });
+                            } finally {
+                                setTestingInsight(false);
+                            }
+                        }}
+                        disabled={testingInsight}
+                        className="inline-flex items-center gap-1.5 px-4 py-2 bg-purple-600 text-white rounded-lg text-sm font-medium hover:bg-purple-700 transition-colors disabled:opacity-50"
+                    >
+                        {testingInsight ? (
+                            <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                        ) : (
+                            <Sparkles className="w-4 h-4" />
+                        )}
+                        {testingInsight ? 'Mengenerate...' : 'Test Generate Insight'}
+                    </button>
+                    {insightTestResult && (
+                        <div className={`mt-3 p-3 rounded-lg border ${insightTestResult.success ? 'bg-emerald-50 border-emerald-200' : 'bg-red-50 border-red-200'}`}>
+                            <div className="flex items-start gap-2">
+                                {insightTestResult.success
+                                    ? <Check className="w-4 h-4 text-emerald-600 flex-shrink-0 mt-0.5" />
+                                    : <AlertCircle className="w-4 h-4 text-red-600 flex-shrink-0 mt-0.5" />}
+                                <div className="text-xs">
+                                    <p className={`font-semibold ${insightTestResult.success ? 'text-emerald-800' : 'text-red-800'}`}>
+                                        {insightTestResult.success ? 'Insight berhasil digenerate' : 'Gagal'}
+                                    </p>
+                                    <p className={`mt-0.5 ${insightTestResult.success ? 'text-emerald-700' : 'text-red-700'}`}>
+                                        {insightTestResult.message}
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+                </div>
             </div>
         </div>
     );

@@ -9,6 +9,13 @@ export interface AppSettings {
     favicon_url: string | null;
     primary_color: string;
     report_period_mode: string;
+    // AI Insight settings
+    ai_insight_enabled?: string;
+    ai_insight_mode?: string;
+    ai_insight_provider?: string;
+    ai_insight_model?: string;
+    ai_insight_cache_ttl_minutes?: string;
+    ai_insight_auto_refresh?: string;
 }
 
 /**
@@ -41,6 +48,12 @@ export async function fetchAppSettings(): Promise<AppSettings> {
         favicon_url: map.favicon_url || null,
         primary_color: map.primary_color || '#2563eb',
         report_period_mode: map.report_period_mode || 'calendar_day',
+        ai_insight_enabled: map.ai_insight_enabled || 'false',
+        ai_insight_mode: map.ai_insight_mode || 'ai-with-fallback',
+        ai_insight_provider: map.ai_insight_provider || '',
+        ai_insight_model: map.ai_insight_model || '',
+        ai_insight_cache_ttl_minutes: map.ai_insight_cache_ttl_minutes || '30',
+        ai_insight_auto_refresh: map.ai_insight_auto_refresh || 'true',
     };
 }
 
@@ -69,6 +82,25 @@ export async function updateAppSettings(settings: Partial<AppSettings>): Promise
         }
         if (settings.report_period_mode !== undefined) {
             entries.push({ key: 'report_period_mode', value: settings.report_period_mode });
+        }
+        // AI Insight settings
+        if (settings.ai_insight_enabled !== undefined) {
+            entries.push({ key: 'ai_insight_enabled', value: settings.ai_insight_enabled });
+        }
+        if (settings.ai_insight_mode !== undefined) {
+            entries.push({ key: 'ai_insight_mode', value: settings.ai_insight_mode });
+        }
+        if (settings.ai_insight_provider !== undefined) {
+            entries.push({ key: 'ai_insight_provider', value: settings.ai_insight_provider });
+        }
+        if (settings.ai_insight_model !== undefined) {
+            entries.push({ key: 'ai_insight_model', value: settings.ai_insight_model });
+        }
+        if (settings.ai_insight_cache_ttl_minutes !== undefined) {
+            entries.push({ key: 'ai_insight_cache_ttl_minutes', value: settings.ai_insight_cache_ttl_minutes });
+        }
+        if (settings.ai_insight_auto_refresh !== undefined) {
+            entries.push({ key: 'ai_insight_auto_refresh', value: settings.ai_insight_auto_refresh });
         }
 
         for (const entry of entries) {

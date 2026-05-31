@@ -9,7 +9,7 @@ import CheckinHariIni from './CheckinHariIni';
 import CheckoutHariIni from './CheckoutHariIni';
 import StatusUnit from './StatusUnit';
 import CompareSwitcher from './CompareSwitcher';
-import DashboardInsightSummary from './DashboardInsightSummary';
+// import DashboardInsightSummary from './DashboardInsightSummary';
 import LocationHealthMatrix from './LocationHealthMatrix';
 import UnitPerformancePanel from './UnitPerformancePanel';
 import MarketingPerformancePanel from './MarketingPerformancePanel';
@@ -144,7 +144,7 @@ export default function TabContent({
                     )}
 
                     {/* Insight Summary */}
-                    <DashboardInsightSummary insights={insights} />
+                    {/* <DashboardInsightSummary insights={insights} /> */}
 
                     {/* AI Insights — Expandable (deterministic rule-based insights) */}
                     <AIInsightsExpandable insights={insights} maxVisible={3} />
