@@ -7,6 +7,8 @@ FROM base AS deps
 COPY package.json package-lock.json ./
 # Force fresh install (avoid stale cache issues)
 RUN npm ci --ignore-scripts
+# Reduce image size — purge npm cache after install
+RUN npm cache clean --force
 
 # Build
 FROM base AS builder

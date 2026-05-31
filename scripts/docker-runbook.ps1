@@ -1,10 +1,10 @@
 # scripts/docker-runbook.ps1
 # Phase 3 Runbook — KR Analytics Dashboard
 # Usage: .\scripts\docker-runbook.ps1 -Command <command> [options]
-# Commands: start, stop, logs, health, check-rows, backup, restore, refresh-summary, status, build, up-build, help
+# Commands: start, stop, logs, health, check-rows, backup, restore, refresh-summary, status, build, up-build, deploy, cloudflare-help, help
 
 param(
-    [ValidateSet('start','stop','logs','health','check-rows','backup','restore','refresh-summary','status','build','up-build','help')]
+    [ValidateSet('start','stop','logs','health','check-rows','backup','restore','refresh-summary','status','build','up-build','deploy','cloudflare-help','help')]
     [string]$Command,
     [string]$BackupFile,
     [switch]$Help
@@ -31,22 +31,18 @@ Commands:
   status            Show container status (docker compose ps)
   build             Build images (docker compose build)
   up-build          Build and start (docker compose up -d --build)
+  deploy            Full clean deploy — no-cache build + up
+  cloudflare-help   Show Cloudflare proxy compatibility notes
   help              Show this help message
 
 Options:
   -BackupFile <path>  Path to backup file (required for restore)
 
 Examples:
+  .\scripts\docker-runbook.ps1 -Command deploy
   .\scripts\docker-runbook.ps1 -Command start
   .\scripts\docker-runbook.ps1 -Command status
-  .\scripts\docker-runbook.ps1 -Command logs
-  .\scripts\docker-runbook.ps1 -Command health
-  .\scripts\docker-runbook.ps1 -Command check-rows
-  .\scripts\docker-runbook.ps1 -Command backup
-  .\scripts\docker-runbook.ps1 -Command restore -BackupFile backups\analytics_db_20260529_120000.sql
-  .\scripts\docker-runbook.ps1 -Command refresh-summary
-  .\scripts\docker-runbook.ps1 -Command build
-  .\scripts\docker-runbook.ps1 -Command up-build
+  .\scripts\docker-runbook.ps1 -Command cloudflare-help
 "@
 }
 
@@ -154,6 +150,105 @@ function Up-Build {
     docker compose -f $composeFile up -d --build
 }
 
+function Deploy {
+    Write-Host @"
+
+=== KR Analytics Dashboard — Full Deploy ===
+
+This performs a clean build+deploy with no-cache,
+which is the recommended sequence for production.
+
+Step 1: Pull latest (if using Git)
+Step 2: Clean-build images with no-cache
+Step 3: Spin up new containers
+Step 4: Health check
+
+"@ -ForegroundColor Cyan
+
+    # Confirm
+    $confirm = Read-Host "Continue with full deploy? (y/N)"
+    if ($confirm -ne 'y' -and $confirm -ne 'Y') {
+        Write-Host ">>> Deploy cancelled." -ForegroundColor Yellow
+        return
+    }
+
+    Write-Host ">>> [1/4] Pulling latest code..." -ForegroundColor Yellow
+    git pull
+
+    Write-Host ">>> [2/4] Building images (no-cache)..." -ForegroundColor Yellow
+    docker compose -f $composeFile build --no-cache
+
+    Write-Host ">>> [3/4] Starting stack..." -ForegroundColor Yellow
+    docker compose -f $composeFile up -d
+
+    Write-Host ">>> [4/4] Waiting for health checks..." -ForegroundColor Yellow
+    Start-Sleep -Seconds 10
+
+    Health-Check
+
+    Write-Host @"
+
+=== Deploy Complete ===
+
+What happens next:
+- Old JS chunks cached in browsers will fail on server action calls
+- The ServerActionRecovery component (added in this deploy)
+  detects those errors and forces a hard reload + cache clear
+- next.config.js now sends no-cache headers for all HTML/RSC pages
+- middleware.ts also sets no-cache on every response
+
+If users are still stuck:
+- Tell them to hard-refresh (Ctrl+Shift+R / Cmd+Shift+R)
+- Or visit /login and the recovery component should auto-fire
+
+"@ -ForegroundColor Green
+}
+
+function Show-CloudflareHelp {
+    Write-Host @"
+
+=== Cloudflare Proxy Compatibility Notes ===
+
+Since KR Analytics Dashboard runs behind Cloudflare proxy,
+these settings MUST be configured in the Cloudflare dashboard:
+
+1. Cache Level → "Standard" or "Bypass"
+   - DO NOT use "Cache Everything"
+   - Settings → Speed → Optimization → Cache Level
+
+2. Auto Minify → DISABLE for HTML and JS
+   - Cloudflare minification can break Next.js RSC payloads
+   - Settings → Speed → Optimization → Auto Minify
+   - Uncheck HTML and JS (CSS is safe)
+
+3. Always Online → OFF
+   - Always Online serves stale pages when origin is down
+   - This defeats the no-cache headers we set
+   - Settings → Speed → Always Online
+
+4. Browser Cache TTL → "Respect Existing Headers"
+   - OR set to 0 (no cache)
+   - Our middleware already sets no-cache headers
+   - Settings → Speed → Cache → Browser Cache TTL
+
+5. (Optional) Development Mode
+   - After deploy, you can enable Dev Mode temporarily
+   - This bypasses ALL cache for 3 hours
+   - Useful right after deployment to flush stale cache
+   - Settings → Speed → Development Mode
+
+6. If users receive cached 404 on /login:
+   - Purge cache in Cloudflare: Purge Everything
+   - Or wait for TTL to expire (if Edge Cache TTL is set)
+   - Go to Caching → Configuration → Purge Everything
+
+7. SSL/TLS → Full (strict)
+   - Required for secure cookie handling
+   - SSL/TLS → Overview → Full (strict)
+
+"@ -ForegroundColor Cyan
+}
+
 # Dispatch
 try {
     if ($Help -or -not $Command -or $Command -eq 'help') {
@@ -173,6 +268,8 @@ try {
         'status'          { Show-Status }
         'build'           { Build-Images }
         'up-build'        { Up-Build }
+        'deploy'          { Deploy }
+        'cloudflare-help' { Show-CloudflareHelp }
         default {
             Write-Host ">>> Unknown command: $Command" -ForegroundColor Red
             Show-Help

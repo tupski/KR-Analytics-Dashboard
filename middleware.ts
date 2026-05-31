@@ -3,17 +3,39 @@ import type { NextRequest } from 'next/server';
 import { createServerClient } from '@supabase/ssr';
 
 /**
+ * Set anti-cache headers on a NextResponse.
+ * Prevents Cloudflare / proxy / browser from caching HTML, RSC, or server action responses.
+ */
+function setNoCacheHeaders(response: NextResponse): void {
+    response.headers.set('Cache-Control', 'no-cache, no-store, must-revalidate');
+    response.headers.set('Pragma', 'no-cache');
+    response.headers.set('Expires', '0');
+}
+
+/**
+ * Shortcut: create a redirect with anti-cache headers.
+ */
+function redirectWithNoCache(url: URL): NextResponse {
+    const response = NextResponse.redirect(url);
+    setNoCacheHeaders(response);
+    return response;
+}
+
+/**
  * Middleware untuk auth protection.
  * - Redirect ke /login jika belum auth
  * - Check role super_admin untuk akses dashboard
  * - Allow public access ke /login
+ * - Set anti-cache headers on ALL responses
  */
 export async function middleware(request: NextRequest) {
     const { pathname } = request.nextUrl;
 
-    // Allow public access to login page
+    // Allow public access to login page (handles /login?redirect=%2Fdashboard)
     if (pathname === '/login') {
-        return NextResponse.next();
+        const response = NextResponse.next();
+        setNoCacheHeaders(response);
+        return response;
     }
 
     // Create response object
@@ -22,6 +44,7 @@ export async function middleware(request: NextRequest) {
             headers: request.headers,
         },
     });
+    setNoCacheHeaders(response);
 
     // Create Supabase client with cookie handling
     const supabase = createServerClient(
@@ -49,7 +72,7 @@ export async function middleware(request: NextRequest) {
     if (error || !user) {
         const loginUrl = new URL('/login', request.url);
         loginUrl.searchParams.set('redirect', pathname);
-        return NextResponse.redirect(loginUrl);
+        return redirectWithNoCache(loginUrl);
     }
 
     // Check role for protected routes
@@ -83,7 +106,7 @@ export async function middleware(request: NextRequest) {
         await supabase.auth.signOut();
         const loginUrl = new URL('/login', request.url);
         loginUrl.searchParams.set('error', 'unauthorized');
-        return NextResponse.redirect(loginUrl);
+        return redirectWithNoCache(loginUrl);
     }
 
     return response;
