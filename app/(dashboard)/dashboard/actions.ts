@@ -676,9 +676,12 @@ export async function fetchUnitPerformanceData(): Promise<UnitPerformanceData> {
 
     try {
         // ── 1. Fetch all rooms with location info ─────────────
+        // Note: nomor_kamar.lokasi is a VARCHAR column (not a FK relationship),
+        // so we cannot use nested select like lokasi(id, nama:name).
+        // We select the lokasi column directly (it stores the location name).
         const { data: rooms, error: roomError } = await supabase
             .from('nomor_kamar')
-            .select('id, nomor_kamar, lokasi(id, nama:name), status, created_at');
+            .select('id, nomor_kamar, lokasi, status, created_at');
 
         if (roomError) {
             console.error('Error fetching rooms for unit performance:', roomError);
@@ -689,11 +692,11 @@ export async function fetchUnitPerformanceData(): Promise<UnitPerformanceData> {
             return { idleUnits: [], topUnits: [], bottomUnits: [] };
         }
 
-        // Normalize rooms: extract location name from joined object or string
+        // Normalize rooms: lokasi is a VARCHAR string containing the location name
         type RoomRow = {
             id: number;
             nomor_kamar: string;
-            lokasi: { id: number; nama: string } | string;
+            lokasi: string | null;
             status: string;
             created_at: string;
         };
@@ -702,9 +705,7 @@ export async function fetchUnitPerformanceData(): Promise<UnitPerformanceData> {
             (rooms as unknown as RoomRow[]).map((r) => ({
                 id: r.id,
                 unitCode: r.nomor_kamar,
-                location: typeof r.lokasi === 'object' && r.lokasi !== null
-                    ? (r.lokasi as { id: number; nama: string }).nama
-                    : String(r.lokasi),
+                location: r.lokasi ?? '',
                 status: r.status,
                 createdAt: r.created_at,
             }));

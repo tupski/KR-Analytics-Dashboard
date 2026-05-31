@@ -80,3 +80,6 @@ postgres_data/
 # Sync worker
 sync-worker/node_modules/
 sync-worker/dist/
+
+# Test Files
+**/__tests__/
