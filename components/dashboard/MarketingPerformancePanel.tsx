@@ -1,7 +1,7 @@
 'use client';
 
-import React from 'react';
-import { BarChart3, TrendingUp, TrendingDown, HelpCircle } from 'lucide-react';
+import React, { useState } from 'react';
+import { BarChart3, ChevronRight, TrendingUp, TrendingDown, HelpCircle } from 'lucide-react';
 import type { MarketingPerformanceItem } from '@/types/dashboard';
 import {
     MARKETING_STATUS_LABELS,
@@ -83,9 +83,13 @@ export default function MarketingPerformancePanel({
     totalTransactions,
     activeChannels,
     isLoading,
-}: MarketingPerformancePanelProps) {
+    maxRows,
+}: MarketingPerformancePanelProps & { maxRows?: number }) {
     // ── Derived data ─────────────────────────────────────────
+    const [showAll, setShowAll] = useState(false);
     const sorted = [...items].sort((a, b) => b.totalRevenue - a.totalRevenue);
+    const displayItems = maxRows && !showAll ? sorted.slice(0, maxRows) : sorted;
+    const hasMore = maxRows ? sorted.length > maxRows : false;
     const strongest = sorted.find(i => i.channel !== 'Tidak Diketahui' && i.transactionCount > 0);
     const weakest = [...sorted]
         .reverse()
@@ -170,7 +174,7 @@ export default function MarketingPerformancePanel({
                                             </tr>
                                         </thead>
                                         <tbody className="divide-y divide-gray-100">
-                                            {sorted.map((item, i) => (
+                                            {displayItems.map((item, i) => (
                                                 <tr key={item.channel} className="hover:bg-gray-50 transition-colors">
                                                     <td className="px-3 py-2 text-gray-400">{i + 1}</td>
                                                     <td className="px-3 py-2 font-medium text-gray-900 max-w-[180px] truncate">
@@ -197,7 +201,7 @@ export default function MarketingPerformancePanel({
 
                                 {/* Mobile cards */}
                                 <div className="lg:hidden space-y-2">
-                                    {sorted.map((item) => (
+                                    {displayItems.map((item) => (
                                         <ChannelCard key={item.channel} item={item} />
                                     ))}
                                 </div>
@@ -232,6 +236,30 @@ export default function MarketingPerformancePanel({
                                             </p>
                                         </div>
                                     </div>
+                                </div>
+                            )}
+
+                            {/* Footer: Lihat Semua button */}
+                            {hasMore && !showAll && (
+                                <div className="flex justify-center pt-2">
+                                    <button
+                                        onClick={() => setShowAll(true)}
+                                        className="flex items-center gap-1 text-xs font-medium text-blue-600 hover:text-blue-700 transition-colors px-3 py-1.5 rounded-lg hover:bg-blue-50"
+                                    >
+                                        Lihat Semua Channel
+                                        <ChevronRight className="w-3.5 h-3.5" />
+                                    </button>
+                                </div>
+                            )}
+                            {showAll && hasMore && (
+                                <div className="flex justify-center pt-2">
+                                    <button
+                                        onClick={() => setShowAll(false)}
+                                        className="flex items-center gap-1 text-xs font-medium text-gray-500 hover:text-gray-700 transition-colors px-3 py-1.5 rounded-lg hover:bg-gray-50"
+                                    >
+                                        <ChevronRight className="w-3.5 h-3.5 rotate-180" />
+                                        Sembunyikan
+                                    </button>
                                 </div>
                             )}
                         </>
