@@ -16,6 +16,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { Send, Bot, Brain, X, ChevronRight, Copy, Check, AlertTriangle, Eye, Lightbulb, Wrench, Zap, ChevronDown, RotateCw, Pencil } from 'lucide-react';
 import MarkdownRenderer from './MarkdownRenderer';
+import ChatModelSelector from './ChatModelSelector';
 import { loadMemory, addMemory, deleteMemory, getMemoryContext, extractMemoryFromConversation, type MemoryEntry } from '@/lib/ai/memory';
 import KraiLogo from '@/components/shared/KraiLogo';
 import {
@@ -32,6 +33,8 @@ import {
     type MultiAIConfig as DbMultiAIConfig,
 } from '@/lib/ai/configClient';
 import { PROVIDERS, getModel, type ProviderId } from '@/lib/ai/models';
+import { getModels } from '@/lib/ai/modelClient';
+import type { ProviderModel } from '@/types/ai-models';
 
 export interface ChatMessage {
     role: 'user' | 'assistant';
@@ -270,6 +273,8 @@ export default function AIChatCore({
     const [thinkingMode, setThinkingModeState] = useState<ThinkingMode>('auto');
     const [showModelPicker, setShowModelPicker] = useState(false);       // Toolbar model selector
     const [showErrorModelPicker, setShowErrorModelPicker] = useState(false); // Error section model selector
+    const [availableModels, setAvailableModels] = useState<ProviderModel[]>([]);
+    const [loadingModels, setLoadingModels] = useState(false);
     const [retryingIdx, setRetryingIdx] = useState<number | null>(null);
     const [editingIdx, setEditingIdx] = useState<number | null>(null);
     const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -322,6 +327,82 @@ export default function AIChatCore({
         window.addEventListener('kr-ai-config-changed', refresh);
         return () => window.removeEventListener('kr-ai-config-changed', refresh);
     }, []);
+
+    // Load models from all configured providers
+    useEffect(() => {
+        const loadAllModels = async () => {
+            setLoadingModels(true);
+            try {
+                // Load from DB first
+                try {
+                    const dbConfig = await loadConfigFromDb();
+                    const providers = dbConfig.providers.length > 0
+                        ? dbConfig.providers.map(p => p.providerId)
+                        : ['openai-compatible', 'openai', 'google', 'anthropic', 'deepseek'];
+
+                    const allModels: ProviderModel[] = [];
+
+                    for (const provider of providers) {
+                        try {
+                            const response = await getModels(provider);
+                            allModels.push(...(response.models || []));
+                        } catch {
+                            // Skip provider if error
+                        }
+                    }
+
+                    setAvailableModels(allModels);
+                } catch {
+                    // If DB fails, try localStorage config
+                    const c = loadConfig();
+                    const configuredIds = Object.keys(c.providers);
+                    const allModels: ProviderModel[] = [];
+
+                    for (const provider of configuredIds) {
+                        try {
+                            const response = await getModels(provider);
+                            allModels.push(...(response.models || []));
+                        } catch {
+                            // Skip provider if error
+                        }
+                    }
+
+                    setAvailableModels(allModels);
+                }
+            } finally {
+                setLoadingModels(false);
+            }
+        };
+
+        loadAllModels();
+    }, []);
+
+    // Reload models when config changes
+    useEffect(() => {
+        if (!config) return;
+        const loadConfiguredModels = async () => {
+            setLoadingModels(true);
+            try {
+                const configuredIds = Object.keys(config.providers);
+                const allModels: ProviderModel[] = [];
+
+                for (const provider of configuredIds) {
+                    try {
+                        const response = await getModels(provider);
+                        allModels.push(...(response.models || []));
+                    } catch {
+                        // Skip provider if error
+                    }
+                }
+
+                setAvailableModels(allModels);
+            } finally {
+                setLoadingModels(false);
+            }
+        };
+
+        loadConfiguredModels();
+    }, [config]);
 
     useEffect(() => {
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -521,6 +602,12 @@ export default function AIChatCore({
         window.dispatchEvent(new Event('kr-ai-config-changed'));
     };
 
+    /** Handler for ChatModelSelector — accepts modelId and optional provider */
+    const handleChatModelChange = async (modelId: string, providerId?: string) => {
+        const pid = (providerId as ProviderId) || activeProviderId;
+        await handleSelectModel(pid || 'auto', modelId);
+    };
+
     const isFloat = mode === 'float';
     const isFull = mode === 'full';
 
@@ -701,19 +788,22 @@ export default function AIChatCore({
                                 <Brain className="w-3 h-3" />
                                 Ganti model
                             </button>
-                            {showErrorModelPicker && config && (
+                            {showErrorModelPicker && (
                                 <div className="absolute z-50 mt-8">
-                                    <ModelPickerDropdown
-                                        config={config}
-                                        onSelect={(pid, mid) => {
-                                            handleSelectModel(pid, mid);
+                                    <ChatModelSelector
+                                        currentModel={activeModelId}
+                                        onChange={(mid, pid) => {
+                                            handleChatModelChange(mid, pid);
                                             setShowErrorModelPicker(false);
                                             setTimeout(() => {
                                                 const lastUser = [...messages].reverse().find(m => m.role === 'user');
                                                 if (lastUser) handleSend(lastUser.content);
                                             }, 200);
                                         }}
-                                        onClose={() => setShowErrorModelPicker(false)}
+                                        currentProvider={activeProviderId !== 'auto' ? activeProviderId : undefined}
+                                        fetchedModels={availableModels}
+                                        loadingModels={loadingModels}
+                                        config={config}
                                     />
                                 </div>
                             )}
@@ -791,29 +881,17 @@ export default function AIChatCore({
                     {/* Model selector and Mode dropdown - Below input */}
                     {showTopBar && (
                         <div className="flex items-center justify-between gap-3 pt-1">
-                            {/* Model selector */}
+                            {/* Model selector — uses ChatModelSelector with fetched models */}
                             <div className="relative flex-1 min-w-0">
-                                <button
-                                    onClick={(e) => {
-                                        e.stopPropagation();
-                                        // Close error picker before opening toolbar picker
-                                        setShowErrorModelPicker(false);
-                                        setShowModelPicker(v => !v);
-                                    }}
-                                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs text-gray-600 hover:bg-gray-100 transition-colors w-full max-w-[200px] border border-gray-200"
-                                    aria-label="Pilih model AI"
-                                >
-                                    <Brain className="w-3.5 h-3.5 text-blue-600 flex-shrink-0" />
-                                    <span className="truncate flex-1 text-left">{activeModelLabel}</span>
-                                    <ChevronDown className="w-3.5 h-3.5 flex-shrink-0" />
-                                </button>
-                                {showModelPicker && config && (
-                                    <ModelPickerDropdown
-                                        config={config}
-                                        onSelect={handleSelectModel}
-                                        onClose={() => setShowModelPicker(false)}
-                                    />
-                                )}
+                                <ChatModelSelector
+                                    currentModel={activeModelId}
+                                    onChange={handleChatModelChange}
+                                    currentProvider={activeProviderId !== 'auto' ? activeProviderId : undefined}
+                                    className="max-w-[200px]"
+                                    fetchedModels={availableModels}
+                                    loadingModels={loadingModels}
+                                    config={config}
+                                />
                             </div>
 
                             {/* Mode dropdown */}

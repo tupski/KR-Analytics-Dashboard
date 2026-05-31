@@ -14,8 +14,29 @@ import {
 } from '@/lib/ai/configClient';
 import { addCustomModel, getCustomModels } from '@/lib/ai/config';
 import { saveAIConfig, loadAIConfig } from '@/app/(dashboard)/pengaturan/ai-actions';
+import ModelFetchButton from './ModelFetchButton';
+import ModelDropdown from './ModelDropdown';
+import { getModels } from '@/lib/ai/modelClient';
+import type { ProviderModel } from '@/types/ai-models';
 
 const fmtPrice = (v: number) => v === 0 ? 'Gratis' : `$${v.toFixed(2)}`;
+
+/** Format relative time in Indonesian (duplicated from ModelDropdown for the info line) */
+function formatRelativeTime(dateString: string | null): string {
+    if (!dateString) return 'Belum pernah';
+    const date = new Date(dateString);
+    const now = new Date();
+    const diffMs = now.getTime() - date.getTime();
+    const diffSec = Math.floor(diffMs / 1000);
+    const diffMin = Math.floor(diffSec / 60);
+    const diffHour = Math.floor(diffMin / 60);
+    const diffDay = Math.floor(diffHour / 24);
+    if (diffSec < 60) return 'baru saja';
+    if (diffMin < 60) return `${diffMin} menit yang lalu`;
+    if (diffHour < 24) return `${diffHour} jam yang lalu`;
+    if (diffDay < 7) return `${diffDay} hari yang lalu`;
+    return date.toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' });
+}
 
 /** Sanitize input to remove non-ASCII characters that cause ByteString errors */
 function sanitizeInput(text: string): string {
@@ -82,6 +103,11 @@ export default function AISettingsPage() {
     const [pruning, setPruning] = useState(false);
     const [pruneResult, setPruneResult] = useState<string | null>(null);
 
+    // Fetched models state (per-provider, keyed by providerId)
+    const [fetchedModels, setFetchedModels] = useState<ProviderModel[]>([]);
+    const [fetchedModelsLastFetched, setFetchedModelsLastFetched] = useState<string | null>(null);
+    const [loadingFetchedModels, setLoadingFetchedModels] = useState(false);
+
     useEffect(() => {
         async function loadData() {
             // Run migration first
@@ -146,14 +172,53 @@ export default function AISettingsPage() {
         }
     };
 
+    // Load fetched models when active tab changes
+    useEffect(() => {
+        async function loadFetchedModels() {
+            setLoadingFetchedModels(true);
+            try {
+                const response = await getModels(activeProviderId);
+                setFetchedModels(response.models || []);
+                setFetchedModelsLastFetched(response.lastFetched || null);
+            } catch (error) {
+                console.error('Failed to load fetched models:', error);
+            } finally {
+                setLoadingFetchedModels(false);
+            }
+        }
+
+        loadFetchedModels();
+    }, [activeProviderId]);
+
     if (!config) return null;
 
     const provider = PROVIDERS.find(p => p.id === activeProviderId);
     if (!provider) return null;
 
-    // Merge provider models with custom models
+    // Merge provider models with custom models AND fetched models
     const customModels = getCustomModels(activeProviderId);
-    const allModels = [...provider.models, ...customModels];
+
+    // Convert ProviderModel[] to ModelInfo[] for merging with existing model list
+    const fetchedModelInfos: ModelInfo[] = fetchedModels.map((fm) => ({
+        id: fm.modelId,
+        label: fm.displayName,
+        inputPrice: fm.pricing?.input ?? 0,
+        outputPrice: fm.pricing?.output ?? 0,
+        capabilities: {
+            vision: fm.capabilities?.vision ?? false,
+            reasoning: fm.capabilities?.reasoning ?? false,
+            tools: fm.capabilities?.functionCalling ?? false,
+            fast: false,
+        },
+    }));
+
+    // Merge: hardcoded models first, then fetched models (deduplicated by id), then custom models
+    const hardcodedIds = new Set(provider.models.map((m) => m.id));
+    const fetchedDeduped = fetchedModelInfos.filter((m) => !hardcodedIds.has(m.id));
+    const customIds = new Set([...hardcodedIds, ...fetchedDeduped.map((m) => m.id)]);
+    const customDeduped = customModels.filter((m) => !customIds.has(m.id));
+
+    const allModels = [...provider.models, ...fetchedDeduped, ...customDeduped];
 
     const selectedModel = allModels.find(m => m.id === draftModel);
 
@@ -162,15 +227,20 @@ export default function AISettingsPage() {
         setTestResult(null);
         setSaved(null);
         setSaveError(null);
+        // Reset fetched models so the useEffect reloads for the new provider
+        setFetchedModels([]);
+        setFetchedModelsLastFetched(null);
 
         const c = config.providers.find(p => p.providerId === id);
+        const hardcodedModels = PROVIDERS.find(p => p.id === id)?.models || [];
         if (c) {
             // PART 4: Load preview state — NOT full key
             setApiKeySet(c.apiKeySet);
             setApiKeyPreview(c.apiKeyPreview || '');
             setIsEditingApiKey(false);
             setDraftApiKey('');
-            setDraftModel(c.model || PROVIDERS.find(p => p.id === id)?.models[0]?.id || '');
+            // Try to restore the saved model; if it doesn't match hardcoded models, keep it anyway
+            setDraftModel(c.model || hardcodedModels[0]?.id || '');
             setDraftBaseUrl(c.baseUrl || '');
         } else {
             // New provider (not yet configured)
@@ -178,7 +248,7 @@ export default function AISettingsPage() {
             setApiKeyPreview('');
             setIsEditingApiKey(true); // FIX 1: new providers start in editing mode so user can type key
             setDraftApiKey('');
-            setDraftModel(PROVIDERS.find(p => p.id === id)?.models[0]?.id || '');
+            setDraftModel(hardcodedModels[0]?.id || '');
             setDraftBaseUrl('');
         }
     };
@@ -251,6 +321,9 @@ export default function AISettingsPage() {
             setIsEditingApiKey(false);
             setDraftApiKey('');
             setDraftBaseUrl('');
+            setDraftModel('');
+            setFetchedModels([]);
+            setFetchedModelsLastFetched(null);
             setSaved(null);
             setSaveError(null);
         } catch (error: any) {
@@ -520,8 +593,109 @@ export default function AISettingsPage() {
                         </div>
                     )}
 
-                    {/* Model picker — compact cards like 9router */}
-                    {allModels.length > 0 && (
+                    {/* ── Model Fetch & Select (new) ─────────────────────────── */}
+                    <div className="pt-2 border-t border-gray-100">
+                        <label className="block text-xs font-medium text-gray-700 mb-1.5">
+                            Model <span className="text-gray-400 font-normal">(pilih atau ketik manual)</span>
+                        </label>
+
+                        {/* Fetch button + Status row */}
+                        <div className="flex items-center gap-3 mb-2 flex-wrap">
+                            <ModelFetchButton
+                                providerId={activeProviderId}
+                                size="sm"
+                                onSuccess={(models) => {
+                                    setFetchedModels(models);
+                                    setFetchedModelsLastFetched(new Date().toISOString());
+                                }}
+                            />
+                            {fetchedModelsLastFetched && (
+                                <span className="text-[10px] text-gray-400">
+                                    Terakhir diambil: {formatRelativeTime(fetchedModelsLastFetched)}
+                                </span>
+                            )}
+                        </div>
+
+                        {/* Searchable Dropdown */}
+                        <ModelDropdown
+                            providerId={activeProviderId}
+                            value={draftModel}
+                            onChange={(modelId) => setDraftModel(modelId)}
+                            placeholder="Pilih model atau ketik manual..."
+                            disabled={loadingFetchedModels}
+                        />
+
+                        {/* Model count info */}
+                        {fetchedModels.length > 0 && (
+                            <p className="text-[10px] text-gray-400 mt-1">
+                                {fetchedModels.length} model tersedia dari provider
+                            </p>
+                        )}
+                    </div>
+
+                    {/* Model picker — compact cards like 9router (hardcoded models) */}
+                    {provider.models.length > 0 && (
+                        <div className="pt-2 border-t border-gray-100">
+                            <details className="group">
+                                <summary className="cursor-pointer text-xs font-medium text-gray-500 hover:text-gray-700 mb-1.5 list-none flex items-center gap-1">
+                                    <span className="transition-transform group-open:rotate-90">▶</span>
+                                    Lihat model hardcoded ({provider.models.length})
+                                </summary>
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-2">
+                                    {provider.models.map(m => {
+                                        const isSelected = draftModel === m.id;
+                                        return (
+                                            <button
+                                                key={m.id}
+                                                onClick={() => setDraftModel(m.id)}
+                                                className={`relative text-left px-3 py-2 rounded-lg border transition-all group ${isSelected
+                                                    ? 'border-blue-500 bg-blue-50/50 ring-1 ring-blue-500'
+                                                    : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
+                                                    }`}
+                                            >
+                                                <div className="flex items-start justify-between gap-2 mb-1">
+                                                    <span className="font-medium text-gray-900 text-xs leading-tight">{m.label}</span>
+                                                    <button
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            navigator.clipboard.writeText(m.id);
+                                                        }}
+                                                        className="opacity-0 group-hover:opacity-100 p-0.5 hover:bg-gray-200 rounded transition-opacity"
+                                                        title="Copy model ID"
+                                                    >
+                                                        <Copy className="w-3 h-3 text-gray-500" />
+                                                    </button>
+                                                </div>
+                                                <div className="flex items-center gap-1.5 flex-wrap mb-1">
+                                                    <CapabilityBadges caps={m.capabilities} size="xs" />
+                                                </div>
+                                                <div className="text-[9px] text-gray-400 font-mono">
+                                                    {fmtPrice(m.inputPrice)} in · {fmtPrice(m.outputPrice)} out
+                                                </div>
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                            </details>
+                        </div>
+                    )}
+
+                    {/* Fallback for providers with no models at all — manual input */}
+                    {allModels.length === 0 && provider.models.length === 0 && (
+                        <div>
+                            <label className="block text-xs font-medium text-gray-700 mb-1">Nama Model</label>
+                            <input
+                                type="text"
+                                value={draftModel}
+                                onChange={e => setDraftModel(e.target.value)}
+                                placeholder="contoh: llama-3.1-70b"
+                                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                            />
+                        </div>
+                    )}
+
+                    {/* Model picker — compact cards like 9router (kept for backward compat, hidden by default) */}
+                    {false && allModels.length > 0 && (
                         <div>
                             <label className="block text-xs font-medium text-gray-700 mb-1.5">
                                 Model <span className="text-gray-400 font-normal">(termurah → termahal)</span>
