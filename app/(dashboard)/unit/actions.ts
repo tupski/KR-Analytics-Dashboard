@@ -94,11 +94,13 @@ export async function fetchUnits(
                 occupancyCountMap.set(key, (occupancyCountMap.get(key) || 0) + 1);
             });
         } else {
+            // Use stay-span overlap logic: any stay that overlaps [range.start, range.end]
+            // matches as "occupied" — same logic as fetchRoomDetails and fetchUnits('today')
             const { data: periodTx } = await supabase
                 .from('transactions')
                 .select('room_number, apartment_location, customer_name, checkin_at')
-                .gte('checkin_at', range.start)
                 .lte('checkin_at', range.end)
+                .or(`checkout_at.is.null,checkout_at.gte.${range.start}`)
                 .order('checkin_at', { ascending: false });
 
             periodTx?.forEach((tx: any) => {

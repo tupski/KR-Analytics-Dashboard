@@ -11,9 +11,13 @@ interface Props {
     room: string;
     filter: DateFilter;
     onClose: () => void;
+    /** Guest name from the unit card — used for fallback display when
+     *  the unit is occupied but no exact checkin-date match exists
+     *  (active stay carried over from previous period). */
+    currentGuest?: string;
 }
 
-export default function RoomDetailModal({ location, room, filter, onClose }: Props) {
+export default function RoomDetailModal({ location, room, filter, onClose, currentGuest }: Props) {
     const [details, setDetails] = useState<RoomDetail[]>([]);
     const [loading, setLoading] = useState(true);
 
@@ -52,7 +56,18 @@ export default function RoomDetailModal({ location, room, filter, onClose }: Pro
                             <span className="ml-2 text-sm text-gray-500">Memuat data...</span>
                         </div>
                     ) : details.length === 0 ? (
-                        <p className="text-center text-gray-500 py-8">Tidak ada transaksi di periode ini.</p>
+                        currentGuest ? (
+                            <div className="text-center py-8 space-y-2">
+                                <p className="text-sm font-medium text-orange-700">
+                                    Unit sedang terisi dari transaksi aktif sebelumnya
+                                </p>
+                                <p className="text-xs text-gray-500">
+                                    Tamu: <span className="font-semibold">{currentGuest}</span>
+                                </p>
+                            </div>
+                        ) : (
+                            <p className="text-center text-gray-500 py-8">Tidak ada transaksi di periode ini.</p>
+                        )
                     ) : (
                         <>
                             <div className="bg-slate-50 rounded-lg px-4 py-2 text-sm">

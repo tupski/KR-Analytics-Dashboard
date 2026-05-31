@@ -136,6 +136,7 @@ export default function UnitGrid({ units, dateFilter }: UnitGridProps) {
                     room={selected.room}
                     filter={dateFilter as DateFilter}
                     onClose={() => setSelected(null)}
+                    currentGuest={units.find(u => u.lokasi === selected.location && u.name === selected.room)?.currentGuest}
                 />
             )}
         </div>

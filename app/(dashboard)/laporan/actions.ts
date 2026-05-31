@@ -490,8 +490,8 @@ export async function fetchRoomDetails(location: string, roomNumber: string, fil
         .select('id, customer_name, checkin_at, checkout_at, rental_duration, cash_amount, transfer_amount, transfer_to, marketing_name, marketing_fee, input_by, shift')
         .eq('apartment_location', location)
         .eq('room_number', roomNumber)
-        .gte('checkin_at', start)
         .lte('checkin_at', end)
+        .or(`checkout_at.is.null,checkout_at.gte.${start}`)
         .order('checkin_at', { ascending: false });
 
     return (data || []).map((t: any) => ({

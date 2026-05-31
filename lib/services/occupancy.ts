@@ -62,6 +62,29 @@ export interface DailyCheckinVolumePoint {
 
 // ─── Helpers ────────────────────────────────────────────────
 
+/**
+ * Get Supabase filter for stay-span overlap logic.
+ *
+ * A stay "overlaps" a range [rangeStart, rangeEnd] if:
+ *   check_in <= rangeEnd AND (check_out IS NULL OR check_out >= rangeStart)
+ *
+ * Use this for unit occupancy detail queries to ensure consistency
+ * between card-level occupancy status and modal-level detail fetch.
+ *
+ * @example
+ * const f = getStayOverlapFilter('2026-05-31T00:00:00', '2026-05-31T23:59:59');
+ * // => { check_in: { lte: '2026-05-31T23:59:59' }, or: [...] }
+ */
+export function getStayOverlapFilter(rangeStart: string, rangeEnd: string) {
+    return {
+        check_in: { lte: rangeEnd },
+        or: [
+            { check_out: { is: null } },
+            { check_out: { gte: rangeStart } },
+        ],
+    };
+}
+
 /** Check if analytics DB is configured. */
 function analyticsConfigured(): boolean {
     return !!process.env.ANALYTICS_DATABASE_URL;
