@@ -678,7 +678,7 @@ export async function fetchUnitPerformanceData(): Promise<UnitPerformanceData> {
         // ── 1. Fetch all rooms with location info ─────────────
         const { data: rooms, error: roomError } = await supabase
             .from('nomor_kamar')
-            .select('id, nomor_kamar, lokasi(id, nama), status, created_at');
+            .select('id, nomor_kamar, lokasi(id, nama:name), status, created_at');
 
         if (roomError) {
             console.error('Error fetching rooms for unit performance:', roomError);

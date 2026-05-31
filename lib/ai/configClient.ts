@@ -15,6 +15,9 @@ export interface SafeProviderConfig {
     apiKeyPreview: string | null;
     baseUrl: string;
     model: string;
+    isActive: boolean;
+    activeModel?: string;
+    thinkingMode: string;
 }
 
 export interface ProviderConfig {
@@ -37,6 +40,7 @@ export interface MultiAIConfig {
 
 /**
  * Load all provider configs from database (safe — no full keys).
+ * Server now returns isActive, activeModel, thinkingMode per provider.
  */
 export async function loadConfigFromDb(): Promise<MultiAIConfig> {
     try {
@@ -44,33 +48,30 @@ export async function loadConfigFromDb(): Promise<MultiAIConfig> {
         if (!res.ok) throw new Error('Failed to load config');
         const data = await res.json();
 
-        // GET now returns SafeProviderConfig[] — merge with active info
-        // We also need active info; keep a separate active resolve endpoint or
-        // just use the safe configs for display. Active provider tracking is
-        // handled server-side by the chat route.
         const safeConfigs: SafeProviderConfig[] = data.configs || [];
 
-        // For active provider / thinking mode, we need a separate call
-        // or derive from the stored configs. Since the spec says GET only returns
-        // apiKeySet + apiKeyPreview + baseUrl + model, we need a way to get
-        // active status. Let's keep a separate active-state endpoint or store it.
-        // For now, use first configured as fallback.
+        // Derive activeProvider/activeModel/thinkingMode from the active provider row
+        const activeConfig = safeConfigs.find(c => c.isActive);
+        const activeProvider = activeConfig ? activeConfig.providerId : 'auto';
+        const activeModel = activeConfig?.activeModel || activeConfig?.model || 'auto';
+        const thinkingMode = (activeConfig?.thinkingMode || 'auto') as 'auto' | 'instant' | 'thinking';
+
         const providers: ProviderConfig[] = safeConfigs.map(c => ({
             providerId: c.providerId,
             apiKeySet: c.apiKeySet,
             apiKeyPreview: c.apiKeyPreview,
             model: c.model,
             baseUrl: c.baseUrl || undefined,
-            isActive: false,
-            activeModel: undefined,
-            thinkingMode: 'auto',
+            isActive: c.isActive,
+            activeModel: c.activeModel,
+            thinkingMode: c.thinkingMode,
         }));
 
         return {
-            activeProvider: 'auto',
-            activeModel: 'auto',
+            activeProvider,
+            activeModel,
             providers,
-            thinkingMode: 'auto',
+            thinkingMode,
         };
     } catch (error) {
         return {
@@ -104,7 +105,7 @@ export async function saveProviderConfigToDb(
             isActive,
         }),
     });
-    
+
     if (!res.ok) {
         const error = await res.json();
         throw new Error(error.error || 'Failed to save config');
@@ -123,7 +124,7 @@ export async function deleteProviderConfigFromDb(providerId: ProviderId): Promis
             providerId,
         }),
     });
-    
+
     if (!res.ok) {
         const error = await res.json();
         throw new Error(error.error || 'Failed to delete config');
@@ -146,7 +147,7 @@ export async function setActiveProviderInDb(
             modelId,
         }),
     });
-    
+
     if (!res.ok) {
         const error = await res.json();
         throw new Error(error.error || 'Failed to set active provider');
@@ -169,7 +170,7 @@ export async function setThinkingModeInDb(
             mode,
         }),
     });
-    
+
     if (!res.ok) {
         const error = await res.json();
         throw new Error(error.error || 'Failed to set thinking mode');
@@ -190,28 +191,28 @@ export async function hasConfiguredProviders(): Promise<boolean> {
 export async function migrateLocalStorageToDb(): Promise<{ migrated: number; errors: string[] }> {
     const STORAGE_KEY = 'kr-ai-config';
     const MIGRATION_FLAG = 'kr-ai-migrated-to-db';
-    
+
     // Check if already migrated
     if (typeof window === 'undefined') {
         return { migrated: 0, errors: [] };
     }
-    
+
     try {
         if (localStorage.getItem(MIGRATION_FLAG)) {
             return { migrated: 0, errors: [] };
         }
-        
+
         const raw = localStorage.getItem(STORAGE_KEY);
         if (!raw) {
             localStorage.setItem(MIGRATION_FLAG, 'true');
             return { migrated: 0, errors: [] };
         }
-        
+
         const config = JSON.parse(raw);
         const providers = config.providers || {};
         const errors: string[] = [];
         let migrated = 0;
-        
+
         // Migrate each provider
         for (const [providerId, conf] of Object.entries(providers)) {
             try {
@@ -227,15 +228,15 @@ export async function migrateLocalStorageToDb(): Promise<{ migrated: number; err
                 errors.push(`${providerId}: ${err.message}`);
             }
         }
-        
+
         // Mark as migrated
         localStorage.setItem(MIGRATION_FLAG, 'true');
-        
+
         // Optionally clear old localStorage data after successful migration
         if (migrated > 0 && errors.length === 0) {
             localStorage.removeItem(STORAGE_KEY);
         }
-        
+
         return { migrated, errors };
     } catch (error: any) {
         return { migrated: 0, errors: [error.message] };
@@ -263,10 +264,10 @@ export async function resolveActiveFromDb(
     needVision: boolean = false,
 ): Promise<{ providerId: ProviderId; apiKey: string; modelId: string; baseUrl?: string } | null> {
     const config = await loadConfigFromDb();
-    
+
     // No providers configured
     if (config.providers.length === 0) return null;
-    
+
     // Explicit provider+model selection
     if (config.activeProvider !== 'auto' && config.activeModel !== 'auto') {
         const provider = config.providers.find(p => p.providerId === config.activeProvider);
@@ -287,18 +288,18 @@ export async function resolveActiveFromDb(
             }
         }
     }
-    
+
     // Auto mode: pick best matching model from configured providers
     // Import models dynamically to avoid circular dependency
     const { getProvider } = await import('./models');
-    
+
     const candidates = await Promise.all(
         config.providers
             .filter(p => p.apiKeySet)
             .map(async (providerConfig) => {
                 const provider = getProvider(providerConfig.providerId);
                 if (!provider) return [];
-                
+
                 // Fetch actual API key
                 const res = await fetch(`/api/ai/config?provider=${providerConfig.providerId}`);
                 let apiKey = '';
@@ -307,7 +308,7 @@ export async function resolveActiveFromDb(
                     const fullConfig = data.configs?.find((c: any) => c.providerId === providerConfig.providerId);
                     apiKey = fullConfig?.apiKey || '';
                 }
-                
+
                 return provider.models.map(m => ({
                     providerId: providerConfig.providerId,
                     modelId: m.id,
@@ -317,9 +318,9 @@ export async function resolveActiveFromDb(
                 }));
             })
     );
-    
+
     const flatCandidates = candidates.flat();
-    
+
     // Filter by capability requirements
     let filtered = flatCandidates;
     if (needVision) {
@@ -332,7 +333,7 @@ export async function resolveActiveFromDb(
         const fast = filtered.filter(c => c.model.capabilities.fast);
         if (fast.length > 0) filtered = fast;
     }
-    
+
     if (filtered.length === 0) {
         // Fallback to first available
         const first = flatCandidates[0];
@@ -344,7 +345,7 @@ export async function resolveActiveFromDb(
             baseUrl: first.baseUrl,
         };
     }
-    
+
     // Pick cheapest among filtered
     filtered.sort((a, b) => a.model.inputPrice - b.model.inputPrice);
     const best = filtered[0];

@@ -223,17 +223,20 @@ export interface SafeProviderConfig {
     apiKeyPreview: string | null;
     baseUrl: string;
     model: string;
+    isActive: boolean;
+    activeModel?: string;
+    thinkingMode: string;
 }
 
 /**
  * Load provider configs for client consumption.
- * Returns ONLY apiKeySet + apiKeyPreview — never the full decrypted key.
+ * Returns apiKeySet + apiKeyPreview + isActive + activeModel + thinkingMode — never the full decrypted key.
  */
 export async function loadConfigForClient(): Promise<SafeProviderConfig[]> {
     const supabase = createServerClient();
     const { data, error } = await supabase
         .from('ai_provider_configs')
-        .select('provider_id, api_key_enc, api_key_iv, model, base_url')
+        .select('provider_id, api_key_enc, api_key_iv, model, base_url, is_active, active_model, thinking_mode')
         .eq('scope', SCOPE);
 
     if (error || !data) return [];
@@ -251,6 +254,9 @@ export async function loadConfigForClient(): Promise<SafeProviderConfig[]> {
             apiKeyPreview: maskApiKeyForPreview(decrypted),
             baseUrl: row.base_url || '',
             model: row.model || '',
+            isActive: row.is_active,
+            activeModel: row.active_model || undefined,
+            thinkingMode: row.thinking_mode || 'auto',
         };
     });
 }

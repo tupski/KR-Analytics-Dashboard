@@ -311,7 +311,7 @@ export default function AIChatCore({
             } catch (err) {
                 console.warn('Failed to load config from DB, falling back to localStorage:', err);
             }
-            
+
             // Fallback to localStorage
             const c = loadConfig();
             setConfig(c);
@@ -343,7 +343,7 @@ export default function AIChatCore({
         if (!config) return false;
         if (activeProviderId === 'auto' || activeModelId === 'auto') {
             return Object.entries(config.providers).some(([pid, c]) => {
-                if (!c?.apiKey) return false;
+                if (!c) return false;
                 const provider = PROVIDERS.find(p => p.id === pid);
                 return provider?.models.some(m => m.capabilities.vision);
             });
@@ -727,8 +727,8 @@ export default function AIChatCore({
                                 <p className="text-[10px] text-amber-600 truncate">⚠️ Model aktif tidak support gambar — pilih model dengan vision.</p>
                             )}
                         </div>
-                        <button 
-                            onClick={() => setPendingImage(null)} 
+                        <button
+                            onClick={() => setPendingImage(null)}
                             className="p-1 hover:bg-gray-100 rounded"
                             aria-label="Hapus gambar"
                         >
@@ -856,7 +856,7 @@ function ModelPickerDropdown({
         return () => document.removeEventListener('mousedown', handler);
     }, [onClose]);
 
-    const configuredProviders = PROVIDERS.filter(p => config.providers[p.id]?.apiKey);
+    const configuredProviders = PROVIDERS.filter(p => config.providers[p.id]);
 
     return (
         <div ref={ref} className="absolute bottom-full left-0 mb-1 z-50 bg-white border border-gray-200 rounded-xl shadow-xl w-72 max-h-80 overflow-y-auto">
