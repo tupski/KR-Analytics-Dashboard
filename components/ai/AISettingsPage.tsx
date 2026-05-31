@@ -680,19 +680,7 @@ export default function AISettingsPage() {
                         </div>
                     )}
 
-                    {/* Fallback for providers with no models at all — manual input */}
-                    {allModels.length === 0 && provider.models.length === 0 && (
-                        <div>
-                            <label className="block text-xs font-medium text-gray-700 mb-1">Nama Model</label>
-                            <input
-                                type="text"
-                                value={draftModel}
-                                onChange={e => setDraftModel(e.target.value)}
-                                placeholder="contoh: llama-3.1-70b"
-                                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
-                            />
-                        </div>
-                    )}
+                    {/* Removed duplicate "Nama Model" block — ModelDropdown above handles selection */}
 
                     {/* Model picker — compact cards like 9router (kept for backward compat, hidden by default) */}
                     {false && allModels.length > 0 && (
@@ -738,19 +726,7 @@ export default function AISettingsPage() {
                         </div>
                     )}
 
-                    {/* Custom model name for openai-compatible */}
-                    {allModels.length === 0 && (
-                        <div>
-                            <label className="block text-xs font-medium text-gray-700 mb-1">Nama Model</label>
-                            <input
-                                type="text"
-                                value={draftModel}
-                                onChange={e => setDraftModel(e.target.value)}
-                                placeholder="contoh: llama-3.1-70b"
-                                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
-                            />
-                        </div>
-                    )}
+                    {/* Removed duplicate "Nama Model" block — ModelDropdown above handles custom input */}
 
                     {/* Add custom model — for providers with models */}
                     {allModels.length > 0 && (

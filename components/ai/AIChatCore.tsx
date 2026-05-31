@@ -272,7 +272,6 @@ export default function AIChatCore({
     const [config, setConfig] = useState<MultiAIConfig | null>(null);
     const [thinkingMode, setThinkingModeState] = useState<ThinkingMode>('auto');
     const [showModelPicker, setShowModelPicker] = useState(false);       // Toolbar model selector
-    const [showErrorModelPicker, setShowErrorModelPicker] = useState(false); // Error section model selector
     const [availableModels, setAvailableModels] = useState<ProviderModel[]>([]);
     const [loadingModels, setLoadingModels] = useState(false);
     const [retryingIdx, setRetryingIdx] = useState<number | null>(null);
@@ -597,7 +596,6 @@ export default function AIChatCore({
             setActive(providerId, modelId);
         }
         setShowModelPicker(false);
-        setShowErrorModelPicker(false);
         // Trigger config reload
         window.dispatchEvent(new Event('kr-ai-config-changed'));
     };
@@ -714,8 +712,6 @@ export default function AIChatCore({
                                         <button
                                             onClick={() => {
                                                 setInput(msg.content);
-                                                // Close error model picker to avoid duplicate dropdowns
-                                                setShowErrorModelPicker(false);
                                                 setShowModelPicker(true);
                                                 if (inputRef.current) {
                                                     inputRef.current.focus();
@@ -779,34 +775,14 @@ export default function AIChatCore({
                             <button
                                 onClick={(e) => {
                                     e.stopPropagation();
-                                    // Close toolbar picker before opening error picker
-                                    setShowModelPicker(false);
-                                    setShowErrorModelPicker(v => !v);
+                                    // Open the top bar model selector instead of spawning a duplicate
+                                    setShowModelPicker(true);
                                 }}
                                 className="inline-flex items-center gap-1 px-2.5 py-1 text-xs text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
                             >
                                 <Brain className="w-3 h-3" />
                                 Ganti model
                             </button>
-                            {showErrorModelPicker && (
-                                <div className="absolute z-50 mt-8">
-                                    <ChatModelSelector
-                                        currentModel={activeModelId}
-                                        onChange={(mid, pid) => {
-                                            handleChatModelChange(mid, pid);
-                                            setShowErrorModelPicker(false);
-                                            setTimeout(() => {
-                                                const lastUser = [...messages].reverse().find(m => m.role === 'user');
-                                                if (lastUser) handleSend(lastUser.content);
-                                            }, 200);
-                                        }}
-                                        currentProvider={activeProviderId !== 'auto' ? activeProviderId : undefined}
-                                        fetchedModels={availableModels}
-                                        loadingModels={loadingModels}
-                                        config={config}
-                                    />
-                                </div>
-                            )}
                         </div>
                     </div>
                 )}

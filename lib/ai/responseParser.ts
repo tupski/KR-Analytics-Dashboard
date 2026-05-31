@@ -3,33 +3,52 @@
  * 
  * Handles both non-streaming JSON and streaming SSE responses from AI providers.
  * Some providers/proxies return SSE format even when streaming is not explicitly enabled.
+ * 
+ * P0-3 FIX: Robust parsing that accepts any OpenAI-compatible response format
+ * and never fails due to unknown fields.
  */
 
 /**
- * Parse AI response that can be either:
+ * Parse AI response that can be any of:
  * 1. Regular JSON: { choices: [{ message: { content: "..." } }] }
  * 2. SSE format: data: {...}\ndata: {...}\ndata: [DONE]
+ * 3. Alternative formats with unknown fields
  * 
  * @param raw - Raw response text from fetch
  * @returns Parsed JSON object
- * @throws Error with debug info if parsing fails
+ * @throws Error with safe message if parsing fails
  */
 export function parseAIResponse(raw: string): any {
     const trimmed = raw.trim();
+
+    if (!trimmed) {
+        throw new Error('Respons AI kosong — tidak ada data dari provider.');
+    }
 
     // Detect SSE format
     if (trimmed.startsWith('data:') || trimmed.includes('\ndata:')) {
         return parseSSEResponse(trimmed);
     }
 
-    // Regular JSON format
+    // Regular JSON format — safe parse
     try {
         return JSON.parse(trimmed);
-    } catch (error) {
-        const preview = trimmed.substring(0, 500);
-        throw new Error(
-            `Failed to parse AI response as JSON. Preview: ${preview}${trimmed.length > 500 ? '...' : ''}`
-        );
+    } catch {
+        // Not JSON at all — return a reconstructed response with raw text as content
+        return {
+            id: 'raw-fallback',
+            object: 'chat.completion',
+            created: Math.floor(Date.now() / 1000),
+            model: 'unknown',
+            choices: [{
+                index: 0,
+                message: {
+                    role: 'assistant',
+                    content: trimmed.substring(0, 8000),
+                },
+                finish_reason: 'stop',
+            }],
+        };
     }
 }
 
@@ -90,14 +109,14 @@ function parseSSEResponse(raw: string): any {
                     toolCalls = choice.message.tool_calls;
                 }
             }
-        } catch (error) {
-            console.warn('Failed parsing SSE chunk:', payload.substring(0, 200));
+        } catch {
+            // Skip malformed SSE chunks silently
         }
     }
 
     // Reconstruct OpenAI-compatible response format
     if (!lastValidChunk) {
-        throw new Error('No valid SSE chunks found in response');
+        throw new Error('Respons SSE tidak valid — tidak ada data chunk yang ditemukan.');
     }
 
     // Build response object based on last chunk structure

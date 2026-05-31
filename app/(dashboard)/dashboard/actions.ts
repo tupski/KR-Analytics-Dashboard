@@ -681,7 +681,7 @@ export async function fetchUnitPerformanceData(): Promise<UnitPerformanceData> {
         // We select the lokasi column directly (it stores the location name).
         const { data: rooms, error: roomError } = await supabase
             .from('nomor_kamar')
-            .select('id, nomor_kamar, lokasi, status, created_at');
+            .select('id, name, lokasi, status, created_at');
 
         if (roomError) {
             console.error('Error fetching rooms for unit performance:', roomError);
@@ -695,7 +695,7 @@ export async function fetchUnitPerformanceData(): Promise<UnitPerformanceData> {
         // Normalize rooms: lokasi is a VARCHAR string containing the location name
         type RoomRow = {
             id: number;
-            nomor_kamar: string;
+            name: string;
             lokasi: string | null;
             status: string;
             created_at: string;
@@ -704,7 +704,8 @@ export async function fetchUnitPerformanceData(): Promise<UnitPerformanceData> {
         const normalizedRooms: { id: number; unitCode: string; location: string; status: string; createdAt: string }[] =
             (rooms as unknown as RoomRow[]).map((r) => ({
                 id: r.id,
-                unitCode: r.nomor_kamar,
+                // Fallback: use name first, then lokasi, then raw room_number/id
+                unitCode: r.name ?? r.lokasi ?? String(r.id),
                 location: r.lokasi ?? '',
                 status: r.status,
                 createdAt: r.created_at,

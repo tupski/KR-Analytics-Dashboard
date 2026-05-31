@@ -31,24 +31,40 @@ export function normalizeModels(
     if (rawResponse.object === 'list' && Array.isArray(rawResponse.data)) {
         models = rawResponse.data;
     }
-    // Try Google Gemini format: { models: [...] }
-    else if (Array.isArray(rawResponse.models)) {
-        models = rawResponse.models;
-    }
     // Try direct array format: [...]
     else if (Array.isArray(rawResponse)) {
         models = rawResponse;
     }
-    // Try nested format: { data: { models: [...] } }
-    else if (rawResponse.data && Array.isArray(rawResponse.data.models)) {
-        models = rawResponse.data.models;
-    }
-    // Try simple wrapper: { models: [...] }
-    else if (rawResponse.models && Array.isArray(rawResponse.models)) {
+    // Try Google Gemini format: { models: [...] }
+    else if (Array.isArray(rawResponse.models)) {
         models = rawResponse.models;
     }
-    else {
-        console.warn('[normalizeModels] Unknown response format:', rawResponse);
+    // Try nested format: { data: { models: [...] } }
+    else if (rawResponse.data && typeof rawResponse.data === 'object' && Array.isArray(rawResponse.data.models)) {
+        models = rawResponse.data.models;
+    }
+    // Try nested data: { data: [...] } where data is array (not object with models)
+    else if (rawResponse.data && Array.isArray(rawResponse.data)) {
+        models = rawResponse.data;
+    }
+    // Try wrapper with output_text (some providers)
+    else if (rawResponse.output_text && typeof rawResponse.output_text === 'string') {
+        // This is a chat response, not a model list — skip
+        console.warn('[normalizeModels] Response looks like chat output, not model list');
+        return [];
+    }
+    // Try to find any array property as fallback
+    else if (typeof rawResponse === 'object') {
+        for (const key of Object.keys(rawResponse)) {
+            if (Array.isArray(rawResponse[key]) && rawResponse[key].length > 0) {
+                models = rawResponse[key];
+                break;
+            }
+        }
+    }
+
+    if (models.length === 0) {
+        console.warn('[normalizeModels] No models extracted from response');
         return [];
     }
 

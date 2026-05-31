@@ -3,7 +3,15 @@ node_modules
 .gitignore
 .next
 *.md
+!README.md
 docs/
 scripts/
 sync-worker/
 supabase-schema/
+.env.local
+.env.development*
+*.log
+.DS_Store
+coverage
+.vscode
+.idea

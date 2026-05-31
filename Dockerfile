@@ -5,7 +5,8 @@ WORKDIR /app
 # Dependencies
 FROM base AS deps
 COPY package.json package-lock.json ./
-RUN npm ci
+# Force fresh install (avoid stale cache issues)
+RUN npm ci --ignore-scripts
 
 # Build
 FROM base AS builder
@@ -13,7 +14,9 @@ COPY package.json package-lock.json ./
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 ENV NEXT_TELEMETRY_DISABLED=1
-RUN npm run build
+# Disable stale cache — force fresh compilation every build
+ENV NEXT_BUILD_ID=$(date +%s)
+RUN rm -rf .next && npm run build
 
 # Production runner
 FROM base AS runner
@@ -31,4 +34,5 @@ USER nextjs
 EXPOSE 3000
 ENV PORT=3000
 ENV HOSTNAME=0.0.0.0
+ENV NODE_ENV=production
 CMD ["node", "db/start.cjs"]

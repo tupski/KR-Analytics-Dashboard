@@ -3,6 +3,7 @@ import { Inter } from 'next/font/google';
 import NavigationProgress from '@/components/layout/NavigationProgress';
 import ErrorBoundary from '@/components/ErrorBoundary';
 import { createServerClient } from '@/lib/supabase/server';
+import ServerActionRecovery from '@/components/shared/ServerActionRecovery';
 import './globals.css';
 
 const inter = Inter({ subsets: ['latin'] });
@@ -48,6 +49,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <html lang="id">
             <body className={inter.className} suppressHydrationWarning>
                 <NavigationProgress />
+                <ServerActionRecovery />
                 <ErrorBoundary>
                     {children}
                 </ErrorBoundary>

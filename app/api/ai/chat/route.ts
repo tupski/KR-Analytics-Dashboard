@@ -135,11 +135,42 @@ async function runOpenAILoop(
         }
 
         // Parse response - supports both JSON and SSE formats
+        // P0-3 FIX: parseAIResponse now handles all OpenAI-compatible formats safely
         const rawText = await res.text();
-        const data = parseAIResponse(rawText);
-        const choice = data.choices?.[0];
+        let data: any;
+        try {
+            data = parseAIResponse(rawText);
+        } catch (parseError: any) {
+            throw new Error(`Gagal memproses respons AI: ${parseError.message}`);
+        }
+
+        // P0-3 FIX: Accept any combination of message fields — never fail on unknown fields
+        const choice = data?.choices?.[0];
         const message = choice?.message;
-        if (!message) throw new Error('Respons AI kosong.');
+
+        // Fallback: check for output_text or other content formats
+        if (!message) {
+            if (data?.output_text) {
+                conversation.push({ role: 'assistant', content: data.output_text });
+                return { message: data.output_text, usage: totalUsage };
+            }
+            if (data?.content) {
+                conversation.push({ role: 'assistant', content: data.content });
+                return { message: data.content, usage: totalUsage };
+            }
+            // Check for content array
+            if (Array.isArray(data?.content)) {
+                const textContent = data.content
+                    .filter((c: any) => c.type === 'text')
+                    .map((c: any) => c.text)
+                    .join('\n');
+                if (textContent) {
+                    conversation.push({ role: 'assistant', content: textContent });
+                    return { message: textContent, usage: totalUsage };
+                }
+            }
+            throw new Error('Respons AI kosong.');
+        }
 
         // Accumulate token usage
         if (data.usage) {
