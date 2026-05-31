@@ -15,7 +15,7 @@ import type { FetchModelsResponse, GetModelsResponse, UpdateModelResponse } from
  */
 export async function fetchModels(providerId: string): Promise<FetchModelsResponse> {
     try {
-        const response = await fetch('/api/ai/models/fetch', {
+        const response = await fetch('/api/ai/fetch-models', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
