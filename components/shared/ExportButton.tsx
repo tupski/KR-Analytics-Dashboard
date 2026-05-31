@@ -2,24 +2,38 @@
 
 import { useState } from 'react';
 import { Download } from 'lucide-react';
-import { exportToXLSX, type ExportSheet } from '@/lib/export/xlsx';
 
 interface ExportButtonProps {
-    onExport: () => Promise<{ sheets: ExportSheet[]; filename: string }>;
-    loading?: boolean;
+    page: string;
+    filterParams?: Record<string, string>;
     label?: string;
 }
 
-export default function ExportButton({ onExport, loading: externalLoading = false, label = 'Export XLSX' }: ExportButtonProps) {
+export default function ExportButton({ page, filterParams, label = 'Export XLSX' }: ExportButtonProps) {
     const [loading, setLoading] = useState(false);
-
-    const isLoading = loading || externalLoading;
 
     const handleClick = async () => {
         setLoading(true);
         try {
-            const { sheets, filename } = await onExport();
-            exportToXLSX(sheets, filename);
+            // Collect filter params from URL search params or provided params
+            const params = new URLSearchParams(filterParams || window.location.search);
+            const res = await fetch(`/api/export/${page}?${params}`);
+
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({ error: 'Export gagal' }));
+                alert(err.error || 'Export gagal. Silakan cek log server.');
+                return;
+            }
+
+            const blob = await res.blob();
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `kr-analytics-${page}-${new Date().toISOString().split('T')[0]}.xlsx`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
         } catch (error) {
             console.error('Export failed:', error);
             alert('Gagal melakukan export. Silakan coba lagi.');
@@ -31,10 +45,10 @@ export default function ExportButton({ onExport, loading: externalLoading = fals
     return (
         <button
             onClick={handleClick}
-            disabled={isLoading}
+            disabled={loading}
             className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-green-600 text-white hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-sm font-medium shadow-sm"
         >
-            {isLoading ? (
+            {loading ? (
                 <>
                     <span className="animate-spin text-base">⏳</span>
                     <span className="hidden sm:inline">Mengekspor...</span>

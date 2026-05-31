@@ -1,4 +1,4 @@
-import { fetchBookings, fetchLocations, fetchBookingStats, fetchBookingsForExport } from './actions';
+import { fetchBookings, fetchLocations, fetchBookingStats } from './actions';
 import BookingTable from '@/components/booking/BookingTable';
 import BookingStatsCards from '@/components/booking/BookingStatsCards';
 import BookingFilters from '@/components/booking/BookingFilters';
@@ -6,7 +6,6 @@ import DateFilterBar from '@/components/shared/DateFilterBar';
 import AIInsightCard from '@/components/ai/AIInsightCard';
 import ReportPeriodChip from '@/components/shared/ReportPeriodChip';
 import ExportButton from '@/components/shared/ExportButton';
-import { exportToXLSX, getExportFilename, currencyCol, dateCol, type ExportSheet } from '@/lib/export/xlsx';
 
 /**
  * Booking Page - Server Component
@@ -75,37 +74,7 @@ export default async function BookingPage({
             <main className="px-4 sm:px-6 lg:px-8 py-4 sm:py-6 space-y-4 sm:space-y-6">
                 {/* Export + AI Insight */}
                 <div className="flex flex-col sm:flex-row gap-3">
-                    <ExportButton
-                        onExport={async () => {
-                            'use server';
-                            const bookings = await fetchBookingsForExport();
-
-                            const sheets: ExportSheet[] = [
-                                {
-                                    name: 'Booking',
-                                    columns: [
-                                        { header: 'No. Booking', key: 'bookingNumber' },
-                                        { header: 'Tamu', key: 'customerName' },
-                                        { header: 'Lokasi', key: 'apartmentLocation' },
-                                        { header: 'Kamar', key: 'roomNumber' },
-                                        dateCol('Check-in', 'checkinAt'),
-                                        dateCol('Check-out', 'checkoutAt'),
-                                        { header: 'Durasi (hari)', key: 'rentalDuration' },
-                                        { header: 'Channel', key: 'marketingName' },
-                                        { header: 'Status', key: 'status' },
-                                        currencyCol('Tunai', 'cashAmount'),
-                                        currencyCol('Transfer', 'transferAmount'),
-                                        currencyCol('Total', 'totalAmount'),
-                                    ],
-                                    data: bookings,
-                                },
-                            ];
-
-                            const filename = getExportFilename('booking');
-                            return { sheets, filename };
-                        }}
-                        label="Export Booking"
-                    />
+                    <ExportButton page="booking" label="Export Booking" />
                 </div>
 
                 {/* AI Insight - Top */}

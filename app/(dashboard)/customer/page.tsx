@@ -1,9 +1,8 @@
 import Link from 'next/link';
-import { fetchCustomers, fetchCustomersForExport } from './actions';
+import { fetchCustomers } from './actions';
 import DateFilterBar from '@/components/shared/DateFilterBar';
 import ExportButton from '@/components/shared/ExportButton';
 import { Users, Search, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from 'lucide-react';
-import { exportToXLSX, getExportFilename, currencyCol, dateCol, type ExportSheet } from '@/lib/export/xlsx';
 
 const PAGE_SIZE_OPTIONS = [10, 25, 50, 100];
 const DEFAULT_PAGE_SIZE = 10;
@@ -120,33 +119,7 @@ export default async function CustomerPage({
                         )}
                     </div>
                     <div className="flex items-center gap-2">
-                        <ExportButton
-                            onExport={async () => {
-                                'use server';
-                                const customers = await fetchCustomersForExport(search || undefined, dateParams);
-
-                                const sheets: ExportSheet[] = [
-                                    {
-                                        name: 'Customer',
-                                        columns: [
-                                            { header: 'Nama Tamu', key: 'customerName' },
-                                            { header: 'Lokasi', key: 'apartmentLocation' },
-                                            { header: 'Kamar', key: 'roomNumber' },
-                                            dateCol('Check-in', 'checkinAt'),
-                                            dateCol('Check-out', 'checkoutAt'),
-                                            currencyCol('Tunai', 'cashAmount'),
-                                            currencyCol('Transfer', 'transferAmount'),
-                                            currencyCol('Total', 'totalAmount'),
-                                        ],
-                                        data: customers,
-                                    },
-                                ];
-
-                                const filename = getExportFilename('customer');
-                                return { sheets, filename };
-                            }}
-                            label="Export Customer"
-                        />
+                        <ExportButton page="customer" label="Export Customer" />
                     </div>
                 </div>
 

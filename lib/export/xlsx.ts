@@ -8,6 +8,35 @@
 import * as XLSX from 'xlsx';
 import { format } from 'date-fns';
 
+// ─── Safe Serializer ──────────────────────────────────────────────
+/**
+ * Sanitize raw data rows for XLSX export.
+ * Converts non-serializable types: BigInt→string, Date→ISO date string,
+ * objects→JSON string, null/undefined→"", Buffer→string.
+ */
+export function safeSerialize(data: any[]): Record<string, any>[] {
+    if (!data || data.length === 0) return [];
+    return data.map(row => {
+        const obj: Record<string, any> = {};
+        for (const [key, value] of Object.entries(row)) {
+            if (value === null || value === undefined) {
+                obj[key] = '';
+            } else if (typeof value === 'bigint') {
+                obj[key] = value.toString();
+            } else if (value instanceof Date) {
+                obj[key] = value.toISOString().split('T')[0];
+            } else if (Buffer.isBuffer(value)) {
+                obj[key] = value.toString('utf8');
+            } else if (typeof value === 'object' && !Array.isArray(value)) {
+                obj[key] = JSON.stringify(value);
+            } else {
+                obj[key] = value;
+            }
+        }
+        return obj;
+    });
+}
+
 // ─── Types ───────────────────────────────────────────────────────
 export interface ExportColumn {
     header: string; // Indonesian column name
