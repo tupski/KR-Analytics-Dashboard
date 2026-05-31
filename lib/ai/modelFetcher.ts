@@ -234,6 +234,23 @@ export async function fetchProviderModels(
         return { success: false, error: 'API key tidak boleh kosong.' };
     }
 
+    // Set default base URL for providers that need it
+    let baseUrl = config.baseUrl;
+
+    if (!baseUrl) {
+        const defaultBaseUrls: Record<string, string> = {
+            'openrouter': 'https://openrouter.ai/api/v1',
+            'groq': 'https://api.groq.com/openai/v1',
+            'deepseek': 'https://api.deepseek.com/v1',
+            'kiro': 'https://api.kiro.ai/v1',
+        };
+
+        if (defaultBaseUrls[providerSlug]) {
+            baseUrl = defaultBaseUrls[providerSlug];
+            console.log(`[fetchProviderModels] Using default base URL for ${providerSlug}: ${baseUrl}`);
+        }
+    }
+
     switch (providerSlug) {
         case 'openai':
             return fetchOpenAIModels(config.apiKey);
@@ -250,14 +267,14 @@ export async function fetchProviderModels(
         case 'groq':
         case 'deepseek':
         case 'kiro':
-            if (!config.baseUrl) {
+            if (!baseUrl) {
                 return { success: false, error: 'Base URL diperlukan untuk provider ini.' };
             }
-            return fetchOpenAICompatibleModels(config.baseUrl, config.apiKey);
+            return fetchOpenAICompatibleModels(baseUrl, config.apiKey);
 
         default:
-            if (config.baseUrl) {
-                return fetchOpenAICompatibleModels(config.baseUrl, config.apiKey);
+            if (baseUrl) {
+                return fetchOpenAICompatibleModels(baseUrl, config.apiKey);
             }
             return { success: false, error: `Provider '${providerSlug}' tidak didukung.` };
     }

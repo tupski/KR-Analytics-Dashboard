@@ -261,6 +261,14 @@ export async function loadConfigForClient(): Promise<SafeProviderConfig[]> {
     });
 }
 
+// ── Default Base URLs for providers that need them ───────────────────────────
+const DEFAULT_BASE_URLS: Record<string, string> = {
+    'openrouter': 'https://openrouter.ai/api/v1',
+    'groq': 'https://api.groq.com/openai/v1',
+    'deepseek': 'https://api.deepseek.com/v1',
+    'kiro': 'https://api.kiro.ai/v1',
+};
+
 // ── Upsert with empty-key protection (PART 5) ────────────────────────────────
 
 /**
@@ -281,6 +289,9 @@ export async function upsertProviderConfigSafe(conf: {
         throw new Error('API key tidak valid — terdeteksi karakter masking (***, ••, ...). Masukkan key asli.');
     }
 
+    // Set default base URL if not provided and provider needs it
+    const baseUrl = conf.baseUrl || DEFAULT_BASE_URLS[conf.providerId] || null;
+
     const hasNewKey = conf.apiKey && conf.apiKey.trim();
 
     if (hasNewKey) {
@@ -294,7 +305,7 @@ export async function upsertProviderConfigSafe(conf: {
                 api_key_enc: enc,
                 api_key_iv: iv,
                 model: conf.model,
-                base_url: conf.baseUrl || null,
+                base_url: baseUrl,
                 is_active: conf.isActive ?? false,
             }, { onConflict: 'scope,provider_id' });
 
@@ -316,7 +327,7 @@ export async function upsertProviderConfigSafe(conf: {
             .from('ai_provider_configs')
             .update({
                 model: conf.model,
-                base_url: conf.baseUrl || null,
+                base_url: baseUrl,
                 is_active: conf.isActive ?? false,
             })
             .eq('scope', SCOPE)
