@@ -220,7 +220,7 @@ BEGIN
         NOW(),
         NOW() + (p_ttl_seconds || ' seconds')::INTERVAL
     )
-    ON CONFLICT (mart_name, metric_name, COALESCE(range_start, '1970-01-01'::DATE), COALESCE(range_end, '1970-01-01'::DATE), COALESCE(location, ''), COALESCE(unit_id, 0))
+    ON CONFLICT ON CONSTRAINT idx_cache_mart_upsert
     DO UPDATE SET
         comparison_start   = EXCLUDED.comparison_start,
         comparison_end     = EXCLUDED.comparison_end,

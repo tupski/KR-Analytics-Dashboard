@@ -78,7 +78,7 @@ async function refreshMartDashboardKpi(pool: Pool): Promise<void> {
         FROM analytics_daily_revenue
         WHERE date_wib = CURRENT_DATE
         GROUP BY apartment_location
-        ON CONFLICT (mart_name, metric_name, COALESCE(range_start, '1970-01-01'::DATE), COALESCE(range_end, '1970-01-01'::DATE), COALESCE(location, ''), 0)
+        ON CONFLICT ON CONSTRAINT idx_cache_mart_upsert
         DO UPDATE SET
             result       = EXCLUDED.result,
             generated_at = EXCLUDED.generated_at,
@@ -119,7 +119,7 @@ async function refreshMartOccupancyByLocation(pool: Pool): Promise<void> {
             ON dr.date_wib = od.date_wib AND dr.apartment_location = od.apartment_location
         WHERE od.date_wib = CURRENT_DATE
         GROUP BY od.apartment_location
-        ON CONFLICT (mart_name, metric_name, COALESCE(range_start, '1970-01-01'::DATE), COALESCE(range_end, '1970-01-01'::DATE), COALESCE(location, ''), 0)
+        ON CONFLICT ON CONSTRAINT idx_cache_mart_upsert
         DO UPDATE SET
             result       = EXCLUDED.result,
             generated_at = EXCLUDED.generated_at,
@@ -140,8 +140,8 @@ async function refreshMartRevenueByPeriod(pool: Pool): Promise<void> {
         SELECT
             'revenue_by_period' as mart_name,
             'monthly_revenue' as metric_name,
-            (year || '-' || LPAD(month::text, 2, '01'))::DATE as range_start,
-            (year || '-' || LPAD(month::text, 2, '01'))::DATE + INTERVAL '1 month' - INTERVAL '1 day' as range_end,
+            MAKE_DATE(year, month, 1) as range_start,
+            MAKE_DATE(year, month, 1) + INTERVAL '1 month' - INTERVAL '1 day' as range_end,
             'calendar_day' as report_period_mode,
             apartment_location,
             jsonb_build_object(
@@ -158,7 +158,7 @@ async function refreshMartRevenueByPeriod(pool: Pool): Promise<void> {
             NOW() + INTERVAL '30 minutes' as expires_at
         FROM analytics_monthly_summary
         WHERE (year * 100 + month) >= TO_CHAR(CURRENT_DATE - INTERVAL '3 months', 'YYYYMM')::INTEGER
-        ON CONFLICT (mart_name, metric_name, COALESCE(range_start, '1970-01-01'::DATE), COALESCE(range_end, '1970-01-01'::DATE), COALESCE(location, ''), 0)
+        ON CONFLICT ON CONSTRAINT idx_cache_mart_upsert
         DO UPDATE SET
             result       = EXCLUDED.result,
             generated_at = EXCLUDED.generated_at,
@@ -193,7 +193,7 @@ async function refreshMartExpenseBreakdown(pool: Pool): Promise<void> {
         FROM analytics_expense_summary
         WHERE date_wib >= CURRENT_DATE - INTERVAL '30 days'
         GROUP BY apartment_location, category
-        ON CONFLICT (mart_name, metric_name, COALESCE(range_start, '1970-01-01'::DATE), COALESCE(range_end, '1970-01-01'::DATE), COALESCE(location, ''), 0)
+        ON CONFLICT ON CONSTRAINT idx_cache_mart_upsert
         DO UPDATE SET
             result       = EXCLUDED.result,
             generated_at = EXCLUDED.generated_at,
@@ -229,7 +229,7 @@ async function refreshMartBillingBreakdown(pool: Pool): Promise<void> {
         FROM analytics_monthly_summary
         WHERE (year * 100 + month) >= TO_CHAR(CURRENT_DATE - INTERVAL '3 months', 'YYYYMM')::INTEGER
         GROUP BY apartment_location
-        ON CONFLICT (mart_name, metric_name, COALESCE(range_start, '1970-01-01'::DATE), COALESCE(range_end, '1970-01-01'::DATE), COALESCE(location, ''), 0)
+        ON CONFLICT ON CONSTRAINT idx_cache_mart_upsert
         DO UPDATE SET
             result       = EXCLUDED.result,
             generated_at = EXCLUDED.generated_at,
@@ -274,7 +274,7 @@ async function refreshMartCheckinBusyHours(pool: Pool): Promise<void> {
             GROUP BY apartment_location, hour
         ) sub
         GROUP BY apartment_location
-        ON CONFLICT (mart_name, metric_name, COALESCE(range_start, '1970-01-01'::DATE), COALESCE(range_end, '1970-01-01'::DATE), COALESCE(location, ''), 0)
+        ON CONFLICT ON CONSTRAINT idx_cache_mart_upsert
         DO UPDATE SET
             result       = EXCLUDED.result,
             generated_at = EXCLUDED.generated_at,
@@ -311,7 +311,7 @@ async function refreshMartStayDuration(pool: Pool): Promise<void> {
         WHERE is_deleted = false
           AND created_at >= CURRENT_DATE - INTERVAL '30 days'
         GROUP BY apartment_location
-        ON CONFLICT (mart_name, metric_name, COALESCE(range_start, '1970-01-01'::DATE), COALESCE(range_end, '1970-01-01'::DATE), COALESCE(location, ''), 0)
+        ON CONFLICT ON CONSTRAINT idx_cache_mart_upsert
         DO UPDATE SET
             result       = EXCLUDED.result,
             generated_at = EXCLUDED.generated_at,
@@ -347,7 +347,7 @@ async function refreshMartWeekdayWeekend(pool: Pool): Promise<void> {
         WHERE is_deleted = false
           AND created_at >= CURRENT_DATE - INTERVAL '30 days'
         GROUP BY apartment_location, CASE WHEN EXTRACT(DOW FROM (created_at AT TIME ZONE 'Asia/Jakarta')::DATE) IN (0, 6) THEN 'weekend' ELSE 'weekday' END
-        ON CONFLICT (mart_name, metric_name, COALESCE(range_start, '1970-01-01'::DATE), COALESCE(range_end, '1970-01-01'::DATE), COALESCE(location, ''), 0)
+        ON CONFLICT ON CONSTRAINT idx_cache_mart_upsert
         DO UPDATE SET
             result       = EXCLUDED.result,
             generated_at = EXCLUDED.generated_at,
@@ -385,7 +385,7 @@ async function refreshMartUnitPerformance(pool: Pool): Promise<void> {
         WHERE is_deleted = false
           AND created_at >= CURRENT_DATE - INTERVAL '30 days'
         GROUP BY apartment_location, room_number
-        ON CONFLICT (mart_name, metric_name, COALESCE(range_start, '1970-01-01'::DATE), COALESCE(range_end, '1970-01-01'::DATE), COALESCE(location, ''), 0)
+        ON CONFLICT ON CONSTRAINT idx_cache_mart_upsert
         DO UPDATE SET
             result       = EXCLUDED.result,
             generated_at = EXCLUDED.generated_at,
