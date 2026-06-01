@@ -3,6 +3,8 @@
 import { useState, useEffect, useCallback } from 'react';
 import { RefreshCw, Sparkles, ChevronDown, ChevronUp, Lightbulb, GitCompareArrows, ChevronRight, Zap, AlertCircle } from 'lucide-react';
 import MarkdownRenderer from './MarkdownRenderer';
+import { generateFollowUpQuestions } from '@/lib/ai/followUpQuestions';
+import type { KraiPageContext } from '@/lib/ai/followUpQuestions';
 
 interface AIInsightCardProps {
     prompt: string;
@@ -19,6 +21,8 @@ interface AIInsightCardProps {
     comparisonStartDate?: string;
     comparisonEndDate?: string;
     reportPeriodMode?: string;
+    /** Called when user clicks follow-up — sends question to KRAI chat */
+    onFollowUpClick?: (question: string) => void;
 }
 
 const CACHE_PREFIX = 'kr-ai-insight-client-';
@@ -49,11 +53,6 @@ export default function AIInsightCard({
     const [compareMode, setCompareMode] = useState(false);
     const [dynamicSuggestions, setDynamicSuggestions] = useState<string[]>([]);
 
-    const defaultAlternatives = alternativeQuestions || [
-        'Apa yang perlu diperhatikan hari ini?',
-        'Berikan rekomendasi untuk meningkatkan pendapatan.',
-        'Performa minggu ini vs minggu lalu.',
-    ];
 
     // Client-side cache helpers (secondary cache — primary is server-side)
     const getClientCacheKey = (p: string, cmp: boolean) =>
@@ -197,39 +196,16 @@ export default function AIInsightCard({
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [aiEnabled]);
 
-    /** Generate 2 context-aware follow-up question suggestions */
-    const generateDynamicSuggestions = async (originalPrompt: string, insightText: string) => {
-        try {
-            const suggPrompt = `Kamu adalah KR·AI. Berdasarkan pertanyaan dan jawabannya, hasilkan TEPAT 2 pertanyaan lanjutan yang spesifik dan actionable untuk owner. Kembalikan HANYA 2 baris teks tanpa nomor/bullet.
-
-Pertanyaan: ${originalPrompt.slice(0, 150)}
-Insight: ${insightText.slice(0, 300)}
-
-2 pertanyaan:`;
-
-            const res = await fetch('/api/ai/chat', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    messages: [{ role: 'user', content: suggPrompt }],
-                    config: {},
-                    memoryContext: '',
-                    thinkingMode: 'instant',
-                }),
-            });
-
-            if (!res.ok) return;
-            const data = await res.json();
-            const lines = (data.message as string)
-                .split('\n')
-                .map((l: string) => l.trim().replace(/^[-•\d.)\s]+/, '').trim())
-                .filter((l: string) => l.length > 5)
-                .slice(0, 2);
-            if (lines.length > 0) setDynamicSuggestions(lines);
-        } catch {
-            // Fallback to static defaults silently
-        }
-    };
+    /** Generate follow-up questions from shared lib (no LLM call) */
+    const generateDynamicSuggestions = useCallback((_originalPrompt: string, insightText: string) => {
+        const qs = generateFollowUpQuestions({
+            pageContext: (page as KraiPageContext) || 'dashboard',
+            insightText,
+            hasComparison: !!comparisonMode && comparisonMode !== 'none',
+            hasActiveFilters: !!rangePreset || !!startDate,
+        });
+        setDynamicSuggestions(qs);
+    }, [page, comparisonMode, rangePreset, startDate]);
 
     const handleAlternativeClick = (q: string) => {
         setCurrentPrompt(q);
@@ -375,19 +351,20 @@ Insight: ${insightText.slice(0, 300)}
                 </div>
             )}
 
-            {/* Dynamic follow-up suggestions */}
-            {!loading && insight && (
+            {/* Follow-up questions — send to KRAI chat */}
+            {!loading && insight && dynamicSuggestions.length > 0 && (
                 <div className="mt-3 pt-3 border-t border-blue-100">
                     <div className="flex items-center gap-1.5 mb-2">
                         <Lightbulb className="w-3 h-3 text-blue-500" />
-                        <span className="text-xs text-blue-600 font-medium">Pertanyaan lanjutan:</span>
+                        <span className="text-xs text-blue-600 font-medium">Tanyakan ke KRAI</span>
                     </div>
                     <div className="flex flex-col gap-1.5 sm:flex-row sm:flex-wrap">
-                        {(dynamicSuggestions.length > 0 ? dynamicSuggestions : defaultAlternatives).slice(0, 2).map((q) => (
+                        {dynamicSuggestions.slice(0, 3).map((q: string) => (
                             <button
                                 key={q}
                                 onClick={() => handleAlternativeClick(q)}
-                                className="text-xs px-3 py-2 bg-white border border-blue-200 rounded-xl text-blue-700 hover:bg-blue-100 transition-colors text-left flex items-start gap-1.5 sm:max-w-xs"
+                                className="text-xs px-3 py-2 bg-white border border-blue-200 rounded-xl text-blue-700 hover:bg-blue-100 transition-colors text-left flex items-start gap-1.5 sm:max-w-xs cursor-pointer"
+                                title={`Tanyakan ke KRAI: ${q}`}
                             >
                                 <ChevronRight className="w-3 h-3 flex-shrink-0 mt-0.5" />
                                 <span className="line-clamp-2 sm:line-clamp-none">{q}</span>

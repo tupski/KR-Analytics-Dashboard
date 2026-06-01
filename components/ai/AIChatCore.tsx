@@ -530,6 +530,16 @@ export default function AIChatCore({
         }, 50);
     }, []);
 
+    /** Listen for ai-chat-prompt-send events from insight cards — send directly */
+    useEffect(() => {
+        const handler = (e: Event) => {
+            const q = (e as CustomEvent<string>).detail;
+            if (q?.trim()) handleSend(q);
+        };
+        window.addEventListener('ai-chat-prompt-send', handler);
+        return () => window.removeEventListener('ai-chat-prompt-send', handler);
+    }, [handleSend]);
+
     useEffect(() => {
         if (onSendRef) onSendRef.current = (q: string) => handleFillInput(q);
     }, [handleFillInput, onSendRef]);

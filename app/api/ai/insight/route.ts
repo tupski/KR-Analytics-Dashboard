@@ -29,13 +29,6 @@ interface InsightRequestBody {
     title?: string;
     forceRefresh?: boolean;
     withCompare?: boolean;
-    /** Per-page context for insight relevance */
-    pageContext?: {
-        summary?: string;
-        kpis?: Record<string, number>;
-        topLocations?: Array<{ name: string; value: number }>;
-        alerts?: string[];
-    };
     /** Structured data summary passed by each page for contextual insights */
     dataSummary?: Record<string, any>;
 }
@@ -352,15 +345,20 @@ Kamu adalah KRAI, AI Business Copilot untuk Kakarama Room (bisnis penyewaan apar
 
 ## PANDUAN KONTEN PER HALAMAN
 
-**Dashboard**: Analisis KPI utama (pendapatan, booking, okupansi). Tren vs periode sebelumnya. Performa lokasi. Aktivitas operasional hari ini.
+**Dashboard**: Analisis KPI utama (pendapatan, booking, okupansi). Tren vs periode sebelumnya. Performa lokasi. Aktivitas operasional hari ini. HANYA gunakan data dari halaman Dashboard.
 
-**Booking**: Volume booking dan tren. Perbandingan periode. Sumber/channel booking. Pola hari. Analisis durasi menginap.
+**Booking**: Volume booking dan tren. Perbandingan periode. Sumber/channel booking. Pola hari. Analisis durasi menginap. HANYA gunakan data dari halaman Booking.
 
-**Unit**: Okupansi per lokasi. Unit dengan performa rendah/idle. Unit terisi vs tersedia. Rekomendasi alokasi.
+**Unit**: Okupansi per lokasi. Unit dengan performa rendah/idle. Unit terisi vs tersedia. Rekomendasi alokasi. HANYA gunakan data dari halaman Unit.
 
-**Customer**: Jumlah tamu unik. Rasio tamu baru vs kembali. Pola durasi menginap. Sumber kedatangan tamu.
+**Customer**: Jumlah tamu unik. Rasio tamu baru vs kembali. Pola durasi menginap. Sumber kedatangan tamu. HANYA gunakan data dari halaman Customer.
 
-**Laporan**: Ringkasan pendapatan vs pengeluaran. Kategori biaya terbesar. Laba/rugi. Analisis perbandingan periode.${compareSuffix}
+**Laporan**: Ringkasan pendapatan vs pengeluaran. Kategori biaya terbesar. Laba/rugi. Analisis perbandingan periode. HANYA gunakan data dari halaman Laporan.
+
+## DATA FRESHNESS
+- Jika data yang diberikan menunjukkan data null, kosong, atau sangat sedikit (contoh: revenue=0, booking=0, okupansi=0), jangan paksa analisis.
+- Output: "Data periode ini masih awal karena baru pergantian hari." atau "Belum ada data cukup untuk dianalisis pada periode ini."
+- Jangan membuat asumsi atau menyarankan strategi dari data kosong.${compareSuffix}
 
 INGAT: HANYA natural language text. TIDAK ADA JSON. TIDAK ADA tool calls.`;
 }

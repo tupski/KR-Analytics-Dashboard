@@ -53,6 +53,9 @@ export default function AIChatFloat() {
         setIsOpen(true);
     };
 
+    // Intercept follow-up clicks from insight cards — open chat + send
+    useExternalPromptHandler(isOpen, setIsOpen);
+
     return (
         <>
             {/* Greeting popup — once per session, not on full AI pages */}
@@ -195,4 +198,26 @@ function AIChatCoreFloat({
             showTopBar
         />
     );
+}
+
+/**
+ * Hook for AIChatFloat to intercept follow-up clicks from insight cards.
+ * Opens chat if closed and re-dispatches the question so AIChatCore picks it up.
+ */
+function useExternalPromptHandler(isOpen: boolean, setIsOpen: (v: boolean) => void) {
+    useEffect(() => {
+        const handler = (e: Event) => {
+            const q = (e as CustomEvent<string>).detail;
+            if (!q?.trim()) return;
+            if (!isOpen) {
+                setIsOpen(true);
+                // Re-dispatch after core mounts (React state update is async)
+                setTimeout(() => {
+                    window.dispatchEvent(new CustomEvent('ai-chat-prompt-send', { detail: q }));
+                }, 150);
+            }
+        };
+        window.addEventListener('ai-chat-prompt-send', handler);
+        return () => window.removeEventListener('ai-chat-prompt-send', handler);
+    }, [isOpen, setIsOpen]);
 }

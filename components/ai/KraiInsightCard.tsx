@@ -14,10 +14,12 @@ import {
 } from 'lucide-react';
 import MarkdownRenderer from './MarkdownRenderer';
 import type { FilterState } from '@/components/shared/FilterState';
+import { generateFollowUpQuestions } from '@/lib/ai/followUpQuestions';
+import type { KraiPageContext } from '@/lib/ai/followUpQuestions';
 
 // ─── Types ───────────────────────────────────────────────────────
 
-export type KraiPageContext = 'dashboard' | 'booking' | 'unit' | 'customer' | 'laporan';
+export type { KraiPageContext };
 
 export interface KraiInsightCardProps {
     pageContext: KraiPageContext;
@@ -28,86 +30,8 @@ export interface KraiInsightCardProps {
     dataSummary?: Record<string, any>;
     defaultCollapsed?: boolean;
     badgeLabel?: string;
-    onFollowUpClick?: (question: string) => void;
-}
-
-// ─── Follow-up question templates per page context ───────────────
-
-const FOLLOW_UP_TEMPLATES: Record<KraiPageContext, string[]> = {
-    dashboard: [
-        'Apa yang perlu diperhatikan hari ini?',
-        'Rekomendasi untuk meningkatkan pendapatan?',
-    ],
-    booking: [
-        'Channel mana yang paling efektif?',
-        'Booking minggu ini vs minggu lalu?',
-    ],
-    unit: [
-        'Unit mana yang perlu perhatian?',
-        'Okupansi per lokasi?',
-    ],
-    customer: [
-        'Pola booking pelanggan?',
-        'Pelanggan yang sering booking?',
-    ],
-    laporan: [
-        'Kategori pengeluaran terbesar?',
-        'Bandingkan dengan periode lalu?',
-    ],
-};
-
-/**
- * Generate contextual follow-up questions based on page context and insight content.
- * Returns static templates when called outside component (pure helper).
- */
-export function generateFollowUpQuestions(
-    pageContext: KraiPageContext,
-    insightContent?: string,
-): string[] {
-    // If insight content contains certain keywords, return more specific questions
-    if (insightContent) {
-        const lower = insightContent.toLowerCase();
-
-        if (lower.includes('pendapatan') && lower.includes('turun')) {
-            return [
-                'Kenapa pendapatan turun?',
-                'Lokasi mana yang paling mempengaruhi?',
-                'Rekomendasi menaikkan pendapatan?',
-            ];
-        }
-        if (lower.includes('okupansi') && (lower.includes('rendah') || lower.includes('turun'))) {
-            return [
-                'Unit mana yang kosong?',
-                'Penyebab okupansi rendah?',
-                'Bandingkan dengan lokasi lain',
-            ];
-        }
-        if (lower.includes('pengeluaran') || lower.includes('expense') || lower.includes('biaya')) {
-            if (lower.includes('naik') || lower.includes('besar')) {
-                return [
-                    'Kategori pengeluaran paling naik?',
-                    'Apakah normal untuk periode ini?',
-                    'Bandingkan dengan bulan lalu',
-                ];
-            }
-        }
-        if (lower.includes('booking') && lower.includes('turun')) {
-            return [
-                'Channel mana yang turun?',
-                'Lokasi dengan booking turun?',
-                'Rekomendasi meningkatkan booking?',
-            ];
-        }
-        if (lower.includes('channel') || lower.includes('marketing')) {
-            return [
-                'Channel mana paling efektif?',
-                'ROI per channel marketing?',
-            ];
-        }
-    }
-
-    // Fallback to page-specific defaults
-    return FOLLOW_UP_TEMPLATES[pageContext] ?? FOLLOW_UP_TEMPLATES.dashboard;
+    /** Called when user clicks follow-up — sends question + context to KRAI chat */
+    onFollowUpClick?: (question: string, contextPayload?: Record<string, any>) => void;
 }
 
 // ─── Cache helpers ───────────────────────────────────────────────
@@ -203,13 +127,24 @@ export default function KraiInsightCard({
         return parts.join(' ');
     }, [pageContext]);
 
+    /** Generate follow-up questions from shared rule-based lib */
+    const updateFollowUps = useCallback((insightText: string) => {
+        const qs = generateFollowUpQuestions({
+            pageContext,
+            insightText,
+            hasComparison: filters?.comparisonMode != null && filters.comparisonMode !== 'none',
+            hasActiveFilters: !!filters?.rangePreset || !!filters?.startDate,
+        });
+        setFollowUps(qs);
+    }, [pageContext, filters]);
+
     const fetchInsight = useCallback(async (forceRefresh = false) => {
         // Check cache (skip when forceRefresh)
         if (!forceRefresh) {
             const cached = getCached(pageContext, dataHash);
             if (cached) {
                 setInsight(cached);
-                setFollowUps(generateFollowUpQuestions(pageContext, cached));
+                updateFollowUps(cached);
                 return;
             }
         }
@@ -261,12 +196,12 @@ export default function KraiInsightCard({
                 return;
             }
 
-            // Extract message from response — supports both new (message) and old (text) formats
+            // Extract message from response
             const msg = data.response?.message || data.response?.text || '';
             if (msg && msg.length > 5) {
                 setInsight(msg);
                 setCache(pageContext, msg, dataHash);
-                setFollowUps(generateFollowUpQuestions(pageContext, msg));
+                updateFollowUps(msg);
             } else {
                 setError('Insight kosong');
             }
@@ -276,16 +211,31 @@ export default function KraiInsightCard({
             setLoading(false);
             setIsSegarkanLoading(false);
         }
-    }, [pageContext, buildPrompt, filters, title, dataSummary, dataHash]);
+    }, [pageContext, buildPrompt, filters, title, dataHash, dataSummary, updateFollowUps]);
 
     // Fetch on mount
     useEffect(() => {
         fetchInsight();
     }, [fetchInsight]);
 
+    /** Send follow-up question to KRAI chat with context payload */
     const handleFollowUp = (q: string) => {
         if (onFollowUpClick) {
-            onFollowUpClick(q);
+            onFollowUpClick(q, {
+                pageContext,
+                insightText: insight || '',
+                rangePreset: filters?.rangePreset,
+                startDate: filters?.startDate,
+                endDate: filters?.endDate,
+                comparisonMode: filters?.comparisonMode,
+                comparisonStartDate: filters?.comparisonStartDate,
+                comparisonEndDate: filters?.comparisonEndDate,
+                reportPeriodMode: filters?.reportPeriodMode,
+                dataSummary,
+            });
+        } else {
+            // Fallback: dispatch event for chat components
+            window.dispatchEvent(new CustomEvent('ai-chat-prompt-send', { detail: q }));
         }
     };
 
@@ -364,7 +314,7 @@ export default function KraiInsightCard({
                         </div>
                     )}
 
-                    {/* Insight content — rendered as Markdown for natural language text */}
+                    {/* Insight content */}
                     {insight && !loading && (
                         <>
                             <MarkdownRenderer content={insight} className="text-sm text-gray-800 leading-relaxed" />
@@ -381,19 +331,20 @@ export default function KraiInsightCard({
                                 </button>
                             </div>
 
-                            {/* Follow-up questions */}
+                            {/* Follow-up questions — send to KRAI chat */}
                             {followUps.length > 0 && (
                                 <div className="mt-3 pt-3 border-t border-blue-100">
                                     <div className="flex items-center gap-1.5 mb-2">
                                         <Lightbulb className="w-3 h-3 text-blue-500" />
-                                        <span className="text-xs text-blue-600 font-medium">Pertanyaan lanjutan:</span>
+                                        <span className="text-xs text-blue-600 font-medium">Tanyakan ke KRAI</span>
                                     </div>
                                     <div className="flex flex-col gap-1.5 sm:flex-row sm:flex-wrap">
                                         {followUps.slice(0, 3).map((q) => (
                                             <button
                                                 key={q}
                                                 onClick={() => handleFollowUp(q)}
-                                                className="text-xs px-3 py-2 bg-white border border-blue-200 rounded-xl text-blue-700 hover:bg-blue-100 transition-colors text-left flex items-start gap-1.5 sm:max-w-xs"
+                                                className="text-xs px-3 py-2 bg-white border border-blue-200 rounded-xl text-blue-700 hover:bg-blue-100 transition-colors text-left flex items-start gap-1.5 sm:max-w-xs cursor-pointer"
+                                                title={`Tanyakan ke KRAI: ${q}`}
                                             >
                                                 <ChevronRight className="w-3 h-3 flex-shrink-0 mt-0.5" />
                                                 <span className="line-clamp-2">{q}</span>
