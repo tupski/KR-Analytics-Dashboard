@@ -46,6 +46,7 @@ import { getReportPeriodRange } from '@/lib/reporting-period';
 import type { ReportPeriodMode } from '@/lib/reporting-period';
 import { queryAnalytics, parseNumeric } from '@/lib/analytics/db';
 import { withCache, pickTTL } from '@/lib/analytics/cache';
+import { getGuestStayHistory } from '@/lib/ai/tools/guest-history';
 
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const MAX_RANGE_DAYS = 730; // 2 years
@@ -1565,7 +1566,7 @@ export interface ToolCall {
 /** OpenAI / DeepSeek / openai-compatible function-calling schema. */
 export const OPENAI_TOOLS = [
     // ═══════════════════════════════════════════════════════════════════════════
-    // META-TOOLS — Composite panels (reduce "too many tool calls" errors)
+    // COMPOSITE PANEL TOOLS — bundle multiple metrics into one call
     // ═══════════════════════════════════════════════════════════════════════════
     {
         type: 'function',
@@ -1637,70 +1638,8 @@ export const OPENAI_TOOLS = [
     },
 
     // ═══════════════════════════════════════════════════════════════════════════
-    // EXISTING TOOLS — Hari Ini (fast, no params)
+    // CORE TOOLS — search, inventory, live, bills, comparison
     // ═══════════════════════════════════════════════════════════════════════════
-    {
-        type: 'function',
-        function: {
-            name: 'get_daily_summary',
-            description:
-                'RINGKASAN HARI INI vs kemarin — revenue, transaksi, expense, lokasi. TANPA PARAMETER. Cepat. Gunakan untuk jawab "gimana kondisi hari ini?", "berapa revenue hari ini?", "ada berapa transaksi?".',
-            parameters: {
-                type: 'object',
-                properties: {},
-            },
-        },
-    },
-    {
-        type: 'function',
-        function: {
-            name: 'get_latest_status',
-            description:
-                'STATUS REAL-TIME — total checkin hari ini, checkout, revenue, dan tamu yang sedang menginap sekarang. TANPA PARAMETER. Cocok untuk: "siapa yang lagi nginep?", "berapa checkin hari ini?", "status sekarang?".',
-            parameters: {
-                type: 'object',
-                properties: {},
-            },
-        },
-    },
-
-    // ═══════════════════════════════════════════════════════════════════════════
-    // EXISTING TOOLS — Periode
-    // ═══════════════════════════════════════════════════════════════════════════
-    {
-        type: 'function',
-        function: {
-            name: 'get_period_summary',
-            description:
-                'Ambil ringkasan bisnis (revenue, expense, transaksi, breakdown lokasi & kategori pengeluaran) untuk rentang tanggal apapun. Pakai untuk menjawab pertanyaan periode spesifik (minggu lalu, bulan tertentu, dll). Tanggal pakai timezone Asia/Jakarta.',
-            parameters: {
-                type: 'object',
-                properties: {
-                    start_date: { type: 'string', description: 'Tanggal mulai YYYY-MM-DD (inclusive)' },
-                    end_date: { type: 'string', description: 'Tanggal akhir YYYY-MM-DD (inclusive)' },
-                    location: { type: 'string', description: 'Filter apartment_location (opsional)' },
-                },
-                required: ['start_date', 'end_date'],
-            },
-        },
-    },
-    {
-        type: 'function',
-        function: {
-            name: 'get_revenue_trend',
-            description:
-                'DATA TREN REVENUE HARIAN — dapatkan revenue per hari dalam rentang tertentu. Output array harian + rata-rata + hari maksimum/minimum. Berguna untuk: "gimana tren 7 hari terakhir?", "chart revenue", "hari apa revenue tertinggi?".',
-            parameters: {
-                type: 'object',
-                properties: {
-                    start_date: { type: 'string', description: 'Tanggal mulai YYYY-MM-DD (inclusive)' },
-                    end_date: { type: 'string', description: 'Tanggal akhir YYYY-MM-DD (inclusive)' },
-                    location: { type: 'string', description: 'Filter lokasi (opsional)' },
-                },
-                required: ['start_date', 'end_date'],
-            },
-        },
-    },
     {
         type: 'function',
         function: {
@@ -1720,59 +1659,6 @@ export const OPENAI_TOOLS = [
             },
         },
     },
-
-    // ═══════════════════════════════════════════════════════════════════════════
-    // EXISTING TOOLS — Lokasi & Pelanggan
-    // ═══════════════════════════════════════════════════════════════════════════
-    {
-        type: 'function',
-        function: {
-            name: 'get_top_locations',
-            description: 'Daftar lokasi apartemen dengan revenue/transaksi tertinggi pada periode tertentu.',
-            parameters: {
-                type: 'object',
-                properties: {
-                    start_date: { type: 'string' },
-                    end_date: { type: 'string' },
-                    limit: { type: 'number', description: 'Default 10, maksimum 50' },
-                },
-                required: ['start_date', 'end_date'],
-            },
-        },
-    },
-    {
-        type: 'function',
-        function: {
-            name: 'get_top_customers',
-            description: 'Top customer berdasarkan jumlah kunjungan/pendapatan dalam periode tertentu (untuk identifikasi tamu repeat).',
-            parameters: {
-                type: 'object',
-                properties: {
-                    start_date: { type: 'string' },
-                    end_date: { type: 'string' },
-                    limit: { type: 'number', description: 'Default 10, maksimum 50' },
-                },
-                required: ['start_date', 'end_date'],
-            },
-        },
-    },
-
-    // ═══════════════════════════════════════════════════════════════════════════
-    // EXISTING TOOLS — Tagihan & Inventaris
-    // ═══════════════════════════════════════════════════════════════════════════
-    {
-        type: 'function',
-        function: {
-            name: 'get_outstanding_bills',
-            description: 'Ringkasan tagihan bulanan yang belum dibayar (aging by bucket: 0-30, 31-60, 61-90, >90 hari).',
-            parameters: {
-                type: 'object',
-                properties: {
-                    location: { type: 'string', description: 'Filter lokasi (opsional)' },
-                },
-            },
-        },
-    },
     {
         type: 'function',
         function: {
@@ -1786,10 +1672,6 @@ export const OPENAI_TOOLS = [
             },
         },
     },
-
-    // ═══════════════════════════════════════════════════════════════════════════
-    // EXISTING TOOLS — Search & Discovery
-    // ═══════════════════════════════════════════════════════════════════════════
     {
         type: 'function',
         function: {
@@ -1827,10 +1709,6 @@ export const OPENAI_TOOLS = [
             },
         },
     },
-
-    // ═══════════════════════════════════════════════════════════════════════════
-    // EXISTING TOOLS — Realtime & Monitoring
-    // ═══════════════════════════════════════════════════════════════════════════
     {
         type: 'function',
         function: {
@@ -1841,74 +1719,6 @@ export const OPENAI_TOOLS = [
                 properties: {
                     location: { type: 'string', description: 'Filter lokasi (opsional)' },
                     limit: { type: 'number', description: 'Jumlah hasil, default 50, max 100' },
-                },
-            },
-        },
-    },
-    {
-        type: 'function',
-        function: {
-            name: 'detect_idle_units',
-            description: 'DETEKSI UNIT IDLE — unit yang tidak ada transaksi dalam X hari terakhir. Berguna untuk: "kamar mana yang kosong lama?", "unit idle 7 hari", "deteksi unit tidak produktif".',
-            parameters: {
-                type: 'object',
-                properties: {
-                    days_threshold: { type: 'number', description: 'Threshold hari idle, default 7' },
-                    location: { type: 'string', description: 'Filter lokasi (opsional)' },
-                    limit: { type: 'number', description: 'Jumlah hasil, default 50, max 100' },
-                },
-            },
-        },
-    },
-
-    // ═══════════════════════════════════════════════════════════════════════════
-    // EXISTING TOOLS — Analytics & Insights
-    // ═══════════════════════════════════════════════════════════════════════════
-    {
-        type: 'function',
-        function: {
-            name: 'get_underperforming_units',
-            description: 'UNIT UNDERPERFORMING — deteksi unit dengan occupancy rate atau revenue di bawah rata-rata. Berguna untuk: "unit mana yang performa buruk?", "kamar dengan revenue rendah", "analisis unit tidak optimal".',
-            parameters: {
-                type: 'object',
-                properties: {
-                    start_date: { type: 'string', description: 'Tanggal mulai YYYY-MM-DD' },
-                    end_date: { type: 'string', description: 'Tanggal akhir YYYY-MM-DD' },
-                    location: { type: 'string', description: 'Filter lokasi (opsional)' },
-                    threshold: { type: 'number', description: 'Threshold occupancy rate %, default 50' },
-                    limit: { type: 'number', description: 'Jumlah hasil, default 20, max 100' },
-                },
-                required: ['start_date', 'end_date'],
-            },
-        },
-    },
-    {
-        type: 'function',
-        function: {
-            name: 'get_weekend_vs_weekday_analysis',
-            description: 'ANALISIS WEEKEND VS WEEKDAY — perbandingan performa weekend (Sabtu-Minggu) vs weekday (Senin-Jumat). Berguna untuk: "lebih ramai weekend atau weekday?", "analisis pola hari", "revenue weekend vs weekday".',
-            parameters: {
-                type: 'object',
-                properties: {
-                    start_date: { type: 'string', description: 'Tanggal mulai YYYY-MM-DD' },
-                    end_date: { type: 'string', description: 'Tanggal akhir YYYY-MM-DD' },
-                    location: { type: 'string', description: 'Filter lokasi (opsional)' },
-                },
-                required: ['start_date', 'end_date'],
-            },
-        },
-    },
-    {
-        type: 'function',
-        function: {
-            name: 'estimate_month_end_revenue',
-            description: 'PREDIKSI REVENUE AKHIR BULAN — estimasi revenue akhir bulan berdasarkan trend harian saat ini. Berguna untuk: "prediksi revenue bulan ini", "estimasi pendapatan akhir bulan", "proyeksi revenue".',
-            parameters: {
-                type: 'object',
-                properties: {
-                    year: { type: 'number', description: 'Tahun (opsional, default tahun ini)' },
-                    month: { type: 'number', description: 'Bulan 1-12 (opsional, default bulan ini)' },
-                    location: { type: 'string', description: 'Filter lokasi (opsional)' },
                 },
             },
         },
@@ -1927,334 +1737,6 @@ export const OPENAI_TOOLS = [
             },
         },
     },
-
-    // ═══════════════════════════════════════════════════════════════════════════
-    // NEW TOOLS (2026-06-01) — 13 specialized tools
-    // ═══════════════════════════════════════════════════════════════════════════
-
-    // ── MARKETING & CUSTOMER ──────────────────────────────────────────────────
-    {
-        type: 'function',
-        function: {
-            name: 'get_marketing_performance',
-            description: 'PERFORMA MARKETING — breakdown transaksi, revenue, fee per marketing. Berguna untuk: "marketing mana paling produktif?", "berapa fee marketing?", "ROI marketing X?".',
-            parameters: {
-                type: 'object',
-                properties: {
-                    start_date: { type: 'string', description: 'Tanggal mulai YYYY-MM-DD' },
-                    end_date: { type: 'string', description: 'Tanggal akhir YYYY-MM-DD' },
-                    location: { type: 'string', description: 'Filter lokasi (opsional)' },
-                    limit: { type: 'number', description: 'Jumlah hasil, default 10, max 50' },
-                },
-                required: ['start_date', 'end_date'],
-            },
-        },
-    },
-    {
-        type: 'function',
-        function: {
-            name: 'get_repeat_guests',
-            description: 'TAMU REPEAT — daftar tamu yang menginap lebih dari 1x dalam periode, berapa kali, total revenue. Berguna untuk: "siapa tamu loyal?", "customer paling sering booking?", "repeat guest analysis".',
-            parameters: {
-                type: 'object',
-                properties: {
-                    start_date: { type: 'string', description: 'Tanggal mulai YYYY-MM-DD' },
-                    end_date: { type: 'string', description: 'Tanggal akhir YYYY-MM-DD' },
-                    location: { type: 'string', description: 'Filter lokasi (opsional)' },
-                    limit: { type: 'number', description: 'Jumlah hasil, default 10, max 50' },
-                },
-                required: ['start_date', 'end_date'],
-            },
-        },
-    },
-    {
-        type: 'function',
-        function: {
-            name: 'get_guest_source_summary',
-            description: 'SUMBER TAMU — dari mana tamu berasal (marketing atau langsung), berapa transaksi dan revenue per sumber. Berguna untuk: "berapa % tamu dari marketing?", "sumber tamu terbanyak?".',
-            parameters: {
-                type: 'object',
-                properties: {
-                    start_date: { type: 'string', description: 'Tanggal mulai YYYY-MM-DD' },
-                    end_date: { type: 'string', description: 'Tanggal akhir YYYY-MM-DD' },
-                    location: { type: 'string', description: 'Filter lokasi (opsional)' },
-                    limit: { type: 'number', description: 'Jumlah hasil, default 10, max 50' },
-                },
-                required: ['start_date', 'end_date'],
-            },
-        },
-    },
-
-    // ── DURASI & WAKTU ───────────────────────────────────────────────────────
-    {
-        type: 'function',
-        function: {
-            name: 'get_stay_duration_summary',
-            description: 'DURASI MENGINAP — distribusi durasi menginap (transit, fullday, per malam, 2+ malam). Berguna untuk: "rata-rata durasi menginap?", "lebih banyak transit atau fullstay?", "pola durasi customer".',
-            parameters: {
-                type: 'object',
-                properties: {
-                    start_date: { type: 'string', description: 'Tanggal mulai YYYY-MM-DD' },
-                    end_date: { type: 'string', description: 'Tanggal akhir YYYY-MM-DD' },
-                    location: { type: 'string', description: 'Filter lokasi (opsional)' },
-                },
-                required: ['start_date', 'end_date'],
-            },
-        },
-    },
-    {
-        type: 'function',
-        function: {
-            name: 'get_checkin_heatmap',
-            description: 'HEATMAP JAM CHECKIN — distribusi jam checkin (0-23) dalam periode. Berguna untuk: "jam berapa paling ramai checkin?", "pola jam operasional", "peak hour checkin".',
-            parameters: {
-                type: 'object',
-                properties: {
-                    start_date: { type: 'string', description: 'Tanggal mulai YYYY-MM-DD' },
-                    end_date: { type: 'string', description: 'Tanggal akhir YYYY-MM-DD' },
-                    location: { type: 'string', description: 'Filter lokasi (opsional)' },
-                },
-                required: ['start_date', 'end_date'],
-            },
-        },
-    },
-    {
-        type: 'function',
-        function: {
-            name: 'get_performance_by_shift',
-            description: 'PERFORMA SHIFT — perbandingan performa shift (pagi/siang/malam): transaksi, revenue, rata-rata. Berguna untuk: "shift mana paling produktif?", "performa shift pagi vs malam?".',
-            parameters: {
-                type: 'object',
-                properties: {
-                    start_date: { type: 'string', description: 'Tanggal mulai YYYY-MM-DD' },
-                    end_date: { type: 'string', description: 'Tanggal akhir YYYY-MM-DD' },
-                    location: { type: 'string', description: 'Filter lokasi (opsional)' },
-                },
-                required: ['start_date', 'end_date'],
-            },
-        },
-    },
-
-    // ── EXPENSE & KEUANGAN ───────────────────────────────────────────────────
-    {
-        type: 'function',
-        function: {
-            name: 'get_expense_breakdown',
-            description: 'BREAKDOWN PENGELUARAN — rincian pengeluaran per kategori, total, jumlah transaksi, persentase. Extended with category filter + comparison. Supports date range, category filter, comparison. Berguna untuk: "pengeluaran terbesar kategori apa?", "breakdown biaya", "analisis pengeluaran dengan perbandingan".',
-            parameters: {
-                type: 'object',
-                properties: {
-                    startDate: { type: 'string', description: 'Start date YYYY-MM-DD' },
-                    endDate: { type: 'string', description: 'End date YYYY-MM-DD' },
-                    location: { type: 'string', description: 'Filter by apartment location (opsional)' },
-                    category: { type: 'string', description: 'Filter by expense category (opsional)' },
-                    comparisonStartDate: { type: 'string', description: 'Comparison period start YYYY-MM-DD (opsional)' },
-                    comparisonEndDate: { type: 'string', description: 'Comparison period end YYYY-MM-DD (opsional)' },
-                },
-                required: ['startDate', 'endDate'],
-            },
-        },
-    },
-    {
-        type: 'function',
-        function: {
-            name: 'get_net_profit_per_location',
-            description: 'PROFIT PER LOKASI — revenue, expense, net profit, profit margin per lokasi. Berguna untuk: "lokasi mana paling menguntungkan?", "profit margin per lokasi", "analisis profitabilitas".',
-            parameters: {
-                type: 'object',
-                properties: {
-                    start_date: { type: 'string', description: 'Tanggal mulai YYYY-MM-DD' },
-                    end_date: { type: 'string', description: 'Tanggal akhir YYYY-MM-DD' },
-                    location: { type: 'string', description: 'Filter lokasi (opsional)' },
-                },
-                required: ['start_date', 'end_date'],
-            },
-        },
-    },
-    {
-        type: 'function',
-        function: {
-            name: 'get_payment_method_summary',
-            description: 'METODE PEMBAYARAN — rasio cash vs transfer per lokasi, total dan persentase. Berguna untuk: "berapa % tamu bayar cash?", "preferensi metode bayar per lokasi".',
-            parameters: {
-                type: 'object',
-                properties: {
-                    start_date: { type: 'string', description: 'Tanggal mulai YYYY-MM-DD' },
-                    end_date: { type: 'string', description: 'Tanggal akhir YYYY-MM-DD' },
-                    location: { type: 'string', description: 'Filter lokasi (opsional)' },
-                },
-                required: ['start_date', 'end_date'],
-            },
-        },
-    },
-
-    // ── OCCUPANCY & TREND ────────────────────────────────────────────────────
-    {
-        type: 'function',
-        function: {
-            name: 'get_occupancy_per_location',
-            description: 'OCCUPANCY PER LOKASI — total kamar, transaksi, revenue, occupancy rate per lokasi. Berguna untuk: "lokasi mana occupancy tertinggi?", "rate okupansi per lokasi".',
-            parameters: {
-                type: 'object',
-                properties: {
-                    start_date: { type: 'string', description: 'Tanggal mulai YYYY-MM-DD' },
-                    end_date: { type: 'string', description: 'Tanggal akhir YYYY-MM-DD' },
-                    location: { type: 'string', description: 'Filter lokasi (opsional)' },
-                },
-                required: ['start_date', 'end_date'],
-            },
-        },
-    },
-    {
-        type: 'function',
-        function: {
-            name: 'get_revenue_yoy_comparison',
-            description: 'YoY COMPARISON — perbandingan revenue dan transaksi tahun ini vs tahun lalu untuk periode yang sama. Berguna untuk: "performa tahun ini vs tahun lalu?", "growth YoY".',
-            parameters: {
-                type: 'object',
-                properties: {
-                    start_date: { type: 'string', description: 'Tanggal mulai YYYY-MM-DD' },
-                    end_date: { type: 'string', description: 'Tanggal akhir YYYY-MM-DD' },
-                    location: { type: 'string', description: 'Filter lokasi (opsional)' },
-                },
-                required: ['start_date', 'end_date'],
-            },
-        },
-    },
-    {
-        type: 'function',
-        function: {
-            name: 'get_monthly_revenue_trend',
-            description: 'TREN REVENUE BULANAN — revenue, transaksi, rata-rata per transaksi per bulan dalam rentang. Berguna untuk: "tren revenue bulanan", "chart pendapatan per bulan".',
-            parameters: {
-                type: 'object',
-                properties: {
-                    start_date: { type: 'string', description: 'Tanggal mulai YYYY-MM-DD' },
-                    end_date: { type: 'string', description: 'Tanggal akhir YYYY-MM-DD' },
-                    location: { type: 'string', description: 'Filter lokasi (opsional)' },
-                },
-                required: ['start_date', 'end_date'],
-            },
-        },
-    },
-    {
-        type: 'function',
-        function: {
-            name: 'get_performance_by_employee',
-            description: 'PERFORMA KARYAWAN — transaksi dan revenue per karyawan (input_by). Berguna untuk: "karyawan mana paling produktif?", "siapa yang paling banyak input transaksi?".',
-            parameters: {
-                type: 'object',
-                properties: {
-                    start_date: { type: 'string', description: 'Tanggal mulai YYYY-MM-DD' },
-                    end_date: { type: 'string', description: 'Tanggal akhir YYYY-MM-DD' },
-                    location: { type: 'string', description: 'Filter lokasi (opsional)' },
-                    limit: { type: 'number', description: 'Jumlah hasil, default 10, max 50' },
-                },
-                required: ['start_date', 'end_date'],
-            },
-        },
-    },
-
-    // ═══════════════════════════════════════════════════════════════════════════
-    // NEW ANALYTICS TOOLS (2026-06-01) — analytics DB with date + comparison
-    // ═══════════════════════════════════════════════════════════════════════════
-    {
-        type: 'function',
-        function: {
-            name: 'get_checkin_busy_hours',
-            description: 'CEK DISTRIBUSI JAM CHECKIN — check-in distribution by hour buckets (e.g., 13:00 = 13:00-13:59). Returns hours sorted by volume. Supports date range, comparison, location filter. Berguna untuk: "jam berapa paling ramai checkin?", "peak hour check-in", "pola jam checkin".',
-            parameters: {
-                type: 'object',
-                properties: {
-                    startDate: { type: 'string', description: 'Start date YYYY-MM-DD' },
-                    endDate: { type: 'string', description: 'End date YYYY-MM-DD' },
-                    location: { type: 'string', description: 'Filter by apartment location name (opsional)' },
-                    comparisonStartDate: { type: 'string', description: 'Comparison period start YYYY-MM-DD (opsional)' },
-                    comparisonEndDate: { type: 'string', description: 'Comparison period end YYYY-MM-DD (opsional)' },
-                    reportPeriodMode: { type: 'string', enum: ['calendar_day', 'hotel_day'], description: 'Report period mode (opsional)' },
-                },
-                required: ['startDate', 'endDate'],
-            },
-        },
-    },
-    {
-        type: 'function',
-        function: {
-            name: 'get_occupancy_by_location',
-            description: 'OCCUPANCY PER LOKASI — analyze occupancy per apartment location. Returns location_name, total_units, occupied_units, vacant_units, occupancy_rate, comparison data, delta, trend. Supports single date, date range, comparison range. Berguna untuk: "okupansi per lokasi", "lokasi mana yang paling penuh?".',
-            parameters: {
-                type: 'object',
-                properties: {
-                    startDate: { type: 'string', description: 'Start date or single date YYYY-MM-DD' },
-                    endDate: { type: 'string', description: 'End date YYYY-MM-DD. If omitted, treats startDate as single date (opsional)' },
-                    location: { type: 'string', description: 'Filter by apartment location name (opsional)' },
-                    comparisonStartDate: { type: 'string', description: 'Comparison period start YYYY-MM-DD (opsional)' },
-                    comparisonEndDate: { type: 'string', description: 'Comparison period end YYYY-MM-DD (opsional)' },
-                    reportPeriodMode: { type: 'string', enum: ['calendar_day', 'hotel_day'], description: 'Report period mode (opsional)' },
-                },
-                required: ['startDate'],
-            },
-        },
-    },
-    {
-        type: 'function',
-        function: {
-            name: 'get_billing_breakdown_by_category',
-            description: 'BREAKDOWN BILLING — breakdown billing/transactions by category (paid/unpaid). Returns category, total_amount, transaction_count, percentage, comparison data, delta, trend. Supports date range and comparison. Berguna untuk: "breakdown tagihan per status", "rincian billing paid vs unpaid".',
-            parameters: {
-                type: 'object',
-                properties: {
-                    startDate: { type: 'string', description: 'Start date YYYY-MM-DD' },
-                    endDate: { type: 'string', description: 'End date YYYY-MM-DD' },
-                    location: { type: 'string', description: 'Filter by apartment location (opsional)' },
-                    category: { type: 'string', description: 'Filter by specific category/status (opsional)' },
-                    comparisonStartDate: { type: 'string', description: 'Comparison period start YYYY-MM-DD (opsional)' },
-                    comparisonEndDate: { type: 'string', description: 'Comparison period end YYYY-MM-DD (opsional)' },
-                },
-                required: ['startDate', 'endDate'],
-            },
-        },
-    },
-    {
-        type: 'function',
-        function: {
-            name: 'get_stay_duration_analysis',
-            description: 'ANALISIS DURASI MENGINAP — analyze stay duration types (transit, fullday, promo malam, overnight/regular). Returns duration_type, booking_count, revenue, percentage, average_duration_hours, comparison data, delta, trend. Berguna untuk: "rata-rata durasi menginap?", "pola durasi customer", "transit vs fullday".',
-            parameters: {
-                type: 'object',
-                properties: {
-                    startDate: { type: 'string', description: 'Start date YYYY-MM-DD' },
-                    endDate: { type: 'string', description: 'End date YYYY-MM-DD' },
-                    location: { type: 'string', description: 'Filter by apartment location (opsional)' },
-                    comparisonStartDate: { type: 'string', description: 'Comparison period start YYYY-MM-DD (opsional)' },
-                    comparisonEndDate: { type: 'string', description: 'Comparison period end YYYY-MM-DD (opsional)' },
-                },
-                required: ['startDate', 'endDate'],
-            },
-        },
-    },
-    {
-        type: 'function',
-        function: {
-            name: 'get_weekday_weekend_analysis',
-            description: 'ANALISIS WEEKDAY VS WEEKEND — analyze weekday vs weekend performance. Understands weekday, weekend, and pergantian hari (newly changed day). If current day just started, explain data may not represent full day. Returns weekday_revenue, weekend_revenue, weekday_occupancy, weekend_occupancy, booking counts, current_day_progress, is_early_day boolean, interpretation_text.',
-            parameters: {
-                type: 'object',
-                properties: {
-                    startDate: { type: 'string', description: 'Start date YYYY-MM-DD' },
-                    endDate: { type: 'string', description: 'End date YYYY-MM-DD' },
-                    comparisonStartDate: { type: 'string', description: 'Comparison period start YYYY-MM-DD (opsional)' },
-                    comparisonEndDate: { type: 'string', description: 'Comparison period end YYYY-MM-DD (opsional)' },
-                    reportPeriodMode: { type: 'string', enum: ['calendar_day', 'hotel_day'], description: 'Report period mode (opsional)' },
-                },
-                required: ['startDate', 'endDate'],
-            },
-        },
-    },
-
-    // ═══════════════════════════════════════════════════════════════════════════
-    // GUEST STAY HISTORY (2026-06-01)
-    // ═══════════════════════════════════════════════════════════════════════════
     {
         type: 'function',
         function: {
@@ -2275,6 +1757,8 @@ export const OPENAI_TOOLS = [
             },
         },
     },
+
+
 ];
 
 /** Anthropic Messages tool schema (compatible). */
@@ -2317,14 +1801,7 @@ export async function executeTool(call: ToolCall): Promise<any> {
                     call.arguments.location,
                 );
 
-            // ── EXISTING TOOLS ────────────────────────────────────────────────
-            case 'get_period_summary':
-                return await fetchPeriodSummary(
-                    call.arguments.start_date,
-                    call.arguments.end_date,
-                    call.arguments.location,
-                );
-
+            // ── CORE TOOLS ──────────────────────────────────────────────────────
             case 'compare_periods': {
                 const [a, b] = await Promise.all([
                     fetchPeriodSummary(call.arguments.a_start, call.arguments.a_end, call.arguments.location),
@@ -2348,40 +1825,8 @@ export async function executeTool(call: ToolCall): Promise<any> {
                     },
                 };
             }
-
-            case 'get_top_locations':
-                return await fetchTopLocations(
-                    call.arguments.start_date,
-                    call.arguments.end_date,
-                    call.arguments.limit || 10,
-                );
-
-            case 'get_top_customers':
-                return await fetchTopCustomers(
-                    call.arguments.start_date,
-                    call.arguments.end_date,
-                    call.arguments.limit || 10,
-                );
-
-            case 'get_daily_summary':
-                return await fetchDailySummary();
-
-            case 'get_latest_status':
-                return await fetchLatestStatus();
-
-            case 'get_revenue_trend':
-                return await fetchRevenueTrend(
-                    call.arguments.start_date,
-                    call.arguments.end_date,
-                    call.arguments.location,
-                );
-
-            case 'get_outstanding_bills':
-                return await fetchOutstandingBills(call.arguments.location);
-
             case 'get_unit_inventory':
                 return await fetchUnitInventory(call.arguments.location);
-
             case 'search_transactions':
                 return await fetchSearchTransactions(
                     call.arguments.query,
@@ -2390,7 +1835,6 @@ export async function executeTool(call: ToolCall): Promise<any> {
                     call.arguments.location,
                     call.arguments.limit || 20,
                 );
-
             case 'search_expenses':
                 return await fetchSearchExpenses(
                     call.arguments.query,
@@ -2400,209 +1844,20 @@ export async function executeTool(call: ToolCall): Promise<any> {
                     call.arguments.category,
                     call.arguments.limit || 20,
                 );
-
             case 'get_live_checkins':
                 return await fetchLiveCheckins(
                     call.arguments.location,
                     call.arguments.limit || 50,
                 );
-
-            case 'detect_idle_units':
-                return await fetchIdleUnits(
-                    call.arguments.days_threshold || 7,
-                    call.arguments.location,
-                    call.arguments.limit || 50,
-                );
-
-            case 'get_underperforming_units':
-                return await fetchUnderperformingUnits(
-                    call.arguments.start_date,
-                    call.arguments.end_date,
-                    call.arguments.location,
-                    call.arguments.threshold || 50,
-                    call.arguments.limit || 20,
-                );
-
-            case 'get_weekend_vs_weekday_analysis':
-                return await fetchWeekendVsWeekday(
-                    call.arguments.start_date,
-                    call.arguments.end_date,
-                    call.arguments.location,
-                );
-
-            case 'estimate_month_end_revenue':
-                return await fetchMonthEndEstimate(
-                    call.arguments.year,
-                    call.arguments.month,
-                    call.arguments.location,
-                );
-
             case 'get_unpaid_bills_detail':
                 return await fetchUnpaidBillsDetail(
                     call.arguments.location,
                     call.arguments.limit || 50,
                 );
 
-            // ── NEW TOOLS (2026-06-01) ──────────────────────────────────────────
-            case 'get_marketing_performance':
-                return await fetchMarketingPerformance(
-                    call.arguments.start_date,
-                    call.arguments.end_date,
-                    call.arguments.location,
-                    call.arguments.limit || 10,
-                );
-
-            case 'get_repeat_guests':
-                return await fetchRepeatGuests(
-                    call.arguments.start_date,
-                    call.arguments.end_date,
-                    call.arguments.location,
-                    call.arguments.limit || 10,
-                );
-
-            case 'get_guest_source_summary':
-                return await fetchGuestSourceSummary(
-                    call.arguments.start_date,
-                    call.arguments.end_date,
-                    call.arguments.location,
-                    call.arguments.limit || 10,
-                );
-
-            case 'get_stay_duration_summary':
-                return await fetchStayDurationSummary(
-                    call.arguments.start_date,
-                    call.arguments.end_date,
-                    call.arguments.location,
-                );
-
-            case 'get_checkin_heatmap':
-                return await fetchCheckinHeatmap(
-                    call.arguments.start_date,
-                    call.arguments.end_date,
-                    call.arguments.location,
-                );
-
-            case 'get_performance_by_shift':
-                return await fetchPerformanceByShift(
-                    call.arguments.start_date,
-                    call.arguments.end_date,
-                    call.arguments.location,
-                );
-
-            case 'get_net_profit_per_location':
-                return await fetchNetProfitPerLocation(
-                    call.arguments.start_date,
-                    call.arguments.end_date,
-                    call.arguments.location,
-                );
-
-            case 'get_payment_method_summary':
-                return await fetchPaymentMethodSummary(
-                    call.arguments.start_date,
-                    call.arguments.end_date,
-                    call.arguments.location,
-                );
-
-            case 'get_occupancy_per_location':
-                return await fetchOccupancyPerLocation(
-                    call.arguments.start_date,
-                    call.arguments.end_date,
-                    call.arguments.location,
-                );
-
-            case 'get_revenue_yoy_comparison':
-                return await fetchRevenueYoY(
-                    call.arguments.start_date,
-                    call.arguments.end_date,
-                    call.arguments.location,
-                );
-
-            case 'get_monthly_revenue_trend':
-                return await fetchMonthlyRevenueTrend(
-                    call.arguments.start_date,
-                    call.arguments.end_date,
-                    call.arguments.location,
-                );
-
-            case 'get_performance_by_employee':
-                return await fetchPerformanceByEmployee(
-                    call.arguments.start_date,
-                    call.arguments.end_date,
-                    call.arguments.location,
-                    call.arguments.limit || 10,
-                );
-
-            // ═══════════════════════════════════════════════════════════════════════════
-            // NEW ANALYTICS TOOLS (2026-06-01)
-            // ═══════════════════════════════════════════════════════════════════════════
-
-            case 'get_checkin_busy_hours':
-                return await fetchCheckinBusyHours(
-                    call.arguments.startDate,
-                    call.arguments.endDate,
-                    call.arguments.location,
-                    call.arguments.comparisonStartDate,
-                    call.arguments.comparisonEndDate,
-                    call.arguments.reportPeriodMode,
-                );
-
-            case 'get_occupancy_by_location':
-                return await fetchOccupancyByLocation(
-                    call.arguments.startDate,
-                    call.arguments.endDate,
-                    call.arguments.location,
-                    call.arguments.comparisonStartDate,
-                    call.arguments.comparisonEndDate,
-                    call.arguments.reportPeriodMode,
-                );
-
-            case 'get_billing_breakdown_by_category':
-                return await fetchBillingBreakdownByCategory(
-                    call.arguments.startDate,
-                    call.arguments.endDate,
-                    call.arguments.location,
-                    call.arguments.category,
-                    call.arguments.comparisonStartDate,
-                    call.arguments.comparisonEndDate,
-                );
-
-            case 'get_expense_breakdown':
-                return await fetchExpenseBreakdown(
-                    call.arguments.startDate,
-                    call.arguments.endDate,
-                    call.arguments.location,
-                    call.arguments.category,
-                    call.arguments.comparisonStartDate,
-                    call.arguments.comparisonEndDate,
-                );
-
-            case 'get_stay_duration_analysis':
-                return await fetchStayDurationAnalysis(
-                    call.arguments.startDate,
-                    call.arguments.endDate,
-                    call.arguments.location,
-                    call.arguments.comparisonStartDate,
-                    call.arguments.comparisonEndDate,
-                );
-
-            case 'get_weekday_weekend_analysis':
-                return await fetchWeekdayWeekendAnalysis(
-                    call.arguments.startDate,
-                    call.arguments.endDate,
-                    call.arguments.comparisonStartDate,
-                    call.arguments.comparisonEndDate,
-                    call.arguments.reportPeriodMode,
-                );
-
             case 'get_guest_stay_history':
-                return await fetchGuestStayHistory(
+                return await getGuestStayHistory(
                     call.arguments.guestName,
-                    call.arguments.startDate,
-                    call.arguments.endDate,
-                    call.arguments.location,
-                    call.arguments.roomNumber,
-                    call.arguments.fuzzyMatch !== false,
-                    call.arguments.limit || 20,
                 );
 
             default:
