@@ -1,6 +1,7 @@
 'use client';
 
 import { Calendar, CalendarDays, CalendarRange, Wallet } from 'lucide-react';
+import { formatCurrencyCompactIDR } from '@/lib/utils/format';
 
 interface BookingStats {
     todayCount: number;
@@ -10,15 +11,6 @@ interface BookingStats {
 }
 
 export default function BookingStatsCards({ stats }: { stats: BookingStats }) {
-    const formatCurrency = (value: number) => {
-        return new Intl.NumberFormat('id-ID', {
-            style: 'currency',
-            currency: 'IDR',
-            minimumFractionDigits: 0,
-            maximumFractionDigits: 0,
-        }).format(value);
-    };
-
     const cards = [
         {
             title: 'Booking Hari Ini',
@@ -43,7 +35,7 @@ export default function BookingStatsCards({ stats }: { stats: BookingStats }) {
         },
         {
             title: 'Pendapatan Bulan Ini',
-            value: formatCurrency(stats.monthRevenue),
+            value: formatCurrencyCompactIDR(stats.monthRevenue),
             icon: Wallet,
             color: 'text-orange-600',
             bg: 'bg-orange-50',

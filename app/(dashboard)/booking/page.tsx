@@ -6,7 +6,7 @@ import KraiInsightCard from '@/components/ai/KraiInsightCard';
 import FilterBarWrapper from '@/components/shared/FilterBarWrapper';
 import ExportButton from '@/components/shared/ExportButton';
 import { Calendar, CalendarDays, DollarSign, TrendingUp } from 'lucide-react';
-import { formatCurrency } from '@/lib/utils/format';
+import { formatCurrencyCompactIDR } from '@/lib/utils/format';
 
 /**
  * Booking Page - Server Component
@@ -116,11 +116,11 @@ export default async function BookingPage({
                     <MetricCardHorizontal
                         icon={<DollarSign className="w-5 h-5" />}
                         title="Pendapatan"
-                        value={formatCurrency(stats.totalRevenue)}
-                        comparisonValue={stats.comparison ? formatCurrency(stats.comparison.prevRevenue) : undefined}
+                        value={formatCurrencyCompactIDR(stats.totalRevenue)}
+                        comparisonValue={stats.comparison ? formatCurrencyCompactIDR(stats.comparison.prevRevenue) : undefined}
                         deltaAmount={
                             stats.comparison
-                                ? formatCurrency(stats.totalRevenue - stats.comparison.prevRevenue)
+                                ? formatCurrencyCompactIDR(stats.totalRevenue - stats.comparison.prevRevenue)
                                 : undefined
                         }
                         deltaPercentage={
@@ -147,7 +147,7 @@ export default async function BookingPage({
                     <MetricCardHorizontal
                         icon={<TrendingUp className="w-5 h-5" />}
                         title="Rata-rata / Hari"
-                        value={formatCurrency(stats.avgPerDay)}
+                        value={formatCurrencyCompactIDR(stats.avgPerDay)}
                         isComparisonActive={false}
                         semanticType="neutral"
                     />

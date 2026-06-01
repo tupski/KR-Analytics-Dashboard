@@ -129,7 +129,7 @@ export default function UnitPerformancePanel({ data, isLoading }: UnitPerformanc
                     <div>
                         <div className="flex items-center gap-1.5 mb-2">
                             <Clock className="w-4 h-4 text-orange-500" />
-                            <h3 className="text-sm font-semibold text-gray-800">Unit Idle</h3>
+                            <h3 className="text-sm font-semibold text-gray-800">Unit Nganggur</h3>
                             <span className="text-xs text-gray-400 ml-auto">
                                 {data.idleUnits.length} unit
                             </span>
@@ -137,7 +137,7 @@ export default function UnitPerformancePanel({ data, isLoading }: UnitPerformanc
 
                         {data.idleUnits.length === 0 ? (
                             <div className="rounded-lg border border-gray-200 bg-white p-4 text-center">
-                                <p className="text-xs text-gray-500">Tidak ada unit idle (≥3 hari).</p>
+                                <p className="text-xs text-gray-500">Tidak ada unit nganggur (≥3 hari).</p>
                             </div>
                         ) : (
                             <>

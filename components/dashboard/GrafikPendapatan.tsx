@@ -54,11 +54,16 @@ export default function GrafikPendapatan({ initialData, initialFilter }: GrafikP
     };
 
     // Format currency for Y-axis
-    const formatCurrency = (value: number) => {
-        if (value >= 1000000) {
-            return `Rp ${(value / 1000000).toFixed(1)}jt`;
-        } else if (value >= 1000) {
-            return `Rp ${(value / 1000).toFixed(0)}rb`;
+    const formatAxisCurrency = (value: number) => {
+        if (value >= 1_000_000_000) {
+            return `Rp ${(value / 1_000_000_000).toFixed(1)} Miliar`;
+        }
+        if (value >= 1_000_000) {
+            const jt = value / 1_000_000;
+            return `Rp ${jt.toFixed(1)} Jt`;
+        }
+        if (value >= 1_000) {
+            return `Rp ${(value / 1_000).toFixed(0)}rb`;
         }
         return `Rp ${value}`;
     };
@@ -179,7 +184,7 @@ export default function GrafikPendapatan({ initialData, initialFilter }: GrafikP
                         <YAxis
                             stroke="#6b7280"
                             style={{ fontSize: '12px' }}
-                            tickFormatter={formatCurrency}
+                            tickFormatter={formatAxisCurrency}
                         />
                         <Tooltip content={<CustomTooltip />} />
                         <Legend

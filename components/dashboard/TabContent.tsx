@@ -15,7 +15,7 @@ import CollapsibleChartTable from '@/components/shared/CollapsibleChartTable';
 import type { KPIData, KPICompareMode, LocationHealthItem, MarketingPerformanceItem, DashboardInsight } from '@/types/dashboard';
 import type { UnitPerformanceData } from '@/lib/dashboard/unit-performance';
 import { Calendar, DollarSign, TrendingUp, Home, Clock, MapPin } from 'lucide-react';
-import { formatCurrency } from '@/lib/utils/format';
+import { formatCurrency, formatCurrencyCompactIDR } from '@/lib/utils/format';
 
 // ─── Dynamic card titles ───────────────────────────────────────
 
@@ -150,11 +150,11 @@ export default function TabContent({
                         <MetricCardHorizontal
                             icon={<DollarSign className="w-5 h-5" />}
                             title={getCardTitle('Pendapatan', filterRangePreset)}
-                            value={formatCurrency(kpiData.revenueToday)}
-                            comparisonValue={kpiData.prev?.revenue ? formatCurrency(kpiData.prev.revenue) : undefined}
+                            value={formatCurrencyCompactIDR(kpiData.revenueToday)}
+                            comparisonValue={kpiData.prev?.revenue ? formatCurrencyCompactIDR(kpiData.prev.revenue) : undefined}
                             deltaAmount={
                                 change?.revenueChangePct != null
-                                    ? formatCurrency(kpiData.revenueToday - (kpiData.prev?.revenue || 0))
+                                    ? formatCurrencyCompactIDR(kpiData.revenueToday - (kpiData.prev?.revenue || 0))
                                     : undefined
                             }
                             deltaPercentage={change?.revenueChangePct ?? undefined}

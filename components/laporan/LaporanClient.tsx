@@ -15,7 +15,7 @@ import MetricCardHorizontal from '@/components/dashboard/MetricCardHorizontal';
 import type { LaporanData, RoomDetail, ExpenseDetail } from '@/app/(dashboard)/laporan/actions';
 import ExpenseCategoryModal from './ExpenseCategoryModal';
 import { formatDuration } from '@/lib/utils/formatDuration';
-import { formatCurrency } from '@/lib/utils/format';
+import { formatCurrency, formatCurrencyCompactIDR } from '@/lib/utils/format';
 
 interface LaporanClientProps {
     data: LaporanData;
@@ -73,10 +73,10 @@ export default function LaporanClient({ data, highOccupancy }: LaporanClientProp
                 <MetricCardHorizontal
                     icon={<Wallet className="w-5 h-5" />}
                     title="Pendapatan"
-                    value={formatCurrency(data.totalRevenue)}
+                    value={formatCurrencyCompactIDR(data.totalRevenue)}
                     subtitle={`${data.totalTransactions} transaksi`}
-                    comparisonValue={data.comparison ? formatCurrency(data.comparison.prevRevenue) : undefined}
-                    deltaAmount={data.comparison ? (revenueDelta >= 0 ? '+' : '') + formatCurrency(revenueDelta) : undefined}
+                    comparisonValue={data.comparison ? formatCurrencyCompactIDR(data.comparison.prevRevenue) : undefined}
+                    deltaAmount={data.comparison ? (revenueDelta >= 0 ? '+' : '') + formatCurrencyCompactIDR(revenueDelta) : undefined}
                     deltaPercentage={revenueGrowthPct ?? undefined}
                     trend={revenueGrowthPct === null ? 'flat' : revenueGrowthPct >= 0 ? 'up' : 'down'}
                     comparisonLabel={data.comparison?.prevLabel}
@@ -86,10 +86,10 @@ export default function LaporanClient({ data, highOccupancy }: LaporanClientProp
                 <MetricCardHorizontal
                     icon={<Receipt className="w-5 h-5" />}
                     title="Pengeluaran"
-                    value={formatCurrency(data.totalExpenses)}
+                    value={formatCurrencyCompactIDR(data.totalExpenses)}
                     subtitle={`${data.expenses.length} kategori`}
-                    comparisonValue={data.comparison ? formatCurrency(data.comparison.prevExpenses) : undefined}
-                    deltaAmount={data.comparison ? (expenseDelta >= 0 ? '+' : '') + formatCurrency(expenseDelta) : undefined}
+                    comparisonValue={data.comparison ? formatCurrencyCompactIDR(data.comparison.prevExpenses) : undefined}
+                    deltaAmount={data.comparison ? (expenseDelta >= 0 ? '+' : '') + formatCurrencyCompactIDR(expenseDelta) : undefined}
                     deltaPercentage={expenseGrowthPct ?? undefined}
                     trend={expenseGrowthPct === null ? 'flat' : expenseGrowthPct >= 0 ? 'up' : 'down'}
                     comparisonLabel={data.comparison?.prevLabel}
@@ -99,14 +99,14 @@ export default function LaporanClient({ data, highOccupancy }: LaporanClientProp
                 <MetricCardHorizontal
                     icon={<Wallet className="w-5 h-5" />}
                     title="Cash"
-                    value={formatCurrency(data.totalCash)}
+                    value={formatCurrencyCompactIDR(data.totalCash)}
                     isComparisonActive={false}
                     semanticType="neutral"
                 />
                 <MetricCardHorizontal
                     icon={<Wallet className="w-5 h-5" />}
                     title="Transfer"
-                    value={formatCurrency(data.totalTransfer)}
+                    value={formatCurrencyCompactIDR(data.totalTransfer)}
                     isComparisonActive={false}
                     semanticType="neutral"
                 />
@@ -119,12 +119,12 @@ export default function LaporanClient({ data, highOccupancy }: LaporanClientProp
                     <div className="grid grid-cols-2 gap-3 sm:gap-4">
                         <div className="bg-green-50 rounded-lg p-3 text-center">
                             <p className="text-xs text-green-700">Lunas</p>
-                            <p className="text-base sm:text-lg font-bold text-green-700 truncate">{formatCurrency(data.tagihan.paid)}</p>
+                            <p className="text-base sm:text-lg font-bold text-green-700 truncate">{formatCurrencyCompactIDR(data.tagihan.paid)}</p>
                             <p className="text-xs text-green-600">{data.tagihan.paidCount} tagihan</p>
                         </div>
                         <div className="bg-red-50 rounded-lg p-3 text-center">
                             <p className="text-xs text-red-700">Belum Bayar</p>
-                            <p className="text-base sm:text-lg font-bold text-red-700 truncate">{formatCurrency(data.tagihan.unpaid)}</p>
+                            <p className="text-base sm:text-lg font-bold text-red-700 truncate">{formatCurrencyCompactIDR(data.tagihan.unpaid)}</p>
                             <p className="text-xs text-red-600">{data.tagihan.unpaidCount} tagihan</p>
                         </div>
                     </div>
@@ -134,12 +134,12 @@ export default function LaporanClient({ data, highOccupancy }: LaporanClientProp
                     <div className="grid grid-cols-2 gap-3 sm:gap-4">
                         <div className="bg-green-50 rounded-lg p-3 text-center">
                             <p className="text-xs text-green-700">Sudah Dibayar</p>
-                            <p className="text-base sm:text-lg font-bold text-green-700 truncate">{formatCurrency(data.feeMarketing.totalPaid)}</p>
+                            <p className="text-base sm:text-lg font-bold text-green-700 truncate">{formatCurrencyCompactIDR(data.feeMarketing.totalPaid)}</p>
                             <p className="text-xs text-green-600">{data.feeMarketing.paidCount} item</p>
                         </div>
                         <div className="bg-orange-50 rounded-lg p-3 text-center">
                             <p className="text-xs text-orange-700">Belum Dibayar</p>
-                            <p className="text-base sm:text-lg font-bold text-orange-700 truncate">{formatCurrency(data.feeMarketing.totalUnpaid)}</p>
+                            <p className="text-base sm:text-lg font-bold text-orange-700 truncate">{formatCurrencyCompactIDR(data.feeMarketing.totalUnpaid)}</p>
                         </div>
                     </div>
                 </div>
@@ -163,7 +163,7 @@ export default function LaporanClient({ data, highOccupancy }: LaporanClientProp
                                     <span className="text-xs sm:text-sm text-gray-700 truncate">{e.category}</span>
                                     <span className="text-[10px] sm:text-xs text-gray-400 flex-shrink-0">({e.count}x)</span>
                                 </div>
-                                <span className="text-xs sm:text-sm font-semibold text-gray-900 flex-shrink-0">{formatCurrency(e.total)}</span>
+                                <span className="text-xs sm:text-sm font-semibold text-gray-900 flex-shrink-0">{formatCurrencyCompactIDR(e.total)}</span>
                             </button>
                         ))}
                     </div>
@@ -201,7 +201,7 @@ export default function LaporanClient({ data, highOccupancy }: LaporanClientProp
                                 <span className="text-xs sm:text-sm text-gray-500 flex-shrink-0">{loc.totalRooms} kamar</span>
                             </div>
                             <div className="bg-slate-50 rounded-lg px-3 sm:px-4 py-2 mb-3 sm:mb-4 text-xs sm:text-sm break-words">
-                                Transaksi: <strong>{loc.transactions}</strong> · Pendapatan: <strong className="text-green-700">{formatCurrency(loc.revenue)}</strong>
+                                Transaksi: <strong>{loc.transactions}</strong> · Pendapatan: <strong className="text-green-700">{formatCurrencyCompactIDR(loc.revenue)}</strong>
                             </div>
 
                             {/* Expenses per location */}
@@ -211,7 +211,7 @@ export default function LaporanClient({ data, highOccupancy }: LaporanClientProp
                                     <div className="flex flex-wrap gap-2 sm:gap-3">
                                         {data.expensesPerLocation[loc.name].map(exp => (
                                             <span key={exp.category} className="text-xs text-gray-700">
-                                                {exp.category}: <strong className="text-red-700">{formatCurrency(exp.total)}</strong> ({exp.count}x)
+                                                {exp.category}: <strong className="text-red-700">{formatCurrencyCompactIDR(exp.total)}</strong> ({exp.count}x)
                                             </span>
                                         ))}
                                     </div>
@@ -228,7 +228,7 @@ export default function LaporanClient({ data, highOccupancy }: LaporanClientProp
                                     >
                                         <p className="font-bold text-gray-900 text-base sm:text-lg truncate">{room.roomNumber}</p>
                                         <p className="text-xs sm:text-sm text-gray-600">Digunakan: <strong>{room.transactions}x</strong></p>
-                                        <p className="text-xs sm:text-sm text-green-700 truncate">Pendapatan: <strong>{formatCurrency(room.revenue)}</strong></p>
+                                        <p className="text-xs sm:text-sm text-green-700 truncate">Pendapatan: <strong>{formatCurrencyCompactIDR(room.revenue)}</strong></p>
                                     </button>
                                 ))}
                             </div>
