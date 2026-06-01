@@ -7,6 +7,21 @@ import { parseAIResponse } from '@/lib/ai/responseParser';
 import { getHeaderSafeTitle } from '@/lib/utils/headerSafe';
 
 /**
+ * KRAI CHAT ROUTE — Conversational AI with tool calling.
+ *
+ * Purpose: Business assistant chat with database tool access.
+ * Characteristics:
+ * - Tool calling loop — up to N iterations per user message
+ * - Multi-provider support with auto-fallback
+ * - Streaming capable
+ * - Not cached — each conversation turn is unique
+ * - Used by: AIChatCore, AIChatFloat, AIChatFullscreen components
+ *
+ * This is NOT the insight route. For cacheable summary generation,
+ * see app/api/ai/insight/route.ts
+ */
+
+/**
  * AI Chat API Route — TOOL-CALLING enabled.
  *
  * Instead of stuffing all data into the system prompt, we expose tools that

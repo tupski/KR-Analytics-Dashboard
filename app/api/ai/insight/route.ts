@@ -14,6 +14,35 @@ import {
 } from '@/lib/ai/providerAdapter';
 import { parseAIResponse } from '@/lib/ai/responseParser';
 
+/**
+ * AI INSIGHT ROUTE — Lightweight, cacheable, no tool calling.
+ *
+ * Purpose: Generate/retrieve cached insights for dashboard cards.
+ * Characteristics:
+ * - No tool calling — pure text completion with provided data
+ * - Cacheable — results stored in ai_insight_cache table
+ * - Fast — no multi-turn loops, no streaming
+ * - Used by: AIInsightCard, DashboardInsightSummary components
+ *
+ * This is NOT the KRAI chat route. For conversational AI with tool calling,
+ * see app/api/ai/chat/route.ts
+ */
+
+/**
+ * CACHE STRATEGY
+ * ---------------
+ * Goals: minimize AI provider calls, serve stale insights gracefully,
+ *        survive provider outages.
+ *
+ * Layers:
+ * 1. Primary cache (ai_insight_cache table) — keyed by page+params+provider+model.
+ *    TTL configured per-insight in DB settings (default 30 min).
+ * 2. Fallback cache — when AI call fails, rule-based fallback is cached at reduced
+ *    TTL (5 min) so we retry AI quickly instead of serving stale data for 30 min.
+ * 3. Inline fallback (no cache) — for validation errors / missing config;
+ *    also uses 5 min TTL on the expires_at field.
+ */
+
 // ── Types ────────────────────────────────────────────────────────────────────
 
 interface InsightRequestBody {
@@ -83,7 +112,7 @@ export async function POST(request: NextRequest) {
                     fallback: true,
                 },
                 generated_at: new Date().toISOString(),
-                expires_at: new Date(Date.now() + 3600000).toISOString(),
+                expires_at: new Date(Date.now() + 300000).toISOString(),
             });
         }
 
@@ -102,7 +131,7 @@ export async function POST(request: NextRequest) {
                     fallback: true,
                 },
                 generated_at: new Date().toISOString(),
-                expires_at: new Date(Date.now() + 3600000).toISOString(),
+                expires_at: new Date(Date.now() + 300000).toISOString(),
             });
         }
 
@@ -120,7 +149,7 @@ export async function POST(request: NextRequest) {
                     fallback: true,
                 },
                 generated_at: new Date().toISOString(),
-                expires_at: new Date(Date.now() + 3600000).toISOString(),
+                expires_at: new Date(Date.now() + 300000).toISOString(),
             });
         }
 
@@ -233,12 +262,12 @@ export async function POST(request: NextRequest) {
                     provider: '',
                     fallback: true,
                 };
-                // Cache fallback too so we don't retry AI every time
+                // Cache fallback at short TTL (5 min) so AI retries soon
                 await setCachedInsight({
                     cacheKey,
                     page,
                     response: responseData,
-                    ttlMinutes: settings.cacheTtlMinutes || 30,
+                    ttlMinutes: 5,
                     providerSlug: aiConfig.providerSlug,
                     modelId: aiConfig.modelId,
                     reportPeriodMode: reportPeriodMode,
@@ -253,7 +282,7 @@ export async function POST(request: NextRequest) {
                     response: responseData,
                     generated_at: new Date().toISOString(),
                     expires_at: new Date(
-                        Date.now() + (settings.cacheTtlMinutes || 30) * 60 * 1000,
+                        Date.now() + 5 * 60 * 1000,
                     ).toISOString(),
                 });
             }
