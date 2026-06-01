@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
-import { ChevronDown, ChevronUp, Calendar, GitCompareArrows, Filter } from 'lucide-react';
+import { ChevronDown, ChevronUp, Filter } from 'lucide-react';
 import DateRangePicker, {
     getDateRangeFromPreset,
     formatRangeDisplay,
@@ -171,6 +171,8 @@ export default function StickyComparisonBar({
                 <button
                     onClick={() => setExpanded(!expanded)}
                     className="flex items-center gap-2 min-w-0 flex-1 text-left"
+                    aria-label="Toggle filter panel"
+                    aria-expanded={expanded}
                 >
                     <Filter className="w-4 h-4 text-gray-500 shrink-0" />
                     <span className="text-sm font-medium text-gray-900 truncate">
@@ -187,6 +189,7 @@ export default function StickyComparisonBar({
                 <button
                     onClick={() => setExpanded(!expanded)}
                     className="sm:hidden text-xs text-blue-600 font-medium shrink-0"
+                    aria-label={expanded ? 'Tutup filter' : 'Buka filter'}
                 >
                     {expanded ? 'Tutup' : 'Filter'}
                 </button>
@@ -194,24 +197,28 @@ export default function StickyComparisonBar({
 
             {/* ── Expanded filter panel ── */}
             {expanded && (
-                <div className="px-3 sm:px-4 pb-3 sm:pb-4 space-y-2 border-t border-gray-100 pt-2">
+                <div className="px-3 sm:px-4 pb-3 sm:pb-4 space-y-2 border-t border-gray-100 pt-2" role="region" aria-label="Panel filter">
                     <div className="flex flex-wrap items-start gap-2">
-                        <DateRangePicker
-                            value={localRange}
-                            onChange={handleRangeChange}
-                            preset={localPreset}
-                            onPresetChange={handlePresetChange}
-                            showPresets={true}
-                            showCalendar={true}
-                            mode={reportPeriodMode}
-                        />
-                        <ComparisonFilter
-                            mode={localCompMode}
-                            onChange={handleCompModeChange}
-                            currentRange={localRange}
-                            customRange={localCompCustom}
-                            onCustomRangeChange={handleCompCustomChange}
-                        />
+                        <div aria-label="Pilih rentang tanggal">
+                            <DateRangePicker
+                                value={localRange}
+                                onChange={handleRangeChange}
+                                preset={localPreset}
+                                onPresetChange={handlePresetChange}
+                                showPresets={true}
+                                showCalendar={true}
+                                mode={reportPeriodMode}
+                            />
+                        </div>
+                        <div aria-label="Pilih mode perbandingan">
+                            <ComparisonFilter
+                                mode={localCompMode}
+                                onChange={handleCompModeChange}
+                                currentRange={localRange}
+                                customRange={localCompCustom}
+                                onCustomRangeChange={handleCompCustomChange}
+                            />
+                        </div>
                     </div>
                 </div>
             )}

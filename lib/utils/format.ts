@@ -9,8 +9,13 @@ import { id } from 'date-fns/locale';
  */
 
 /**
- * Format number as Indonesian Rupiah currency
- * Format: Rp X.XXX.XXX (period as thousand separator, no decimals)
+ * Format number as Indonesian Rupiah currency.
+ * Uses period (.) as thousand separator, no decimal digits.
+ *
+ * @example
+ *   formatCurrency(1000000)    // "Rp 1.000.000"
+ *   formatCurrency(33350000)   // "Rp 33.350.000"
+ *   formatCurrency(850000)     // "Rp 850.000"
  */
 export function formatCurrency(value: number): string {
     return `Rp ${value.toLocaleString('id-ID', {
@@ -20,16 +25,31 @@ export function formatCurrency(value: number): string {
 }
 
 /**
- * Format number as percentage with configurable decimal places
- * @param value - decimal fraction or percentage value
- * @param decimals - decimal places (default: 2)
+ * Format number as percentage with configurable decimal places.
+ * The input value is treated as an absolute percentage (e.g. 75.5 → "75.50%"),
+ * NOT as a decimal fraction (0.755).
+ *
+ * @param value - percentage value (e.g. 75.5 for 75.5%)
+ * @param decimals - number of decimal places (default: 2)
+ *
+ * @example
+ *   formatPercentage(75.5)     // "75.50%"
+ *   formatPercentage(100, 0)   // "100%"
+ *   formatPercentage(33.333, 1) // "33.3%"
  */
 export function formatPercentage(value: number, decimals = 2): string {
     return `${value.toFixed(decimals)}%`;
 }
 
 /**
- * Format a Date as dd MMM yyyy in Indonesian locale (or compact variant)
+ * Format a Date in Indonesian locale.
+ *
+ * @param date - Date object or ISO string
+ * @param fmt - 'full' returns "dd MMM yyyy", 'compact' returns "dd MMM yy"
+ *
+ * @example
+ *   formatDate('2026-06-01')          // "01 Jun 2026"
+ *   formatDate(new Date(), 'compact') // "01 Jun 26"
  */
 export function formatDate(date: Date | string, fmt: 'full' | 'compact' = 'full'): string {
     const d = typeof date === 'string' ? new Date(date) : date;
@@ -40,7 +60,17 @@ export function formatDate(date: Date | string, fmt: 'full' | 'compact' = 'full'
 }
 
 /**
- * Format a number in compact notation (e.g., 1500 → "1.5rb", 1000000 → "1jt")
+ * Format a number in compact Indonesian notation.
+ *
+ * - >= 1.000.000 → "Xjt" (juta)
+ * - >= 1.000 → "Xrb" (ribu)
+ * - otherwise → plain string
+ *
+ * @example
+ *   formatCompactNumber(1500000)   // "1.5jt"
+ *   formatCompactNumber(1000000)   // "1jt"
+ *   formatCompactNumber(5000)      // "5rb"
+ *   formatCompactNumber(850)       // "850"
  */
 export function formatCompactNumber(value: number): string {
     if (value >= 1_000_000) {
@@ -55,19 +85,22 @@ export function formatCompactNumber(value: number): string {
 }
 
 /**
- * Format currency in Indonesian compact notation.
+ * Format currency in Indonesian Rupiah compact notation.
  *
- * - < 1jt → full "Rp 850.000"
- * - 1jt – 999jt → "Rp 33,35 Jt" (comma decimal, "Jt" suffix)
- * - >= 1Miliar → "Rp 1,25 Miliar"
+ * Thresholds:
+ * - >= 1 Miliar (1.000.000.000) → "Rp X,Y Miliar"
+ * - >= 1 Juta (1.000.000) → "Rp X,Y Jt"
+ * - < 1 Juta → full format "Rp XXX.XXX"
  *
- * Examples:
- *   1.000.000      → "Rp 1 Jt"
- *   33.350.000     → "Rp 33,35 Jt"
- *   159.490.000    → "Rp 159,49 Jt"
- *   1.250.000.000  → "Rp 1,25 Miliar"
- *   12.500.000.000 → "Rp 12,5 Miliar"
- *   850.000        → "Rp 850.000"
+ * Decimal separator uses Indonesian comma (,).
+ *
+ * @example
+ *   formatCurrencyCompactIDR(1_000_000)       // "Rp 1 Jt"
+ *   formatCurrencyCompactIDR(33_350_000)      // "Rp 33,35 Jt"
+ *   formatCurrencyCompactIDR(159_490_000)     // "Rp 159,49 Jt"
+ *   formatCurrencyCompactIDR(1_250_000_000)   // "Rp 1,25 Miliar"
+ *   formatCurrencyCompactIDR(12_500_000_000)  // "Rp 12,5 Miliar"
+ *   formatCurrencyCompactIDR(850_000)         // "Rp 850.000"
  */
 export function formatCurrencyCompactIDR(value: number): string {
     if (value >= 1_000_000_000) {

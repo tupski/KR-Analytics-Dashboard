@@ -15,7 +15,7 @@ import CollapsibleChartTable from '@/components/shared/CollapsibleChartTable';
 import type { KPIData, KPICompareMode, LocationHealthItem, MarketingPerformanceItem, DashboardInsight } from '@/types/dashboard';
 import type { UnitPerformanceData } from '@/lib/dashboard/unit-performance';
 import { Calendar, DollarSign, TrendingUp, Home, Clock, MapPin } from 'lucide-react';
-import { formatCurrency, formatCurrencyCompactIDR } from '@/lib/utils/format';
+import { formatCurrencyCompactIDR } from '@/lib/utils/format';
 
 // ─── Dynamic card titles ───────────────────────────────────────
 
@@ -83,8 +83,6 @@ interface TabContentProps {
  */
 export default function TabContent({
     kpiData,
-    compareMode,
-    insights,
     revenueData,
     occupancyData,
     occupancyPeriod,

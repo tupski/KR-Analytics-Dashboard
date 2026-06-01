@@ -1,8 +1,8 @@
 'use client';
 
 import { useState, useMemo } from 'react';
-import { Search, Wrench, Filter, Check, X, Database, BarChart3, Users, Clock, DollarSign, Home, Calendar, Activity } from 'lucide-react';
-import TOOL_REGISTRY, { getAllCategories, type ToolDisplayInfo } from '@/lib/ai/toolRegistry';
+import { Search, Check, X, Database, BarChart3, Users, DollarSign, Home, Calendar, Activity } from 'lucide-react';
+import TOOL_REGISTRY, { getAllCategories } from '@/lib/ai/toolRegistry';
 
 const CATEGORY_ICONS: Record<string, React.ReactNode> = {
     Dashboard: <BarChart3 className="w-3.5 h-3.5" />,
@@ -61,12 +61,14 @@ export default function AIToolsTable() {
                         onChange={e => setSearch(e.target.value)}
                         placeholder="Cari tool..."
                         className="w-full pl-8 pr-3 py-1.5 text-xs border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+                        aria-label="Cari tool AI"
                     />
                 </div>
                 <select
                     value={categoryFilter}
                     onChange={e => setCategoryFilter(e.target.value)}
                     className="px-3 py-1.5 text-xs border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none bg-white"
+                    aria-label="Filter kategori tool"
                 >
                     <option value="all">Semua Kategori</option>
                     {categories.map(cat => (

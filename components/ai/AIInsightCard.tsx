@@ -32,7 +32,7 @@ export default function AIInsightCard({
     prompt,
     title = 'KRAI Insight',
     className = '',
-    alternativeQuestions,
+    alternativeQuestions: _alternativeQuestions,
     page = 'default',
     rangePreset,
     startDate,
@@ -47,7 +47,7 @@ export default function AIInsightCard({
     const [error, setError] = useState<string | null>(null);
     const [fetchError, setFetchError] = useState<string | null>(null);
     const [aiEnabled, setAiEnabled] = useState<boolean | null>(null);
-    const [insightMode, setInsightMode] = useState<string>('ai-with-fallback');
+    const [_insightMode, setInsightMode] = useState<string>('ai-with-fallback');
     const [expanded, setExpanded] = useState(false);
     const [currentPrompt, setCurrentPrompt] = useState(prompt);
     const [compareMode, setCompareMode] = useState(false);

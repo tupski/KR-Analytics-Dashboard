@@ -13,7 +13,7 @@
  * - Italic foreign word emphasis (handled in MarkdownRenderer)
  */
 
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { Send, Bot, Brain, X, ChevronRight, Copy, Check, AlertTriangle, Eye, Lightbulb, Wrench, Zap, ChevronDown, RotateCw, Pencil } from 'lucide-react';
 import MarkdownRenderer from './MarkdownRenderer';
 import ChatModelSelector from './ChatModelSelector';
@@ -420,8 +420,8 @@ export default function AIChatCore({
     const activeProviderId: ProviderId | 'auto' = config?.activeProvider ?? 'auto';
     const activeModelId = config?.activeModel ?? 'auto';
 
-    // ── Determine if active model supports vision ─────────────────────────────
-    const visionCapable: boolean = (() => {
+    // ── Determine if active model supports vision (memoized) ──────────────────
+    const visionCapable: boolean = useMemo(() => {
         if (!config) return false;
         if (activeProviderId === 'auto' || activeModelId === 'auto') {
             return Object.entries(config.providers).some(([pid, c]) => {
@@ -432,7 +432,7 @@ export default function AIChatCore({
         }
         const m = getModel(activeProviderId as ProviderId, activeModelId);
         return m?.capabilities.vision ?? false;
-    })();
+    }, [config, activeProviderId, activeModelId]);
 
     const addSuggestions = useCallback((userQ: string, aiAnswer: string) => {
         fetchFollowUpSuggestions(userQ, aiAnswer, activeProviderId, activeModelId).then(suggestions => {
@@ -652,13 +652,13 @@ export default function AIChatCore({
     const isFloat = mode === 'float';
     const isFull = mode === 'full';
 
-    // Active model display
-    const activeModelLabel = (() => {
+    // Active model display (memoized)
+    const activeModelLabel = useMemo(() => {
         if (!config) return 'Auto';
         if (activeProviderId === 'auto' || activeModelId === 'auto') return 'Auto';
         const m = getModel(activeProviderId as ProviderId, activeModelId);
         return m?.label || activeModelId;
-    })();
+    }, [config, activeProviderId, activeModelId]);
 
     return (
         <div className="flex flex-col h-full">

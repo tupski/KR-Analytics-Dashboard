@@ -28,7 +28,7 @@ export default function MoneyValue({
     compactOnSmall = true,
     showTooltip = true,
     className = '',
-    semanticType,
+    semanticType: _semanticType,
 }: MoneyValueProps) {
     const [showFull, setShowFull] = useState(false);
     const spanRef = useRef<HTMLSpanElement>(null);
