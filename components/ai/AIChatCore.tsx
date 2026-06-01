@@ -19,6 +19,7 @@ import MarkdownRenderer from './MarkdownRenderer';
 import ChatModelSelector from './ChatModelSelector';
 import { loadMemory, addMemory, deleteMemory, getMemoryContext, extractMemoryFromConversation, type MemoryEntry } from '@/lib/ai/memory';
 import KraiLogo from '@/components/shared/KraiLogo';
+import { extractContentFromJson } from '@/lib/ai/responseParser';
 import {
     loadConfig,
     setActive,
@@ -491,9 +492,26 @@ export default function AIChatCore({
             });
 
             const result = await sendChat(apiMessages, memCtx, thinkingMode, !!pendingImage, activeProviderId, activeModelId);
+
+            // Client-side JSON guard: if response looks like JSON, extract content
+            let resultContent = result.message;
+            if (resultContent && (resultContent.startsWith('{') || resultContent.startsWith('['))) {
+                try {
+                    const parsed = JSON.parse(resultContent);
+                    const extracted = extractContentFromJson(parsed);
+                    if (extracted) resultContent = extracted;
+                } catch {
+                    // Not parseable — use as-is
+                }
+            }
+            // Strip [DONE] SSE tail if present
+            if (resultContent.endsWith('[DONE]')) {
+                resultContent = resultContent.slice(0, -6).trim();
+            }
+
             const assistantMsg: ChatMessage = {
                 role: 'assistant',
-                content: result.message,
+                content: resultContent,
                 typed: true,        // immediate — no typing animation
                 timestamp: Date.now(),
                 model: result.model,

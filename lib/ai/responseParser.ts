@@ -32,7 +32,30 @@ export function parseAIResponse(raw: string): any {
 
     // Regular JSON format — safe parse
     try {
-        return JSON.parse(trimmed);
+        const parsed = JSON.parse(trimmed);
+        // Double-parse fallback: if result is a string (double-encoded JSON), try again
+        if (typeof parsed === 'string') {
+            try {
+                return JSON.parse(parsed);
+            } catch {
+                // Inner string not JSON — wrap in response format
+                return {
+                    id: 'raw-fallback',
+                    object: 'chat.completion',
+                    created: Math.floor(Date.now() / 1000),
+                    model: 'unknown',
+                    choices: [{
+                        index: 0,
+                        message: {
+                            role: 'assistant',
+                            content: parsed.substring(0, 8000),
+                        },
+                        finish_reason: 'stop',
+                    }],
+                };
+            }
+        }
+        return parsed;
     } catch {
         // Not JSON at all — return a reconstructed response with raw text as content
         return {
@@ -114,6 +137,11 @@ function parseSSEResponse(raw: string): any {
         }
     }
 
+    // If loop captured no content but last chunk has message content directly
+    if (!finalContent && lastValidChunk?.choices?.[0]?.message?.content) {
+        finalContent = lastValidChunk.choices[0].message.content;
+    }
+
     // Reconstruct OpenAI-compatible response format
     if (!lastValidChunk) {
         throw new Error('Respons SSE tidak valid — tidak ada data chunk yang ditemukan.');
@@ -182,4 +210,47 @@ function mergeToolCalls(existing: any[], delta: any[]): any[] {
     }
 
     return merged;
+}
+
+/**
+ * Extract text content from a JSON object by searching common AI response formats.
+ * Recursively searches for .message.content, .content, .text, .choices[], .candidates[].
+ * Returns null if no text content found.
+ */
+export function extractContentFromJson(obj: any): string | null {
+    if (!obj) return null;
+    if (typeof obj === 'string') return obj;
+
+    // Direct text fields
+    if (typeof obj.text === 'string') return obj.text;
+    if (typeof obj.content === 'string') return obj.content;
+    if (typeof obj.message === 'string') return obj.message;
+
+    // Nested message.content
+    if (obj.message?.content && typeof obj.message.content === 'string') return obj.message.content;
+
+    // OpenAI format: choices[0].message.content
+    if (obj.choices?.[0]?.message?.content && typeof obj.choices[0].message.content === 'string') {
+        return obj.choices[0].message.content;
+    }
+
+    // Gemini format: candidates[0].content.parts[0].text
+    if (obj.candidates?.[0]?.content?.parts?.[0]?.text && typeof obj.candidates[0].content.parts[0].text === 'string') {
+        return obj.candidates[0].content.parts[0].text;
+    }
+
+    // Anthropic format: content[0].text
+    if (Array.isArray(obj.content) && obj.content[0]?.text && typeof obj.content[0].text === 'string') {
+        return obj.content[0].text;
+    }
+
+    // Recursive array search
+    if (Array.isArray(obj)) {
+        for (const item of obj) {
+            const result = extractContentFromJson(item);
+            if (result) return result;
+        }
+    }
+
+    return null;
 }

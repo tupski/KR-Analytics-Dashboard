@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { usePathname } from 'next/navigation';
 import { X, Bot, Maximize2 } from 'lucide-react';
 import Link from 'next/link';
@@ -189,11 +189,34 @@ function AIChatCoreFloat({
         return () => window.removeEventListener('ai-chat-float-send', handler);
     }, []);
 
+    // Sanitize incoming messages — extract content from any JSON-wrapped response
+    const handleMessagesChange = useCallback((msgs: ChatMessage[]) => {
+        const sanitized = msgs.map(m => {
+            if (m.role === 'assistant' && m.content && (m.content.startsWith('{') || m.content.startsWith('['))) {
+                try {
+                    const parsed = JSON.parse(m.content);
+                    // Recursively search for text content in common AI response formats
+                    const extracted = parsed.message?.content
+                        || parsed.content
+                        || parsed.text
+                        || parsed.choices?.[0]?.message?.content
+                        || parsed.candidates?.[0]?.content?.parts?.[0]?.text
+                        || (Array.isArray(parsed.content) ? parsed.content[0]?.text : null);
+                    if (extracted) return { ...m, content: extracted };
+                } catch {
+                    // Not parseable — use as-is
+                }
+            }
+            return m;
+        });
+        onMessagesChange(sanitized);
+    }, [onMessagesChange]);
+
     return (
         <AIChatCore
             mode="float"
             initialMessages={messages}
-            onMessagesChange={onMessagesChange}
+            onMessagesChange={handleMessagesChange}
             onSendRef={sendRef}
             showTopBar
         />

@@ -314,11 +314,22 @@ export function parseProviderResponse(
         return { message: rawData.output_text };
     }
     if (rawData?.content) {
-        return {
-            message: typeof rawData.content === 'string'
-                ? rawData.content
-                : JSON.stringify(rawData.content),
-        };
+        // If content is an object, recursively search for text/content fields,
+        // otherwise wrap in code block so it doesn't look like raw blob JSON
+        if (typeof rawData.content === 'string') {
+            return { message: rawData.content };
+        }
+        const text = rawData.content?.text
+            || rawData.content?.content
+            || rawData.content?.message
+            || (Array.isArray(rawData.content)
+                ? rawData.content.map((c: any) => typeof c === 'string' ? c : c.text || c.content || '').filter(Boolean).join('\n')
+                : null);
+        if (text) {
+            return { message: text };
+        }
+        // Last resort — wrap in code block with a label
+        return { message: '```json\n' + JSON.stringify(rawData.content, null, 2) + '\n```' };
     }
 
     throw new Error('Respons AI kosong.');

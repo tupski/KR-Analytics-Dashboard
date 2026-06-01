@@ -15,6 +15,8 @@ export interface ProviderModel {
     modelId: string;
     displayName: string;
     enabled: boolean;
+    isCustom?: boolean;
+    isActive?: boolean;
     capabilities?: {
         vision?: boolean;
         streaming?: boolean;

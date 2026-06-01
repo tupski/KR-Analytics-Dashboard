@@ -169,7 +169,16 @@ export async function POST(request: NextRequest) {
                 // Try to extract useful content from JSON
                 try {
                     const parsed = JSON.parse(message);
-                    finalMessage = parsed.message || parsed.content || parsed.text || parsed.response || message;
+                    // Search common AI response fields recursively
+                    finalMessage = parsed.message
+                        || parsed.content
+                        || parsed.text
+                        || parsed.response
+                        || parsed.choices?.[0]?.message?.content
+                        || parsed.choices?.[0]?.text
+                        || parsed.candidates?.[0]?.content?.parts?.[0]?.text
+                        || (Array.isArray(parsed.content) ? parsed.content[0]?.text : null)
+                        || message;
                 } catch {
                     // Not valid JSON either — use as-is
                     finalMessage = message;

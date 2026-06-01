@@ -137,7 +137,19 @@ async function runOpenAILoop(
 
         if (!res.ok) {
             const errorText = await res.text();
-            throw new Error(`AI API error: ${res.status} ${res.statusText} - ${errorText.substring(0, 300)}`);
+            // Try to extract readable error from JSON error body
+            let cleanError = errorText.substring(0, 300);
+            try {
+                const errJson = JSON.parse(errorText);
+                if (errJson.error?.message) {
+                    cleanError = errJson.error.message.substring(0, 300);
+                } else if (errJson.message) {
+                    cleanError = errJson.message.substring(0, 300);
+                }
+            } catch {
+                // Not JSON — use truncated raw text
+            }
+            throw new Error(`AI API error: ${res.status} ${res.statusText} - ${cleanError}`);
         }
 
         // Parse response - supports both JSON and SSE formats
@@ -148,6 +160,17 @@ async function runOpenAILoop(
             data = parseAIResponse(rawText);
         } catch (parseError: any) {
             throw new Error(`Gagal memproses respons AI: ${parseError.message}`);
+        }
+
+        // Handle double-encoded JSON: if data itself is a string, try parsing again
+        if (typeof data === 'string') {
+            try {
+                data = JSON.parse(data);
+            } catch {
+                // Not parseable — treat as content directly
+                conversation.push({ role: 'assistant', content: data.substring(0, 8000) });
+                return { message: data.substring(0, 8000), usage: totalUsage };
+            }
         }
 
         // P0-3 FIX: Accept any combination of message fields — never fail on unknown fields

@@ -17,7 +17,7 @@ import {
     type ProviderConfig,
 } from '@/lib/ai/configClient';
 import { addCustomModel, getCustomModels } from '@/lib/ai/config';
-import { saveAIConfig, loadAIConfig } from '@/app/(dashboard)/pengaturan/ai-actions';
+import { saveAIConfig, loadAIConfig, saveCustomModel } from '@/app/(dashboard)/pengaturan/ai-actions';
 import ModelFetchButton from './ModelFetchButton';
 import ModelDropdown from './ModelDropdown';
 import { getModels } from '@/lib/ai/modelClient';
@@ -439,9 +439,29 @@ export default function AISettingsPage({ section = 'ai' }: AISettingsPageProps) 
             }
 
             if (res.ok) {
-                setTestResult({ success: true, message: data.message || 'Koneksi berhasil!' });
+                // If response is JSON-wrapped, extract content
+                let displayMsg = data.message || 'Koneksi berhasil!';
+                if (displayMsg && (displayMsg.startsWith('{') || displayMsg.startsWith('['))) {
+                    try {
+                        const parsed = JSON.parse(displayMsg);
+                        const extracted = parsed.message?.content
+                            || parsed.content
+                            || parsed.text
+                            || parsed.choices?.[0]?.message?.content
+                            || parsed.message;
+                        if (extracted) displayMsg = extracted;
+                    } catch { /* use as-is */ }
+                }
+                setTestResult({ success: true, message: displayMsg });
             } else {
-                setTestResult({ success: false, message: data.error || 'Gagal terhubung' });
+                let errMsg = data.error || 'Gagal terhubung';
+                if (errMsg && (errMsg.startsWith('{') || errMsg.startsWith('['))) {
+                    try {
+                        const parsed = JSON.parse(errMsg);
+                        errMsg = parsed.error?.message || parsed.message || parsed.error || errMsg;
+                    } catch { /* use as-is */ }
+                }
+                setTestResult({ success: false, message: errMsg });
             }
         } catch (err: any) {
             setTestResult({ success: false, message: err.message || 'Gagal menghubungi server' });
@@ -489,18 +509,26 @@ export default function AISettingsPage({ section = 'ai' }: AISettingsPageProps) 
             }
 
             if (res.ok) {
+                const modelId = customModelName.trim();
+                const providerInfo = PROVIDERS.find(p => p.id === activeProviderId);
+                const providerName = providerInfo?.name || activeProviderId;
+
+                // Save to DB via server action so it persists beyond provider fetch
+                await saveCustomModel(activeProviderId, providerName, modelId, modelId);
+
+                // Also save to localStorage as cache/fallback
                 addCustomModel(activeProviderId, {
-                    id: customModelName.trim(),
-                    label: customModelName.trim(),
+                    id: modelId,
+                    label: modelId,
                     inputPrice: 0,
                     outputPrice: 0,
                     capabilities: { vision: false, reasoning: false, tools: true, fast: false },
                 });
-                setDraftModel(customModelName.trim());
+                setDraftModel(modelId);
                 setCustomModelName('');
                 const cfg = await loadConfigFromDb();
                 setConfig(cfg);
-                setTestResult({ success: true, message: `Model "${customModelName.trim()}" berhasil ditambahkan!` });
+                setTestResult({ success: true, message: `Model "${modelId}" berhasil ditambahkan!` });
             } else {
                 setTestResult({ success: false, message: data.error || 'Gagal terhubung' });
             }

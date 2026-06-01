@@ -155,8 +155,28 @@ export async function POST(request: NextRequest) {
             } as FetchModelsResponse);
         }
 
-        // Store models in database (upsert by provider_slug + model_id)
+        // Store models in database: delete non-custom models, insert fresh fetched ones
+        // This preserves any custom models (is_custom = true) that user added manually.
         const now = new Date().toISOString();
+
+        // 1. Delete all non-custom models for this provider
+        const { error: deleteError } = await supabase
+            .from('ai_provider_models')
+            .delete()
+            .eq('provider_slug', providerId)
+            .eq('is_custom', false);
+
+        if (deleteError) {
+            console.error('[POST /api/ai/fetch-models] Delete error:', deleteError);
+            return NextResponse.json({
+                success: false,
+                models: [],
+                fetchedAt: now,
+                error: 'Gagal membersihkan model lama.',
+            } as FetchModelsResponse);
+        }
+
+        // 2. Insert freshly fetched models
         const dbRecords = normalizedModels.map((model) => ({
             provider_slug: model.providerSlug,
             provider_name: model.providerName,
@@ -167,17 +187,15 @@ export async function POST(request: NextRequest) {
             pricing: model.pricing,
             raw: model.raw,
             last_fetched_at: now,
+            is_custom: false,
         }));
 
-        const { error: upsertError } = await supabase
+        const { error: insertError } = await supabase
             .from('ai_provider_models')
-            .upsert(dbRecords, {
-                onConflict: 'provider_slug,model_id',
-                ignoreDuplicates: false,
-            });
+            .insert(dbRecords);
 
-        if (upsertError) {
-            console.error('[POST /api/ai/fetch-models] Upsert error:', upsertError);
+        if (insertError) {
+            console.error('[POST /api/ai/fetch-models] Insert error:', insertError);
             return NextResponse.json({
                 success: false,
                 models: [],

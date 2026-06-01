@@ -1,7 +1,6 @@
 'use server';
 
 import { createServerClient } from '@/lib/supabase/server';
-// FIX 8: Delegate encrypt/decrypt to canonical configServer.ts
 import { encryptApiKey, decryptApiKey } from '@/lib/ai/configServer';
 
 interface AIConfig {
@@ -75,6 +74,48 @@ export async function loadAIConfig(): Promise<AIConfig | null> {
     } catch (error: any) {
         console.error('[loadAIConfig] Error:', error);
         return null;
+    }
+}
+
+/**
+ * Save a custom model to ai_provider_models table with is_custom=true.
+ * Called when user tests a custom model name and it works.
+ */
+export async function saveCustomModel(
+    providerSlug: string,
+    providerName: string,
+    modelId: string,
+    displayName: string,
+): Promise<{ success: boolean; error?: string }> {
+    try {
+        const supabase = createServerClient();
+
+        const { error } = await supabase
+            .from('ai_provider_models')
+            .upsert({
+                provider_slug: providerSlug,
+                provider_name: providerName,
+                model_id: modelId,
+                display_name: displayName,
+                enabled: true,
+                is_custom: true,
+                is_active: true,
+                capabilities: {
+                    vision: false,
+                    reasoning: false,
+                    functionCalling: true,
+                },
+            }, {
+                onConflict: 'provider_slug,model_id',
+                ignoreDuplicates: false,
+            });
+
+        if (error) throw error;
+
+        return { success: true };
+    } catch (error: any) {
+        console.error('[saveCustomModel] Error:', error);
+        return { success: false, error: error.message || 'Gagal menyimpan model custom' };
     }
 }
 

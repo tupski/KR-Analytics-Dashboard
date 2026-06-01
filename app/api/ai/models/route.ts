@@ -60,6 +60,8 @@ export async function GET(request: NextRequest) {
             modelId: row.model_id,
             displayName: row.display_name,
             enabled: row.enabled,
+            isCustom: row.is_custom ?? false,
+            isActive: row.is_active ?? true,
             capabilities: row.capabilities,
             pricing: row.pricing,
             raw: row.raw,
