@@ -3,6 +3,7 @@ export * from './expenses';
 export * from './monthly';
 export * from './occupancy';
 export * from './sync-status';
+export * from './cache';
 export * from './types';
 export { queryAnalytics, closeAnalyticsPool } from './db';
 export type { SyncFreshnessResult, TableSyncStatus } from './sync-freshness';

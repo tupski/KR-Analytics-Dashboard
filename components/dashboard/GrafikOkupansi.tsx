@@ -35,7 +35,7 @@ function CustomTooltip({ active, payload, label }: any) {
         <div className="bg-white border border-gray-200 rounded-lg shadow-lg p-3 text-xs">
             <p className="font-semibold text-gray-900 mb-1">{formatDate(label)}</p>
             <p style={{ color }} className="font-medium">
-                Tingkat Hunian: {point.occupancyRate.toFixed(1)}% ({levelLabel(point.occupancyRate)})
+                Tingkat Okupansi: {point.occupancyRate.toFixed(1)}% ({levelLabel(point.occupancyRate)})
             </p>
             <p className="text-gray-600 mt-0.5">
                 Kamar Terisi: <strong>{point.occupiedUnits}</strong> dari {point.totalUnits} kamar

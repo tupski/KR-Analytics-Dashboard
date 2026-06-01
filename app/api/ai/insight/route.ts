@@ -26,6 +26,13 @@ interface InsightRequestBody {
     title?: string;
     forceRefresh?: boolean;
     withCompare?: boolean;
+    /** Per-page context for insight relevance */
+    pageContext?: {
+        summary?: string;
+        kpis?: Record<string, number>;
+        topLocations?: Array<{ name: string; value: number }>;
+        alerts?: string[];
+    };
 }
 
 const MAX_TOOL_ITERATIONS = 4;
@@ -57,6 +64,7 @@ export async function POST(request: NextRequest) {
             reportPeriodMode,
             forceRefresh = false,
             withCompare = false,
+            pageContext,
         } = body;
 
         if (!page || !prompt) {
@@ -115,6 +123,28 @@ export async function POST(request: NextRequest) {
                 ? `\n\nPERMINTAAN TAMBAHAN: Lakukan analisis komparatif dengan periode sebelumnya yang relevan (kemarin, minggu lalu, bulan lalu, atau tahun lalu). Gunakan tools compare_periods untuk mendapat delta otomatis. Dalam jawaban: - Sertakan severity label (🚨/⚠️/✅/📈/🏆) berdasarkan besarnya perubahan - Jelaskan makna bisnis dari perubahan tersebut, bukan hanya angka - Identifikasi penyebab potensial dari tren yang terdeteksi - Beri 1-2 rekomendasi actionable spesifik berdasarkan temuan perbandingan ini`
                 : '';
 
+            // Per-page context for more relevant insights
+            let pageContextStr = '';
+            if (pageContext) {
+                const parts: string[] = [];
+                if (pageContext.summary) parts.push(`Ringkasan Halaman: ${pageContext.summary}`);
+                if (pageContext.kpis) {
+                    const kpiStr = Object.entries(pageContext.kpis)
+                        .map(([k, v]) => `  - ${k}: ${v}`).join('\n');
+                    parts.push(`KPI Halaman:\n${kpiStr}`);
+                }
+                if (pageContext.topLocations && pageContext.topLocations.length > 0) {
+                    const locStr = pageContext.topLocations
+                        .map(l => `  - ${l.name}: ${l.value}`).join('\n');
+                    parts.push(`Lokasi Teratas:\n${locStr}`);
+                }
+                if (pageContext.alerts && pageContext.alerts.length > 0) {
+                    const alertStr = pageContext.alerts.map(a => `  - ⚠️ ${a}`).join('\n');
+                    parts.push(`Alert Halaman:\n${alertStr}`);
+                }
+                pageContextStr = `\n\n## Konteks Halaman Saat Ini\n${parts.join('\n')}`;
+            }
+
             const systemContent = `# KRAI - AI Business Copilot Kakarama Room
 
 Kamu adalah KRAI, AI Business Copilot untuk Kakarama Room (bisnis penyewaan apartemen & kamar harian di Indonesia).
@@ -129,7 +159,13 @@ Kamu berperan sebagai Business Intelligence Analyst yang membantu owner memahami
 - Jangan hanya menyebut angka — jelaskan makna bisnisnya
 - Akhiri dengan 1-2 rekomendasi spesifik
 
-${quickContext}`;
+## Tool Preference & Routing Strategy
+- **Panel tools FIRST**: get_dashboard_kpi_panel (KPI umum), get_marketing_panel (marketing), get_operations_panel (operasional), get_financial_panel (keuangan)
+- **MAX 1-3 tools per answer**. Jika butuh lebih, minta user narrow question.
+- **Date parsing**: Parse date/range dulu, lalu panggil tool dengan exact startDate/endDate.
+- Individual tools: get_occupancy_by_location, get_expense_breakdown, get_billing_breakdown_by_category, get_stay_duration_analysis, get_weekday_weekend_analysis, get_checkin_busy_hours
+
+${quickContext}${pageContextStr}`;
 
             const userMessage = prompt + compareSuffix;
 

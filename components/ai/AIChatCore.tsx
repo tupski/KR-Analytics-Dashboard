@@ -770,7 +770,7 @@ export default function AIChatCore({
                                 className="inline-flex items-center gap-1 px-2.5 py-1 text-xs text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
                             >
                                 <RotateCw className="w-3 h-3" />
-                                Retry (model sama)
+                                Coba lagi
                             </button>
                             <button
                                 onClick={(e) => {

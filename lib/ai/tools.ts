@@ -13,11 +13,39 @@
  *     via getReportPeriodSetting() from DB.
  */
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════════
+ * COMPOSITE ROUTING STRATEGY — PRIORITAS TOOL PANEL
+ * ═══════════════════════════════════════════════════════════════════════════════
+ *
+ * Gunakan composite panel tools FIRST sebelum tool individual:
+ *
+ *   get_dashboard_kpi_panel  → General business overview, dashboard KPI
+ *   get_marketing_panel      → Marketing questions (performa marketing, sumber tamu)
+ *   get_operations_panel     → Operational (occupancy, check-in, shift, employee)
+ *   get_financial_panel      → Financial (profit, payment, revenue)
+ *
+ * Gunakan tool individual hanya untuk pertanyaan spesifik:
+ *   get_occupancy_by_location    → Specific occupancy by location
+ *   get_billing_breakdown        → Specific billing breakdown
+ *   get_expense_breakdown        → Specific expense details (kategori)
+ *   get_stay_duration_analysis   → Stay duration specifics
+ *
+ * RULES:
+ *   - Max 1-3 tools per answer. Jika >3 diperlukan, minta user narrow question.
+ *   - Untuk date questions: parse date/range dulu, baru call tool dengan
+ *     exact startDate/endDate parameters.
+ *   - Prefer composite panels → always use panel jika question covers multiple areas.
+ * ═══════════════════════════════════════════════════════════════════════════════
+ */
+
 import { createServerClient } from '@/lib/supabase/server';
 import { getReportPeriodSetting } from '@/lib/get-report-period-setting';
 import { getTodayReportRange } from '@/lib/get-report-period-setting';
 import { getReportPeriodRange } from '@/lib/reporting-period';
 import type { ReportPeriodMode } from '@/lib/reporting-period';
+import { queryAnalytics, parseNumeric } from '@/lib/analytics/db';
+import { withCache, pickTTL } from '@/lib/analytics/cache';
 
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const MAX_RANGE_DAYS = 730; // 2 years
@@ -568,9 +596,22 @@ async function fetchCheckinHeatmap(start: string, end: string, location?: string
 
 /**
  * fetchExpenseBreakdown — breakdown pengeluaran per kategori dalam periode.
- * Panggil RPC get_expense_breakdown_summary.
+ * Panggil RPC get_expense_breakdown_summary (simple) atau analytics_expense_summary (extended).
+ * Extended mode: support category filter + comparison data.
  */
-async function fetchExpenseBreakdown(start: string, end: string, location?: string): Promise<any> {
+async function fetchExpenseBreakdown(
+    start: string,
+    end: string,
+    location?: string,
+    category?: string,
+    comparisonStartDate?: string,
+    comparisonEndDate?: string,
+): Promise<any> {
+    // If extended params present, delegate to analytics DB version
+    if (category || comparisonStartDate || comparisonEndDate) {
+        return fetchExpenseBreakdownExtended(start, end, location, category, comparisonStartDate, comparisonEndDate);
+    }
+
     const supabase = createServerClient();
     const { data, error } = await supabase.rpc('get_expense_breakdown_summary', {
         p_start_date: start,
@@ -711,6 +752,545 @@ async function fetchPerformanceByShift(start: string, end: string, location?: st
         period: { start_date: start, end_date: end, location: location || null },
         shifts: data || [],
     };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// NEW ANALYTICS TOOLS (2026-06-01) — query analytics DB pool directly
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * fetchCheckinBusyHours — check-in distribution by hour buckets.
+ * Queries transactions mirror for checkin_at hour extraction with timezone.
+ */
+async function fetchCheckinBusyHours(
+    startDate: string,
+    endDate: string,
+    location?: string,
+    comparisonStartDate?: string,
+    comparisonEndDate?: string,
+    reportPeriodMode?: string,
+): Promise<any> {
+    const params: Record<string, any> = { startDate, endDate, location, comparisonStartDate, comparisonEndDate, reportPeriodMode };
+    return withCache('checkin_busy_hours', params, pickTTL(startDate, endDate), async () => {
+        let whereClause = `t.is_deleted = false AND (t.created_at AT TIME ZONE 'Asia/Jakarta')::DATE >= $1::date AND (t.created_at AT TIME ZONE 'Asia/Jakarta')::DATE <= $2::date`;
+        const queryParams: any[] = [startDate, endDate];
+        let paramIdx = 3;
+        if (location) {
+            whereClause += ` AND t.apartment_location = $${paramIdx++}`;
+            queryParams.push(location);
+        }
+
+        const sql = `
+            SELECT
+                EXTRACT(HOUR FROM (t.created_at AT TIME ZONE 'Asia/Jakarta'))::INT as hour_bucket,
+                COUNT(*)::INT as transaction_count,
+                COALESCE(SUM(COALESCE(t.cash_amount,0) + COALESCE(t.transfer_amount,0)), 0) as total_revenue
+            FROM transactions t
+            WHERE ${whereClause}
+            GROUP BY hour_bucket
+            ORDER BY hour_bucket
+        `;
+
+        const rows = await queryAnalytics<any>(sql, queryParams);
+
+        let comparison: any = null;
+        if (comparisonStartDate && comparisonEndDate) {
+            let compWhere = `t.is_deleted = false AND (t.created_at AT TIME ZONE 'Asia/Jakarta')::DATE >= $1::date AND (t.created_at AT TIME ZONE 'Asia/Jakarta')::DATE <= $2::date`;
+            const compParams: any[] = [comparisonStartDate, comparisonEndDate];
+            let compIdx = 3;
+            if (location) {
+                compWhere += ` AND t.apartment_location = $${compIdx++}`;
+                compParams.push(location);
+            }
+            const compRows = await queryAnalytics<any>(
+                `SELECT EXTRACT(HOUR FROM (t.created_at AT TIME ZONE 'Asia/Jakarta'))::INT as hour_bucket,
+                        COUNT(*)::INT as transaction_count
+                 FROM transactions t WHERE ${compWhere}
+                 GROUP BY hour_bucket ORDER BY hour_bucket`,
+                compParams
+            );
+            comparison = { rows: compRows };
+        }
+
+        return {
+            period: { start_date: startDate, end_date: endDate, location: location || null },
+            hourly_distribution: rows,
+            peak_hour: rows.length > 0
+                ? rows.reduce((a: any, b: any) => a.transaction_count > b.transaction_count ? a : b)
+                : null,
+            comparison,
+        };
+    });
+}
+
+/**
+ * fetchOccupancyByLocation — analyze occupancy per apartment location with comparison.
+ * Uses analytics_occupancy_daily and nomor_kamar for total units.
+ */
+async function fetchOccupancyByLocation(
+    startDate: string,
+    endDate?: string,
+    location?: string,
+    comparisonStartDate?: string,
+    comparisonEndDate?: string,
+    reportPeriodMode?: string,
+): Promise<any> {
+    const effectiveEnd = endDate || startDate;
+    const params: Record<string, any> = { startDate, endDate: effectiveEnd, location, comparisonStartDate, comparisonEndDate, reportPeriodMode };
+    return withCache('occupancy_by_location', params, pickTTL(startDate, effectiveEnd), async () => {
+        // Get total units per location
+        const totalUnitsSql = `SELECT lokasi, COUNT(*)::INT as total_units FROM nomor_kamar WHERE is_deleted = false GROUP BY lokasi`;
+        const totalUnits = await queryAnalytics<any>(totalUnitsSql);
+
+        let occWhere = `od.date_wib >= $1::date AND od.date_wib <= $2::date`;
+        const occParams: any[] = [startDate, effectiveEnd];
+        let occIdx = 3;
+        if (location) {
+            occWhere += ` AND od.apartment_location = $${occIdx++}`;
+            occParams.push(location);
+        }
+
+        const occSql = `
+            SELECT
+                od.apartment_location,
+                COUNT(DISTINCT od.room_number) as total_rooms_seen,
+                COUNT(DISTINCT od.room_number) FILTER (WHERE od.is_occupied) as occupied_units,
+                COUNT(DISTINCT od.date_wib) as days_count
+            FROM analytics_occupancy_daily od
+            WHERE ${occWhere}
+            GROUP BY od.apartment_location
+            ORDER BY od.apartment_location
+        `;
+        const occRows = await queryAnalytics<any>(occSql, occParams);
+
+        // Compute occupancy rates and merge with total units
+        const locations = occRows.map((r: any) => {
+            const tu = totalUnits.find((u: any) => u.lokasi === r.apartment_location);
+            const totalUnitsCount = tu ? parseNumeric(tu.total_units) : 0;
+            const occupied = parseNumeric(r.occupied_units);
+            const daysCount = Math.max(parseNumeric(r.days_count), 1);
+            const dailyAvgOccupied = occupied / daysCount;
+            const avgOccupancyRate = totalUnitsCount > 0 ? Math.round((dailyAvgOccupied / totalUnitsCount) * 10000) / 100 : 0;
+
+            return {
+                location_name: r.apartment_location,
+                total_units: totalUnitsCount,
+                occupied_units: Math.round(dailyAvgOccupied),
+                vacant_units: totalUnitsCount - Math.round(dailyAvgOccupied),
+                occupancy_rate: avgOccupancyRate,
+            };
+        });
+
+        // Comparison data
+        let comparison: any = null;
+        if (comparisonStartDate && comparisonEndDate) {
+            let compWhere = `od.date_wib >= $1::date AND od.date_wib <= $2::date`;
+            const compParams: any[] = [comparisonStartDate, comparisonEndDate];
+            let compIdx = 3;
+            if (location) {
+                compWhere += ` AND od.apartment_location = $${compIdx++}`;
+                compParams.push(location);
+            }
+            const compRows = await queryAnalytics<any>(
+                `SELECT od.apartment_location,
+                        COUNT(DISTINCT od.room_number) FILTER (WHERE od.is_occupied) as occupied_units,
+                        COUNT(DISTINCT od.date_wib) as days_count
+                 FROM analytics_occupancy_daily od WHERE ${compWhere}
+                 GROUP BY od.apartment_location`,
+                compParams
+            );
+            const compMap: Record<string, any> = {};
+            for (const r of compRows) {
+                const tu = totalUnits.find((u: any) => u.lokasi === r.apartment_location);
+                const totalUnitsCount = tu ? parseNumeric(tu.total_units) : 0;
+                const daysCount = Math.max(parseNumeric(r.days_count), 1);
+                compMap[r.apartment_location] = {
+                    occupancy_rate: totalUnitsCount > 0
+                        ? Math.round(((parseNumeric(r.occupied_units) / daysCount) / totalUnitsCount) * 10000) / 100
+                        : 0,
+                };
+            }
+
+            const withComparison = locations.map((loc: any) => {
+                const prev = compMap[loc.location_name];
+                const prevRate = prev?.occupancy_rate || 0;
+                return {
+                    ...loc,
+                    previous_occupancy_rate: prevRate,
+                    delta: Math.round((loc.occupancy_rate - prevRate) * 100) / 100,
+                    trend: loc.occupancy_rate > prevRate ? 'up' : loc.occupancy_rate < prevRate ? 'down' : 'stable',
+                };
+            });
+            comparison = { period: { start_date: comparisonStartDate, end_date: comparisonEndDate } };
+            return { period: { start_date: startDate, end_date: effectiveEnd, location: location || null }, locations: withComparison, comparison };
+        }
+
+        return { period: { start_date: startDate, end_date: effectiveEnd, location: location || null }, locations };
+    });
+}
+
+/**
+ * fetchBillingBreakdownByCategory — breakdown billing/transactions by category.
+ * Queries tagihan_bulanan for billing breakdown with comparison.
+ */
+async function fetchBillingBreakdownByCategory(
+    startDate: string,
+    endDate: string,
+    location?: string,
+    category?: string,
+    comparisonStartDate?: string,
+    comparisonEndDate?: string,
+): Promise<any> {
+    const params: Record<string, any> = { startDate, endDate, location, category, comparisonStartDate, comparisonEndDate };
+    return withCache('billing_breakdown', params, pickTTL(startDate, endDate), async () => {
+        let whereClause = `t.is_deleted = false AND t.due_date >= $1::date AND t.due_date <= $2::date`;
+        const queryParams: any[] = [startDate, endDate];
+        let paramIdx = 3;
+        if (location) {
+            whereClause += ` AND t.apartment_location = $${paramIdx++}`;
+            queryParams.push(location);
+        }
+        if (category) {
+            whereClause += ` AND t.status = $${paramIdx++}`;
+            queryParams.push(category);
+        }
+
+        const sql = `
+            SELECT
+                t.status as category,
+                COALESCE(SUM(t.amount), 0) as total_amount,
+                COUNT(*)::INT as transaction_count,
+                ROUND(COALESCE(SUM(t.amount), 0) * 100.0 / NULLIF(SUM(SUM(t.amount)) OVER (), 0), 2) as percentage
+            FROM tagihan_bulanan t
+            WHERE ${whereClause}
+            GROUP BY t.status
+            ORDER BY total_amount DESC
+        `;
+        const rows = await queryAnalytics<any>(sql, queryParams);
+
+        let comparison: any = null;
+        if (comparisonStartDate && comparisonEndDate) {
+            let compWhere = `t.is_deleted = false AND t.due_date >= $1::date AND t.due_date <= $2::date`;
+            const compParams: any[] = [comparisonStartDate, comparisonEndDate];
+            let compIdx = 3;
+            if (location) {
+                compWhere += ` AND t.apartment_location = $${compIdx++}`;
+                compParams.push(location);
+            }
+            if (category) {
+                compWhere += ` AND t.status = $${compIdx++}`;
+                compParams.push(category);
+            }
+            const compRows = await queryAnalytics<any>(
+                `SELECT t.status as category, COALESCE(SUM(t.amount), 0) as total_amount
+                 FROM tagihan_bulanan t WHERE ${compWhere}
+                 GROUP BY t.status`,
+                compParams
+            );
+            const compMap: Record<string, number> = {};
+            for (const r of compRows) compMap[r.category] = parseNumeric(r.total_amount);
+
+            const withComparison = rows.map((r: any) => {
+                const prev = compMap[r.category] || 0;
+                return {
+                    ...r,
+                    total_amount: parseNumeric(r.total_amount),
+                    previous_amount: prev,
+                    delta: parseNumeric(r.total_amount) - prev,
+                    trend: parseNumeric(r.total_amount) > prev ? 'up' : parseNumeric(r.total_amount) < prev ? 'down' : 'stable',
+                };
+            });
+            comparison = { period: { start_date: comparisonStartDate, end_date: comparisonEndDate } };
+            return { period: { start_date: startDate, end_date: endDate, location: location || null }, breakdown: withComparison, comparison };
+        }
+
+        return {
+            period: { start_date: startDate, end_date: endDate, location: location || null },
+            breakdown: rows.map((r: any) => ({ ...r, total_amount: parseNumeric(r.total_amount) })),
+        };
+    });
+}
+
+/**
+ * fetchExpenseBreakdownExtended — extended version with comparison & category filter.
+ * Uses analytics_expense_summary for fast aggregations.
+ */
+async function fetchExpenseBreakdownExtended(
+    startDate: string,
+    endDate: string,
+    location?: string,
+    category?: string,
+    comparisonStartDate?: string,
+    comparisonEndDate?: string,
+): Promise<any> {
+    const params: Record<string, any> = { startDate, endDate, location, category, comparisonStartDate, comparisonEndDate };
+    return withCache('expense_breakdown_ext', params, pickTTL(startDate, endDate), async () => {
+        let whereClause = `e.date_wib >= $1::date AND e.date_wib <= $2::date`;
+        const queryParams: any[] = [startDate, endDate];
+        let paramIdx = 3;
+        if (location) {
+            whereClause += ` AND e.apartment_location = $${paramIdx++}`;
+            queryParams.push(location);
+        }
+        if (category) {
+            whereClause += ` AND e.category = $${paramIdx++}`;
+            queryParams.push(category);
+        }
+
+        const sql = `
+            SELECT
+                e.category,
+                COALESCE(SUM(e.total_amount), 0) as total_expense,
+                COALESCE(SUM(e.expense_count), 0)::INT as transaction_count,
+                ROUND(COALESCE(SUM(e.total_amount), 0) * 100.0 / NULLIF(SUM(SUM(e.total_amount)) OVER (), 0), 2) as percentage
+            FROM analytics_expense_summary e
+            WHERE ${whereClause}
+            GROUP BY e.category
+            ORDER BY total_expense DESC
+        `;
+        const rows = await queryAnalytics<any>(sql, queryParams);
+
+        let comparison: any = null;
+        if (comparisonStartDate && comparisonEndDate) {
+            let compWhere = `e.date_wib >= $1::date AND e.date_wib <= $2::date`;
+            const compParams: any[] = [comparisonStartDate, comparisonEndDate];
+            let compIdx = 3;
+            if (location) {
+                compWhere += ` AND e.apartment_location = $${compIdx++}`;
+                compParams.push(location);
+            }
+            if (category) {
+                compWhere += ` AND e.category = $${compIdx++}`;
+                compParams.push(category);
+            }
+            const compRows = await queryAnalytics<any>(
+                `SELECT e.category, COALESCE(SUM(e.total_amount), 0) as total_expense
+                 FROM analytics_expense_summary e WHERE ${compWhere}
+                 GROUP BY e.category`,
+                compParams
+            );
+            const compMap: Record<string, number> = {};
+            for (const r of compRows) compMap[r.category] = parseNumeric(r.total_expense);
+
+            const withComparison = rows.map((r: any) => {
+                const prev = compMap[r.category] || 0;
+                const curr = parseNumeric(r.total_expense);
+                return {
+                    category: r.category,
+                    total_expense: curr,
+                    transaction_count: parseNumeric(r.transaction_count),
+                    percentage: parseNumeric(r.percentage),
+                    previous_expense: prev,
+                    delta: Math.round((curr - prev) * 100) / 100,
+                    trend: curr > prev ? 'up' : curr < prev ? 'down' : 'stable',
+                };
+            });
+            comparison = { period: { start_date: comparisonStartDate, end_date: comparisonEndDate } };
+            return { period: { start_date: startDate, end_date: endDate, location: location || null }, breakdown: withComparison, comparison };
+        }
+
+        return {
+            period: { start_date: startDate, end_date: endDate, location: location || null },
+            breakdown: rows.map((r: any) => ({
+                category: r.category,
+                total_expense: parseNumeric(r.total_expense),
+                transaction_count: parseNumeric(r.transaction_count),
+                percentage: parseNumeric(r.percentage),
+            })),
+        };
+    });
+}
+
+/**
+ * fetchStayDurationAnalysis — analyze stay duration types with comparison.
+ * Queries transactions mirror for rental_duration analysis.
+ */
+async function fetchStayDurationAnalysis(
+    startDate: string,
+    endDate: string,
+    location?: string,
+    comparisonStartDate?: string,
+    comparisonEndDate?: string,
+): Promise<any> {
+    const params: Record<string, any> = { startDate, endDate, location, comparisonStartDate, comparisonEndDate };
+    return withCache('stay_duration_analysis', params, pickTTL(startDate, endDate), async () => {
+        let whereClause = `t.is_deleted = false AND (t.created_at AT TIME ZONE 'Asia/Jakarta')::DATE >= $1::date AND (t.created_at AT TIME ZONE 'Asia/Jakarta')::DATE <= $2::date`;
+        const queryParams: any[] = [startDate, endDate];
+        let paramIdx = 3;
+        if (location) {
+            whereClause += ` AND t.apartment_location = $${paramIdx++}`;
+            queryParams.push(location);
+        }
+
+        const sql = `
+            SELECT
+                CASE
+                    WHEN t.rental_duration = 0 THEN 'transit'
+                    WHEN t.rental_duration = 1 THEN 'fullday'
+                    WHEN t.rental_duration = 2 THEN 'promo_malam'
+                    ELSE 'overnight_regular'
+                END as duration_type,
+                COUNT(*)::INT as booking_count,
+                COALESCE(SUM(COALESCE(t.cash_amount,0) + COALESCE(t.transfer_amount,0)), 0) as revenue,
+                ROUND(AVG(t.rental_duration), 2) as average_duration_hours,
+                ROUND(COUNT(*) * 100.0 / NULLIF(SUM(COUNT(*)) OVER (), 0), 2) as percentage
+            FROM transactions t
+            WHERE ${whereClause}
+            GROUP BY duration_type
+            ORDER BY booking_count DESC
+        `;
+        const rows = await queryAnalytics<any>(sql, queryParams);
+
+        let comparison: any = null;
+        if (comparisonStartDate && comparisonEndDate) {
+            let compWhere = `t.is_deleted = false AND (t.created_at AT TIME ZONE 'Asia/Jakarta')::DATE >= $1::date AND (t.created_at AT TIME ZONE 'Asia/Jakarta')::DATE <= $2::date`;
+            const compParams: any[] = [comparisonStartDate, comparisonEndDate];
+            let compIdx = 3;
+            if (location) {
+                compWhere += ` AND t.apartment_location = $${compIdx++}`;
+                compParams.push(location);
+            }
+            const compRows = await queryAnalytics<any>(
+                `SELECT CASE WHEN t.rental_duration = 0 THEN 'transit' WHEN t.rental_duration = 1 THEN 'fullday' WHEN t.rental_duration = 2 THEN 'promo_malam' ELSE 'overnight_regular' END as duration_type,
+                        COUNT(*)::INT as booking_count, COALESCE(SUM(COALESCE(t.cash_amount,0) + COALESCE(t.transfer_amount,0)), 0) as revenue
+                 FROM transactions t WHERE ${compWhere}
+                 GROUP BY duration_type`,
+                compParams
+            );
+            const compMap: Record<string, any> = {};
+            for (const r of compRows) compMap[r.duration_type] = { booking_count: parseNumeric(r.booking_count), revenue: parseNumeric(r.revenue) };
+
+            const withComparison = rows.map((r: any) => {
+                const prev = compMap[r.duration_type];
+                const currRevenue = parseNumeric(r.revenue);
+                const prevRevenue = prev?.revenue || 0;
+                return {
+                    duration_type: r.duration_type,
+                    booking_count: parseNumeric(r.booking_count),
+                    revenue: currRevenue,
+                    percentage: parseNumeric(r.percentage),
+                    average_duration_hours: parseNumeric(r.average_duration_hours),
+                    previous_booking_count: prev?.booking_count || 0,
+                    previous_revenue: prevRevenue,
+                    revenue_delta: Math.round((currRevenue - prevRevenue) * 100) / 100,
+                    revenue_trend: currRevenue > prevRevenue ? 'up' : currRevenue < prevRevenue ? 'down' : 'stable',
+                };
+            });
+            comparison = { period: { start_date: comparisonStartDate, end_date: comparisonEndDate } };
+            return { period: { start_date: startDate, end_date: endDate, location: location || null }, duration_distribution: withComparison, comparison };
+        }
+
+        return {
+            period: { start_date: startDate, end_date: endDate, location: location || null },
+            duration_distribution: rows.map((r: any) => ({
+                duration_type: r.duration_type,
+                booking_count: parseNumeric(r.booking_count),
+                revenue: parseNumeric(r.revenue),
+                percentage: parseNumeric(r.percentage),
+                average_duration_hours: parseNumeric(r.average_duration_hours),
+            })),
+        };
+    });
+}
+
+/**
+ * fetchWeekdayWeekendAnalysis — analyze weekday vs weekend performance.
+ * Uses analytics_daily_revenue table with DOW extraction.
+ */
+async function fetchWeekdayWeekendAnalysis(
+    startDate: string,
+    endDate: string,
+    comparisonStartDate?: string,
+    comparisonEndDate?: string,
+    reportPeriodMode?: string,
+): Promise<any> {
+    const params: Record<string, any> = { startDate, endDate, comparisonStartDate, comparisonEndDate, reportPeriodMode };
+    return withCache('weekday_weekend_analysis', params, pickTTL(startDate, endDate), async () => {
+        const sql = `
+            WITH day_classification AS (
+                SELECT
+                    date_wib,
+                    CASE
+                        WHEN EXTRACT(DOW FROM date_wib) IN (0, 6) THEN 'weekend'
+                        ELSE 'weekday'
+                    END as day_type,
+                    total_revenue,
+                    transaction_count,
+                    unique_rooms
+                FROM analytics_daily_revenue
+                WHERE date_wib >= $1::date AND date_wib < $2::date
+            )
+            SELECT
+                day_type,
+                COALESCE(SUM(total_revenue), 0) as total_revenue,
+                COALESCE(SUM(transaction_count), 0) as total_transactions,
+                COALESCE(AVG(unique_rooms), 0) as avg_occupied_rooms,
+                COUNT(DISTINCT date_wib) as day_count
+            FROM day_classification
+            GROUP BY day_type
+        `;
+        // Get today's progress for interpretation
+        const { format } = await import('date-fns');
+        const { toZonedTime } = await import('date-fns-tz');
+        const tz = 'Asia/Jakarta';
+        const nowInWib = toZonedTime(new Date(), tz);
+        const todayStr = format(nowInWib, 'yyyy-MM-dd');
+        const currentHour = nowInWib.getHours();
+        const isEarlyDay = currentHour < 4; // 00:00-03:59 WIB = pergantian hari
+
+        const rows = await queryAnalytics<any>(sql, [startDate, endDate]);
+
+        const weekday = rows.find((r: any) => r.day_type === 'weekday');
+        const weekend = rows.find((r: any) => r.day_type === 'weekend');
+
+        // Comparison
+        let comparison: any = null;
+        if (comparisonStartDate && comparisonEndDate) {
+            const compRows = await queryAnalytics<any>(`
+                WITH day_classification AS (
+                    SELECT date_wib,
+                        CASE WHEN EXTRACT(DOW FROM date_wib) IN (0, 6) THEN 'weekend' ELSE 'weekday' END as day_type,
+                        total_revenue, transaction_count, unique_rooms
+                    FROM analytics_daily_revenue
+                    WHERE date_wib >= $1::date AND date_wib < $2::date
+                )
+                SELECT day_type, COALESCE(SUM(total_revenue), 0) as total_revenue,
+                       COALESCE(SUM(transaction_count), 0) as total_transactions
+                FROM day_classification GROUP BY day_type
+            `, [comparisonStartDate, comparisonEndDate]);
+            const compWeekday = compRows.find((r: any) => r.day_type === 'weekday');
+            const compWeekend = compRows.find((r: any) => r.day_type === 'weekend');
+
+            const wdRev = parseNumeric(weekday?.total_revenue);
+            const weRev = parseNumeric(weekend?.total_revenue);
+            const compWdRev = parseNumeric(compWeekday?.total_revenue);
+            const compWeRev = parseNumeric(compWeekend?.total_revenue);
+
+            comparison = {
+                period: { start_date: comparisonStartDate, end_date: comparisonEndDate },
+                weekday_revenue_delta: wdRev - compWdRev,
+                weekend_revenue_delta: weRev - compWeRev,
+            };
+        }
+
+        return {
+            period: { start_date: startDate, end_date: endDate },
+            weekday_revenue: parseNumeric(weekday?.total_revenue),
+            weekend_revenue: parseNumeric(weekend?.total_revenue),
+            weekday_occupancy: parseNumeric(weekday?.avg_occupied_rooms),
+            weekend_occupancy: parseNumeric(weekend?.avg_occupied_rooms),
+            weekday_transactions: parseNumeric(weekday?.total_transactions),
+            weekend_transactions: parseNumeric(weekend?.total_transactions),
+            weekday_days: parseNumeric(weekday?.day_count),
+            weekend_days: parseNumeric(weekend?.day_count),
+            current_day_progress: { date: todayStr, hour: currentHour, is_early_day: isEarlyDay },
+            is_early_day: isEarlyDay,
+            interpretation_text: isEarlyDay
+                ? `Hari ini baru mulai (${currentHour}:00 WIB). Data mungkin belum mewakili kondisi penuh hari ini.`
+                : `Data mencakup periode ${startDate} hingga ${endDate}.`,
+            comparison,
+        };
+    });
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1302,15 +1882,18 @@ export const OPENAI_TOOLS = [
         type: 'function',
         function: {
             name: 'get_expense_breakdown',
-            description: 'BREAKDOWN PENGELUARAN — rincian pengeluaran per kategori, total, jumlah transaksi, persentase. Berguna untuk: "pengeluaran terbesar kategori apa?", "breakdown biaya", "analisis pengeluaran".',
+            description: 'BREAKDOWN PENGELUARAN — rincian pengeluaran per kategori, total, jumlah transaksi, persentase. Extended with category filter + comparison. Supports date range, category filter, comparison. Berguna untuk: "pengeluaran terbesar kategori apa?", "breakdown biaya", "analisis pengeluaran dengan perbandingan".',
             parameters: {
                 type: 'object',
                 properties: {
-                    start_date: { type: 'string', description: 'Tanggal mulai YYYY-MM-DD' },
-                    end_date: { type: 'string', description: 'Tanggal akhir YYYY-MM-DD' },
-                    location: { type: 'string', description: 'Filter lokasi (opsional)' },
+                    startDate: { type: 'string', description: 'Start date YYYY-MM-DD' },
+                    endDate: { type: 'string', description: 'End date YYYY-MM-DD' },
+                    location: { type: 'string', description: 'Filter by apartment location (opsional)' },
+                    category: { type: 'string', description: 'Filter by expense category (opsional)' },
+                    comparisonStartDate: { type: 'string', description: 'Comparison period start YYYY-MM-DD (opsional)' },
+                    comparisonEndDate: { type: 'string', description: 'Comparison period end YYYY-MM-DD (opsional)' },
                 },
-                required: ['start_date', 'end_date'],
+                required: ['startDate', 'endDate'],
             },
         },
     },
@@ -1410,6 +1993,103 @@ export const OPENAI_TOOLS = [
                     limit: { type: 'number', description: 'Jumlah hasil, default 10, max 50' },
                 },
                 required: ['start_date', 'end_date'],
+            },
+        },
+    },
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // NEW ANALYTICS TOOLS (2026-06-01) — analytics DB with date + comparison
+    // ═══════════════════════════════════════════════════════════════════════════
+    {
+        type: 'function',
+        function: {
+            name: 'get_checkin_busy_hours',
+            description: 'CEK DISTRIBUSI JAM CHECKIN — check-in distribution by hour buckets (e.g., 13:00 = 13:00-13:59). Returns hours sorted by volume. Supports date range, comparison, location filter. Berguna untuk: "jam berapa paling ramai checkin?", "peak hour check-in", "pola jam checkin".',
+            parameters: {
+                type: 'object',
+                properties: {
+                    startDate: { type: 'string', description: 'Start date YYYY-MM-DD' },
+                    endDate: { type: 'string', description: 'End date YYYY-MM-DD' },
+                    location: { type: 'string', description: 'Filter by apartment location name (opsional)' },
+                    comparisonStartDate: { type: 'string', description: 'Comparison period start YYYY-MM-DD (opsional)' },
+                    comparisonEndDate: { type: 'string', description: 'Comparison period end YYYY-MM-DD (opsional)' },
+                    reportPeriodMode: { type: 'string', enum: ['calendar_day', 'hotel_day'], description: 'Report period mode (opsional)' },
+                },
+                required: ['startDate', 'endDate'],
+            },
+        },
+    },
+    {
+        type: 'function',
+        function: {
+            name: 'get_occupancy_by_location',
+            description: 'OCCUPANCY PER LOKASI — analyze occupancy per apartment location. Returns location_name, total_units, occupied_units, vacant_units, occupancy_rate, comparison data, delta, trend. Supports single date, date range, comparison range. Berguna untuk: "okupansi per lokasi", "lokasi mana yang paling penuh?".',
+            parameters: {
+                type: 'object',
+                properties: {
+                    startDate: { type: 'string', description: 'Start date or single date YYYY-MM-DD' },
+                    endDate: { type: 'string', description: 'End date YYYY-MM-DD. If omitted, treats startDate as single date (opsional)' },
+                    location: { type: 'string', description: 'Filter by apartment location name (opsional)' },
+                    comparisonStartDate: { type: 'string', description: 'Comparison period start YYYY-MM-DD (opsional)' },
+                    comparisonEndDate: { type: 'string', description: 'Comparison period end YYYY-MM-DD (opsional)' },
+                    reportPeriodMode: { type: 'string', enum: ['calendar_day', 'hotel_day'], description: 'Report period mode (opsional)' },
+                },
+                required: ['startDate'],
+            },
+        },
+    },
+    {
+        type: 'function',
+        function: {
+            name: 'get_billing_breakdown_by_category',
+            description: 'BREAKDOWN BILLING — breakdown billing/transactions by category (paid/unpaid). Returns category, total_amount, transaction_count, percentage, comparison data, delta, trend. Supports date range and comparison. Berguna untuk: "breakdown tagihan per status", "rincian billing paid vs unpaid".',
+            parameters: {
+                type: 'object',
+                properties: {
+                    startDate: { type: 'string', description: 'Start date YYYY-MM-DD' },
+                    endDate: { type: 'string', description: 'End date YYYY-MM-DD' },
+                    location: { type: 'string', description: 'Filter by apartment location (opsional)' },
+                    category: { type: 'string', description: 'Filter by specific category/status (opsional)' },
+                    comparisonStartDate: { type: 'string', description: 'Comparison period start YYYY-MM-DD (opsional)' },
+                    comparisonEndDate: { type: 'string', description: 'Comparison period end YYYY-MM-DD (opsional)' },
+                },
+                required: ['startDate', 'endDate'],
+            },
+        },
+    },
+    {
+        type: 'function',
+        function: {
+            name: 'get_stay_duration_analysis',
+            description: 'ANALISIS DURASI MENGINAP — analyze stay duration types (transit, fullday, promo malam, overnight/regular). Returns duration_type, booking_count, revenue, percentage, average_duration_hours, comparison data, delta, trend. Berguna untuk: "rata-rata durasi menginap?", "pola durasi customer", "transit vs fullday".',
+            parameters: {
+                type: 'object',
+                properties: {
+                    startDate: { type: 'string', description: 'Start date YYYY-MM-DD' },
+                    endDate: { type: 'string', description: 'End date YYYY-MM-DD' },
+                    location: { type: 'string', description: 'Filter by apartment location (opsional)' },
+                    comparisonStartDate: { type: 'string', description: 'Comparison period start YYYY-MM-DD (opsional)' },
+                    comparisonEndDate: { type: 'string', description: 'Comparison period end YYYY-MM-DD (opsional)' },
+                },
+                required: ['startDate', 'endDate'],
+            },
+        },
+    },
+    {
+        type: 'function',
+        function: {
+            name: 'get_weekday_weekend_analysis',
+            description: 'ANALISIS WEEKDAY VS WEEKEND — analyze weekday vs weekend performance. Understands weekday, weekend, and pergantian hari (newly changed day). If current day just started, explain data may not represent full day. Returns weekday_revenue, weekend_revenue, weekday_occupancy, weekend_occupancy, booking counts, current_day_progress, is_early_day boolean, interpretation_text.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    startDate: { type: 'string', description: 'Start date YYYY-MM-DD' },
+                    endDate: { type: 'string', description: 'End date YYYY-MM-DD' },
+                    comparisonStartDate: { type: 'string', description: 'Comparison period start YYYY-MM-DD (opsional)' },
+                    comparisonEndDate: { type: 'string', description: 'Comparison period end YYYY-MM-DD (opsional)' },
+                    reportPeriodMode: { type: 'string', enum: ['calendar_day', 'hotel_day'], description: 'Report period mode (opsional)' },
+                },
+                required: ['startDate', 'endDate'],
             },
         },
     },
@@ -1627,13 +2307,6 @@ export async function executeTool(call: ToolCall): Promise<any> {
                     call.arguments.location,
                 );
 
-            case 'get_expense_breakdown':
-                return await fetchExpenseBreakdown(
-                    call.arguments.start_date,
-                    call.arguments.end_date,
-                    call.arguments.location,
-                );
-
             case 'get_net_profit_per_location':
                 return await fetchNetProfitPerLocation(
                     call.arguments.start_date,
@@ -1675,6 +2348,68 @@ export async function executeTool(call: ToolCall): Promise<any> {
                     call.arguments.end_date,
                     call.arguments.location,
                     call.arguments.limit || 10,
+                );
+
+            // ═══════════════════════════════════════════════════════════════════════════
+            // NEW ANALYTICS TOOLS (2026-06-01)
+            // ═══════════════════════════════════════════════════════════════════════════
+
+            case 'get_checkin_busy_hours':
+                return await fetchCheckinBusyHours(
+                    call.arguments.startDate,
+                    call.arguments.endDate,
+                    call.arguments.location,
+                    call.arguments.comparisonStartDate,
+                    call.arguments.comparisonEndDate,
+                    call.arguments.reportPeriodMode,
+                );
+
+            case 'get_occupancy_by_location':
+                return await fetchOccupancyByLocation(
+                    call.arguments.startDate,
+                    call.arguments.endDate,
+                    call.arguments.location,
+                    call.arguments.comparisonStartDate,
+                    call.arguments.comparisonEndDate,
+                    call.arguments.reportPeriodMode,
+                );
+
+            case 'get_billing_breakdown_by_category':
+                return await fetchBillingBreakdownByCategory(
+                    call.arguments.startDate,
+                    call.arguments.endDate,
+                    call.arguments.location,
+                    call.arguments.category,
+                    call.arguments.comparisonStartDate,
+                    call.arguments.comparisonEndDate,
+                );
+
+            case 'get_expense_breakdown':
+                return await fetchExpenseBreakdown(
+                    call.arguments.startDate,
+                    call.arguments.endDate,
+                    call.arguments.location,
+                    call.arguments.category,
+                    call.arguments.comparisonStartDate,
+                    call.arguments.comparisonEndDate,
+                );
+
+            case 'get_stay_duration_analysis':
+                return await fetchStayDurationAnalysis(
+                    call.arguments.startDate,
+                    call.arguments.endDate,
+                    call.arguments.location,
+                    call.arguments.comparisonStartDate,
+                    call.arguments.comparisonEndDate,
+                );
+
+            case 'get_weekday_weekend_analysis':
+                return await fetchWeekdayWeekendAnalysis(
+                    call.arguments.startDate,
+                    call.arguments.endDate,
+                    call.arguments.comparisonStartDate,
+                    call.arguments.comparisonEndDate,
+                    call.arguments.reportPeriodMode,
                 );
 
             default:

@@ -11,6 +11,7 @@ import { syncTagihanFeeLunasCombined } from './sync/tagihan-fee-lunas';
 import { syncMasterTables } from './sync/master';
 import { refreshAllSummaries } from './sync/summary';
 import { getMetadata } from './sync/metadata';
+import { invalidateAnalyticsCache, refreshMartCache } from './sync/cache';
 
 let lastSyncResult: { rowsSynced: number; rowsDeleted: number; durationMs: number } | null = null;
 let isSyncing = false;
@@ -52,6 +53,18 @@ async function runSyncCycle() {
         // Refresh analytics summary tables (from local mirrors only)
         const summaryResult = await refreshAllSummaries(pool, { mode: 'window' });
         console.log(`[sync] summary tables: ${summaryResult.summaries.map(s => `${s.tableName}=${s.rowsInserted}`).join(', ')}`);
+
+        // ── Post-sync: cache invalidation ──
+        if (config.cacheInvalidateOnSync) {
+            const invalidated = await invalidateAnalyticsCache(pool);
+            console.log(`[sync] cache: invalidated ${invalidated} query cache entries`);
+        }
+
+        // ── Post-sync: mart cache refresh ──
+        if (config.martRefreshMode !== 'none') {
+            const refreshed = await refreshMartCache(pool, config.martRefreshMode);
+            console.log(`[sync] cache: refreshed ${refreshed.length} mart tables [${refreshed.join(', ')}]`);
+        }
 
         const totalSynced = txResult.rowsSynced + pResult.rowsSynced + tbResult.rowsSynced + flResult.parent.rowsSynced + flResult.items.rowsSynced;
         const totalDeleted = txResult.rowsDeleted + pResult.rowsDeleted + tbResult.rowsDeleted + flResult.parent.rowsDeleted + flResult.items.rowsDeleted;

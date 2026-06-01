@@ -17,4 +17,8 @@ export const config = {
 
     // Health server
     healthPort: parseInt(process.env.SYNC_WORKER_PORT || '9090', 10),
+
+    // Cache invalidation after sync
+    cacheInvalidateOnSync: process.env.CACHE_INVALIDATE_ON_SYNC !== 'false',
+    martRefreshMode: (process.env.MART_REFRESH_MODE || 'partial') as 'none' | 'partial' | 'full',
 } as const;
