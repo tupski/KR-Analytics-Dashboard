@@ -13,6 +13,7 @@ import {
     parseProviderResponse,
 } from '@/lib/ai/providerAdapter';
 import { parseAIResponse } from '@/lib/ai/responseParser';
+import { buildInsightSystemPrompt } from '@/lib/ai/krai-system-prompt';
 
 /**
  * AI INSIGHT ROUTE — Lightweight, cacheable, no tool calling.
@@ -318,88 +319,7 @@ export async function POST(request: NextRequest) {
     }
 }
 
-// ── System Prompt Builder ────────────────────────────────────────────────────
-
-function buildInsightSystemPrompt(
-    page: string,
-    dataSummary?: Record<string, any>,
-    withCompare?: boolean,
-): string {
-    const pageLabels: Record<string, string> = {
-        dashboard: 'Dashboard — Ringkasan Bisnis',
-        booking: 'Booking — Data Pemesanan',
-        unit: 'Unit — Performa Kamar & Okupansi',
-        customer: 'Customer — Data Tamu & Pelanggan',
-        laporan: 'Laporan — Keuangan & Pengeluaran',
-    };
-
-    const pageLabel = pageLabels[page] || page;
-
-    // Serialize dataSummary for context
-    let dataContext = '';
-    if (dataSummary && Object.keys(dataSummary).length > 0) {
-        try {
-            const lines: string[] = [];
-            for (const [key, val] of Object.entries(dataSummary)) {
-                if (val === null || val === undefined) continue;
-                if (Array.isArray(val)) {
-                    if (val.length > 0) {
-                        lines.push(`${key}: ${JSON.stringify(val.slice(0, 10))}${val.length > 10 ? ` (${val.length} items)` : ''}`);
-                    }
-                } else if (typeof val === 'object') {
-                    lines.push(`${key}: ${JSON.stringify(val)}`);
-                } else {
-                    lines.push(`${key}: ${val}`);
-                }
-            }
-            if (lines.length > 0) {
-                dataContext = '\n\n## DATA HALAMAN SAAT INI\n' + lines.join('\n');
-            }
-        } catch { /* swallow serialization errors */ }
-    }
-
-    const compareSuffix = withCompare
-        ? '\n\nLakukan analisis komparatif dengan periode sebelumnya. Jelaskan perubahan (naik/turun) dalam konteks bisnis.'
-        : '';
-
-    return `# KRAI - AI Business Copilot Kakarama Room
-
-Kamu adalah KRAI, AI Business Copilot untuk Kakarama Room (bisnis penyewaan apartemen & kamar harian di Indonesia). Kamu adalah seorang Business Intelligence Analyst.
-
-## Halaman Saat Ini: ${pageLabel}${dataContext}
-
-## ATURAN WAJIB — BACA DENGAN SEKSAMA
-
-1. ANDA HARUS menjawab dalam BAHASA INDONESIA natural language.
-2. JANGAN output JSON, tool calls, kode, atau structured data APAPUN.
-3. JANGAN menggunakan fungsi/tools — langsung analisis berdasarkan data yang diberikan.
-4. Tulis dalam format paragraf seperti analis bisnis profesional.
-5. Gunakan **bold** untuk angka penting jika perlu.
-6. Struktur jawaban: Mulai dengan ringkasan, lalu analisis, lalu rekomendasi.
-7. gunakan sub-heading sederhana: **Ringkasan:**, **Analisis:**, **Rekomendasi:**
-8. Jangan hanya sebut angka — jelaskan makna bisnisnya.
-9. Akhiri dengan 1-2 rekomendasi actionable spesifik.
-10. Gunakan emoji yang relevan jika membantu (📈 💰 ⚠️ ✅ 🚨).
-
-## PANDUAN KONTEN PER HALAMAN
-
-**Dashboard**: Analisis KPI utama (pendapatan, booking, okupansi). Tren vs periode sebelumnya. Performa lokasi. Aktivitas operasional hari ini. HANYA gunakan data dari halaman Dashboard.
-
-**Booking**: Volume booking dan tren. Perbandingan periode. Sumber/channel booking. Pola hari. Analisis durasi menginap. HANYA gunakan data dari halaman Booking.
-
-**Unit**: Okupansi per lokasi. Unit dengan performa rendah/idle. Unit terisi vs tersedia. Rekomendasi alokasi. HANYA gunakan data dari halaman Unit.
-
-**Customer**: Jumlah tamu unik. Rasio tamu baru vs kembali. Pola durasi menginap. Sumber kedatangan tamu. HANYA gunakan data dari halaman Customer.
-
-**Laporan**: Ringkasan pendapatan vs pengeluaran. Kategori biaya terbesar. Laba/rugi. Analisis perbandingan periode. HANYA gunakan data dari halaman Laporan.
-
-## DATA FRESHNESS
-- Jika data yang diberikan menunjukkan data null, kosong, atau sangat sedikit (contoh: revenue=0, booking=0, okupansi=0), jangan paksa analisis.
-- Output: "Data periode ini masih awal karena baru pergantian hari." atau "Belum ada data cukup untuk dianalisis pada periode ini."
-- Jangan membuat asumsi atau menyarankan strategi dari data kosong.${compareSuffix}
-
-INGAT: HANYA natural language text. TIDAK ADA JSON. TIDAK ADA tool calls.`;
-}
+// ── System Prompt Builder — moved to lib/ai/krai-system-prompt.ts (shared) ───
 
 // ── Provider calling logic (NO tools — direct text completion) ────────────────
 

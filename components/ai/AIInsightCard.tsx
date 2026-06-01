@@ -30,7 +30,7 @@ const CLIENT_CACHE_TTL = 5 * 60 * 1000; // 5 min client-side fallback
 
 export default function AIInsightCard({
     prompt,
-    title = 'KR-AI Insight',
+    title = 'KRAI Insight',
     className = '',
     alternativeQuestions,
     page = 'default',
