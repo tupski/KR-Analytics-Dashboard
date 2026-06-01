@@ -18,7 +18,6 @@ export interface KPIData {
   revenueToday: number;
   avgOccupancy: number;
   availableUnits: number;
-  // Optional comparison snapshot
   prev?: {
     booking: number;
     revenue: number;
@@ -35,7 +34,7 @@ export interface RevenueDataPoint {
   date: string;
   revenue: number;
   transactionCount: number;
-  label?: string; // Formatted label for chart display
+  label?: string;
 }
 
 export type RevenueFilter = 'daily' | 'weekly' | 'monthly' | 'yearly';
@@ -113,7 +112,7 @@ export type LocationHealthItem = {
   totalUnits: number;
   occupiedUnits: number;
   availableUnits: number;
-  occupancyRate: number; // 0-100
+  occupancyRate: number;
   revenue: number;
   revenuePerUnit: number;
   status: LocationHealthStatus;
@@ -143,4 +142,79 @@ export interface DashboardInsight {
   severity: InsightSeverity;
   metric?: string;
   trend?: InsightTrend;
+}
+
+// ─── Expense / Keuangan DTOs ───
+
+export interface ExpenseItem {
+  id: number;
+  namaPengeluaran: string;
+  jumlah: number;
+  tanggal: string;
+  keterangan: string | null;
+  category: string | null;
+  apartmentLocation: string | null;
+  roomNumber: string | null;
+  userId: string | null;
+  createdAt: string;
+}
+
+export interface ExpenseCategory {
+  id: number;
+  name: string;
+  isDefault: boolean;
+}
+
+// ─── Booking Table DTOs ───
+
+export interface BookingTableItem {
+  id: number;
+  customerName: string;
+  apartmentLocation: string;
+  roomNumber: string;
+  checkinAt: string | null;
+  checkoutAt: string | null;
+  rentalDuration: number;
+  cashAmount: number;
+  transferAmount: number;
+  marketingName: string | null;
+  marketingFee: number | null;
+  shift: string | null;
+  inputBy: string;
+  status: string | null;
+}
+
+// ─── Report / Filter Params ───
+
+export interface ReportPeriod {
+  startDate: string;
+  endDate: string;
+  label?: string;
+  mode?: string;
+}
+
+export interface DashboardFilterParams {
+  startDate: string;
+  endDate: string;
+  location?: string | null;
+  comparison?: KPICompareMode;
+}
+
+// ─── API Response Wrapper ───
+
+export interface ApiResponse<T> {
+  success: boolean;
+  data?: T;
+  error?: string;
+  message?: string;
+}
+
+// ─── Tab Config ───
+
+export interface DashboardTabConfig {
+  id: string;
+  label: string;
+  icon?: string;
+  enabled: boolean;
+  sortOrder: number;
 }
