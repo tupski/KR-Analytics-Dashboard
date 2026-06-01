@@ -12,6 +12,10 @@ import { getIdleSeverity } from '@/lib/dashboard/unit-performance';
 import type { LocationHealthItem, IdleUnitItem, UnitPerformanceItem, MarketingPerformanceItem, MarketingPerformanceStatus } from '@/types/dashboard';
 import { normalizeMarketingName, getMarketingStatus } from '@/lib/dashboard/marketing-performance';
 import type { UnitPerformanceData } from '@/lib/dashboard/unit-performance';
+import { getKPIData } from '@/lib/dashboard/kpi';
+import { getRevenueSummary } from '@/lib/dashboard/revenue';
+import { getOccupancySummary } from '@/lib/dashboard/occupancy';
+import { getOperationsSummary } from '@/lib/dashboard/operations';
 import { format, subDays, subWeeks, subMonths, subYears, startOfWeek, startOfMonth, startOfYear, parse } from 'date-fns';
 import { id as idLocale } from 'date-fns/locale';
 import { toZonedTime } from 'date-fns-tz';
@@ -1006,4 +1010,64 @@ export async function fetchOccupancyDataForExport() {
         console.error('Error fetching occupancy data for export:', error);
         return [];
     }
+}
+
+// ============================================================
+// fetchDashboardSnapshot()
+//
+// Consolidated dashboard snapshot — replaces 6+ parallel fetches.
+// Calls the aggregation layer (lib/dashboard/*) which deduplicates
+// room count and occupancy queries.
+//
+// All existing individual action functions remain unchanged for
+// backward compatibility.
+// ============================================================
+
+export interface DashboardSnapshot {
+    kpi: import('@/lib/dashboard/kpi').KPIDataResult;
+    revenue: import('@/lib/dashboard/revenue').RevenueSummaryResult;
+    occupancy: import('@/lib/dashboard/occupancy').OccupancySummaryResult;
+    operations: import('@/lib/dashboard/operations').OperationsSummaryResult;
+}
+
+/**
+ * Fetch complete dashboard data snapshot.
+ *
+ * Calls all 4 aggregation functions in parallel. Room count is
+ * fetched once and passed to getKPIData + getOccupancySummary
+ * to avoid duplicate nomor_kamar queries.
+ *
+ * @param params.startDate  Optional start date string (auto-calculated if omitted)
+ * @param params.endDate    Optional end date string (auto-calculated if omitted)
+ * @param params.location   Optional location filter
+ */
+export async function fetchDashboardSnapshot(params: {
+    startDate?: string;
+    endDate?: string;
+    location?: string;
+}): Promise<DashboardSnapshot> {
+    const { getDateBoundaries } = await import('@/lib/dashboard/periods');
+    const boundaries = await getDateBoundaries(new Date());
+    const dayStart = params.startDate ? new Date(params.startDate) : boundaries.dayStart;
+    const dayEnd = params.endDate ? new Date(params.endDate) : boundaries.dayEnd;
+
+    // Fetch total room count once — pass to downstream functions
+    const { count: totalUnits } = await createServerClient()
+        .from('nomor_kamar')
+        .select('id', { count: 'exact', head: true });
+
+    const sharedParams = {
+        startDate: dayStart,
+        endDate: dayEnd,
+        location: params.location,
+    };
+
+    const [kpi, revenue, occupancy, operations] = await Promise.all([
+        getKPIData({ ...sharedParams, totalUnits: totalUnits || 0 }),
+        getRevenueSummary(sharedParams),
+        getOccupancySummary({ ...sharedParams, totalUnits: totalUnits || 0 }),
+        getOperationsSummary(sharedParams),
+    ]);
+
+    return { kpi, revenue, occupancy, operations };
 }
