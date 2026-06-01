@@ -142,7 +142,7 @@ export default function AIToolsTable() {
                         {filtered.length === 0 && (
                             <tr>
                                 <td colSpan={8} className="px-3 py-8 text-center text-xs text-gray-500">
-                                    Tidak ada tool yang cocok dengan filter "{search}"
+                                    Tidak ada tool yang cocok dengan filter &ldquo;{search}&rdquo;
                                 </td>
                             </tr>
                         )}

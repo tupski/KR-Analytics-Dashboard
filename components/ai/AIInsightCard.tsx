@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { RefreshCw, Sparkles, ChevronDown, ChevronUp, Lightbulb, GitCompareArrows, ChevronRight, Zap, AlertCircle } from 'lucide-react';
 import MarkdownRenderer from './MarkdownRenderer';
 import { generateFollowUpQuestions } from '@/lib/ai/followUpQuestions';
@@ -52,11 +52,12 @@ export default function AIInsightCard({
     const [currentPrompt, setCurrentPrompt] = useState(prompt);
     const [compareMode, setCompareMode] = useState(false);
     const [dynamicSuggestions, setDynamicSuggestions] = useState<string[]>([]);
-
+    const initialFetchDone = useRef(false);
 
     // Client-side cache helpers (secondary cache — primary is server-side)
-    const getClientCacheKey = (p: string, cmp: boolean) =>
-        CACHE_PREFIX + btoa(encodeURIComponent(page + '|' + p + (cmp ? '|cmp' : ''))).slice(0, 32);
+    const getClientCacheKey = useCallback((p: string, cmp: boolean) =>
+        CACHE_PREFIX + btoa(encodeURIComponent(page + '|' + p + (cmp ? '|cmp' : ''))).slice(0, 32),
+        [page]);
 
     const getClientCached = useCallback((p: string, cmp: boolean): string | null => {
         try {
@@ -67,7 +68,7 @@ export default function AIInsightCard({
             }
         } catch { }
         return null;
-    }, [page]);
+    }, [getClientCacheKey]);
 
     const setClientCache = useCallback((p: string, cmp: boolean, text: string) => {
         try {
@@ -76,7 +77,7 @@ export default function AIInsightCard({
                 JSON.stringify({ text, timestamp: Date.now() }),
             );
         } catch { }
-    }, [page]);
+    }, [getClientCacheKey]);
 
     // Load AI Insight settings on mount
     useEffect(() => {
@@ -97,6 +98,17 @@ export default function AIInsightCard({
         }
         loadSettings();
     }, []);
+
+    /** Generate follow-up questions from shared lib (no LLM call) */
+    const generateDynamicSuggestions = useCallback((_originalPrompt: string, insightText: string) => {
+        const qs = generateFollowUpQuestions({
+            pageContext: (page as KraiPageContext) || 'dashboard',
+            insightText,
+            hasComparison: !!comparisonMode && comparisonMode !== 'none',
+            hasActiveFilters: !!rangePreset || !!startDate,
+        });
+        setDynamicSuggestions(qs);
+    }, [page, comparisonMode, rangePreset, startDate]);
 
     const fetchInsight = useCallback(async (
         p: string,
@@ -186,26 +198,15 @@ export default function AIInsightCard({
         } finally {
             setLoading(false);
         }
-    }, [page, title, rangePreset, startDate, endDate, comparisonMode, comparisonStartDate, comparisonEndDate, reportPeriodMode, getClientCached, setClientCache]);
+    }, [page, title, rangePreset, startDate, endDate, comparisonMode, comparisonStartDate, comparisonEndDate, reportPeriodMode, getClientCached, setClientCache, generateDynamicSuggestions]);
 
+    // Fetch insight once on mount when aiEnabled resolves
     useEffect(() => {
-        if (aiEnabled !== null) {
+        if (aiEnabled !== null && !initialFetchDone.current) {
+            initialFetchDone.current = true;
             fetchInsight(currentPrompt, compareMode);
         }
-        // Only run on mount when aiEnabled is resolved
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [aiEnabled]);
-
-    /** Generate follow-up questions from shared lib (no LLM call) */
-    const generateDynamicSuggestions = useCallback((_originalPrompt: string, insightText: string) => {
-        const qs = generateFollowUpQuestions({
-            pageContext: (page as KraiPageContext) || 'dashboard',
-            insightText,
-            hasComparison: !!comparisonMode && comparisonMode !== 'none',
-            hasActiveFilters: !!rangePreset || !!startDate,
-        });
-        setDynamicSuggestions(qs);
-    }, [page, comparisonMode, rangePreset, startDate]);
+    }, [aiEnabled, fetchInsight, currentPrompt, compareMode]);
 
     const handleAlternativeClick = (q: string) => {
         setCurrentPrompt(q);

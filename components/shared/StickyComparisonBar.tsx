@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { ChevronDown, ChevronUp, Calendar, GitCompareArrows, Filter } from 'lucide-react';
 import DateRangePicker, {
     getDateRangeFromPreset,
@@ -77,12 +77,12 @@ export default function StickyComparisonBar({
     const barRef = useRef<HTMLDivElement>(null);
 
     // Derive current date range from preset / custom dates
-    const currentRange: DateRangeValue = (() => {
+    const currentRange: DateRangeValue = useMemo(() => {
         if (rangePreset === 'custom' && startDate && endDate) {
             return { from: new Date(startDate), to: new Date(endDate) };
         }
         return getDateRangeFromPreset(rangePreset);
-    })();
+    }, [rangePreset, startDate, endDate]);
 
     // Derive comparison range
     const compRange = comparisonMode !== 'none'
@@ -114,7 +114,7 @@ export default function StickyComparisonBar({
                     : undefined,
             );
         }
-    }, [rangePreset, comparisonMode, comparisonStartDate, comparisonEndDate, expanded, startDate, endDate]);
+    }, [rangePreset, comparisonMode, comparisonStartDate, comparisonEndDate, expanded, startDate, endDate, currentRange]);
 
     const emitChange = useCallback(
         (preset: DatePreset, range: DateRangeValue, compMode: ComparisonMode, compCustom?: DateRangeValue) => {
