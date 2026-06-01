@@ -26,8 +26,9 @@ export default function MobileBottomNav() {
 
     return (
         <>
-            {/* Bottom nav bar */}
-            <nav className="lg:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 z-50">
+            {/* Bottom nav bar — safe-area padding for modern phones */}
+            <nav className="lg:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 z-50"
+                style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}>
                 <div className="flex items-center justify-around px-2 py-2">
                     {coreItems.map((item) => {
                         const Icon = item.icon;

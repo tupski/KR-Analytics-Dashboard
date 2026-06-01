@@ -16,7 +16,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
 
     return (
         <AppSettingsProvider>
-            <div className="flex h-screen overflow-hidden">
+            <div className="flex min-h-dvh bg-gray-50">
                 <MobileNavController userEmail={userEmail} />
                 <ContentWrapper>
                     {children}

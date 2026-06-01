@@ -35,13 +35,13 @@ export default function ContentWrapper({ children }: { children: React.ReactNode
 
     return (
         <div
-            className={`flex-1 flex flex-col overflow-hidden transition-all duration-200 ${collapsed ? 'lg:ml-16' : 'lg:ml-64'}`}
+            className={`flex-1 flex flex-col transition-all duration-200 ${collapsed ? 'lg:ml-16' : 'lg:ml-64'}`}
         >
             {/* Mobile sticky header — placed here so it's inside the flex column */}
             <MobileHeader />
 
-            {/* Scrollable content area */}
-            <div className="flex-1 overflow-y-auto flex flex-col" data-scroll-container>
+            {/* Scrollable content area — pb-16 accounts for mobile bottom nav (64px) */}
+            <div className="flex-1 overflow-y-auto flex flex-col pb-16 lg:pb-0" data-scroll-container>
                 {children}
             </div>
         </div>
