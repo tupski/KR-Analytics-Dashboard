@@ -1,7 +1,8 @@
 /**
- * 🗑️ SAFE TO REMOVE — Verified unused as of 2026-05-27 audit.
- * This file is dead code. No imports reference it.
- * Awaiting approval before deletion.
+ * 🗑️ DEPRECATED — Do not import or use.
+ * Replaced by lib/analytics/cache.ts (new analytics caching layer).
+ * Verified unused as of 2026-05-27 audit. No imports reference this file.
+ * Will be removed after all pages migrate to new analytics cache.
  */
 
 import { unstable_cache } from 'next/cache';

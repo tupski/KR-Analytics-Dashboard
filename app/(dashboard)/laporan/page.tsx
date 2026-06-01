@@ -1,9 +1,8 @@
 import { fetchLaporanData, fetchHighOccupancyLocations } from './actions';
 import type { DateFilter } from './actions';
-import AIInsightCard from '@/components/ai/AIInsightCard';
+import KraiInsightCard from '@/components/ai/KraiInsightCard';
 import LaporanClient from '@/components/laporan/LaporanClient';
-import ReportPeriodChip from '@/components/shared/ReportPeriodChip';
-import DateFilterBar from '@/components/shared/DateFilterBar';
+import FilterBarWrapper from '@/components/shared/FilterBarWrapper';
 import ExportButton from '@/components/shared/ExportButton';
 
 export default async function LaporanPage({
@@ -37,34 +36,32 @@ export default async function LaporanPage({
                         <h1 className="text-xl sm:text-2xl lg:text-3xl font-bold text-gray-900">Laporan</h1>
                         <p className="mt-1 text-xs sm:text-sm text-gray-500">Laporan keuangan & operasional</p>
                     </div>
-                    <ReportPeriodChip className="hidden sm:inline-flex mt-1 flex-shrink-0" />
                 </div>
             </div>
 
             <main className="px-4 sm:px-6 lg:px-8 py-4 sm:py-6 space-y-4 sm:space-y-6">
-                {/* Date Filter Bar */}
+                {/* KraiInsightCard — collapsed by default, at very top */}
+                <KraiInsightCard
+                    pageContext="laporan"
+                    title="Insight Laporan"
+                    subtitle="Analisis laporan keuangan dan pengeluaran"
+                    defaultCollapsed={true}
+                />
+
+                {/* Filter Bar + Export */}
                 <div className="flex flex-wrap items-center justify-between gap-3">
-                    <DateFilterBar
+                    <FilterBarWrapper
                         basePath="/laporan"
-                        defaultPreset={rangePreset as any || filter as any || 'today'}
-                        defaultStartDate={startDate}
-                        defaultEndDate={endDate}
-                        defaultComparisonMode={comparisonMode as any || 'none'}
-                        defaultComparisonStartDate={comparisonStartDate}
-                        defaultComparisonEndDate={comparisonEndDate}
+                        rangePreset={rangePreset || filter || 'today'}
+                        startDate={startDate}
+                        endDate={endDate}
+                        comparisonMode={comparisonMode || 'none'}
+                        comparisonStartDate={comparisonStartDate}
+                        comparisonEndDate={comparisonEndDate}
                         extraPreservedParams={['filter']}
                     />
-                </div>
-
-                {/* Export Button */}
-                <div className="flex justify-end mb-2">
                     <ExportButton page="laporan" label="Export Laporan" />
                 </div>
-
-                <AIInsightCard
-                    title="Insight Laporan"
-                    prompt="Buat ringkasan laporan keuangan: total pendapatan, pengeluaran terbesar, lokasi terbaik, dan apakah ada tagihan yang belum dibayar. Berikan 1 rekomendasi. Maksimal 4 kalimat."
-                />
 
                 <LaporanClient data={data} highOccupancy={highOccupancy} />
             </main>

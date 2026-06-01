@@ -4,10 +4,11 @@ import UnitOverview from '@/components/unit/UnitOverview';
 import UnitLocationCards from '@/components/unit/UnitLocationCards';
 import UnitGrid from '@/components/unit/UnitGrid';
 import UnitStickyHeader from '@/components/unit/UnitStickyHeader';
-import DateFilterBar from '@/components/shared/DateFilterBar';
-import AIInsightCard from '@/components/ai/AIInsightCard';
-import ReportPeriodChip from '@/components/shared/ReportPeriodChip';
+import KraiInsightCard from '@/components/ai/KraiInsightCard';
+import MetricCardHorizontal from '@/components/dashboard/MetricCardHorizontal';
+import FilterBarWrapper from '@/components/shared/FilterBarWrapper';
 import ExportButton from '@/components/shared/ExportButton';
+import { Building, User, CheckCircle } from 'lucide-react';
 
 const VALID_FILTERS: UnitDateFilter[] = ['today', 'yesterday', '7days', 'month', 'year'];
 
@@ -36,6 +37,10 @@ export default async function UnitPage({
         fetchUnitLocations(),
     ]);
 
+    const occupancyRate = unitData.totalUnits > 0
+        ? Math.round((unitData.occupiedToday / unitData.totalUnits) * 10000) / 100
+        : 0;
+
     return (
         <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50/30">
             <div className="bg-white border-b border-gray-200 px-4 sm:px-6 lg:px-8 py-3 sm:py-5">
@@ -46,52 +51,66 @@ export default async function UnitPage({
                             Kelola dan pantau status seluruh unit kamar Kakarama Room
                         </p>
                     </div>
-                    <ReportPeriodChip className="hidden sm:inline-flex mt-1 flex-shrink-0" />
                 </div>
             </div>
 
             <main className="px-4 sm:px-6 lg:px-8 py-4 sm:py-6 space-y-4 sm:space-y-6">
-                {/* Date Filter Bar — unified date range + comparison */}
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                    <DateFilterBar
-                        basePath="/unit"
-                        defaultPreset={rangePreset as any || dateFilter as any || 'today'}
-                        defaultStartDate={startDate}
-                        defaultEndDate={endDate}
-                        defaultComparisonMode={comparisonMode as any || 'none'}
-                        defaultComparisonStartDate={comparisonStartDate}
-                        defaultComparisonEndDate={comparisonEndDate}
-                        extraPreservedParams={['location', 'filter']}
+                {/* KraiInsightCard — collapsed by default, at very top */}
+                <KraiInsightCard
+                    pageContext="unit"
+                    title="Insight Okupansi"
+                    subtitle="Analisis performa unit dan okupansi"
+                    defaultCollapsed={true}
+                />
+
+                {/* Metric Cards — replacing UnitOverview */}
+                <div className="grid grid-cols-3 gap-3 sm:gap-4">
+                    <MetricCardHorizontal
+                        icon={<Building className="w-5 h-5" />}
+                        title="Total Unit"
+                        value={unitData.totalUnits}
+                        isComparisonActive={false}
+                        semanticType="neutral"
+                    />
+                    <MetricCardHorizontal
+                        icon={<User className="w-5 h-5" />}
+                        title="Terisi"
+                        value={unitData.occupiedToday}
+                        subtitle={`${occupancyRate}% okupansi`}
+                        isComparisonActive={false}
+                        semanticType="occupancy"
+                    />
+                    <MetricCardHorizontal
+                        icon={<CheckCircle className="w-5 h-5" />}
+                        title="Tersedia"
+                        value={unitData.availableToday}
+                        isComparisonActive={false}
+                        semanticType="neutral"
                     />
                 </div>
 
-                {/* Sticky filter header — visible on all device sizes */}
-                <UnitStickyHeader
-                    locations={locations}
-                    currentLocation={locationFilter}
-                    currentFilter={dateFilter}
-                    dateLabel={unitData.dateLabel}
-                />
-
-                {/* Export Button */}
-                <div className="flex justify-end mb-2">
+                {/* Filter Bar — StickyComparisonBar */}
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                    <FilterBarWrapper
+                        basePath="/unit"
+                        rangePreset={rangePreset || dateFilter || 'today'}
+                        startDate={startDate}
+                        endDate={endDate}
+                        comparisonMode={comparisonMode || 'none'}
+                        comparisonStartDate={comparisonStartDate}
+                        comparisonEndDate={comparisonEndDate}
+                        extraPreservedParams={['location', 'filter']}
+                    />
                     <ExportButton page="unit" label="Export Unit" />
                 </div>
 
-                {/* AI Insight - Top */}
-                <AIInsightCard
-                    title="Insight Okupansi"
-                    prompt="Analisis okupansi unit: sebutkan lokasi dengan okupansi tertinggi dan terendah, serta rekomendasi untuk meningkatkan okupansi. Maksimal 3 kalimat."
-                />
-
-                <UnitOverview
-                    totalUnits={unitData.totalUnits}
-                    occupiedToday={unitData.occupiedToday}
-                    availableToday={unitData.availableToday}
+                {/* Location filter — simplified, no date pills */}
+                <UnitStickyHeader
+                    locations={locations}
+                    currentLocation={locationFilter}
                 />
 
                 <UnitLocationCards summaries={unitData.locationSummaries} />
-
                 <UnitGrid units={unitData.units} dateFilter={dateFilter} />
             </main>
         </div>

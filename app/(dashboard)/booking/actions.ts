@@ -156,65 +156,90 @@ export async function fetchLocations(): Promise<string[]> {
 }
 
 /**
- * Fetch booking statistics summary
- * READ ONLY
+ * Fetch booking statistics summary — supports unified date params + comparison.
  */
-export async function fetchBookingStats() {
+export async function fetchBookingStats(dateParams?: DateFilterParams) {
     const supabase = createServerClient();
-    const timezone = 'Asia/Jakarta';
-    const today = format(toZonedTime(new Date(), timezone), 'yyyy-MM-dd');
 
-    try {
-        // Today's bookings count — report-period-aware (calendar_day or hotel_day)
-        const { start: todayStart, end: todayEnd } = await getTodayReportRange();
+    // Determine main range from dateParams or fall back to today
+    const mode = await getReportPeriodSetting();
+    const range = dateParams?.rangePreset
+        ? computeDateRange(dateParams.rangePreset, dateParams.startDate, dateParams.endDate, mode)
+        : await getTodayReportRange();
 
-        const { count: todayCount } = await supabase
-            .from('transactions')
-            .select('id', { count: 'exact', head: true })
-            .gte('checkin_at', todayStart)
-            .lte('checkin_at', todayEnd);
+    // Main period stats
+    const { count: bookingCount } = await supabase
+        .from('transactions')
+        .select('id', { count: 'exact', head: true })
+        .gte('checkin_at', range.start)
+        .lte('checkin_at', range.end);
 
-        // This week's bookings — period-aware (rolling 7-day window, using report period boundaries)
-        const weekAgo = new Date();
-        weekAgo.setDate(weekAgo.getDate() - 7);
-        const weekAgoStr = format(toZonedTime(weekAgo, timezone), 'yyyy-MM-dd');
-        const weekMode = await getReportPeriodSetting();
-        const weekRange = getReportPeriodRange(weekAgoStr, weekMode);
+    const { data: revenueData } = await supabase
+        .from('transactions')
+        .select('cash_amount, transfer_amount')
+        .gte('checkin_at', range.start)
+        .lte('checkin_at', range.end);
 
-        const { count: weekCount } = await supabase
-            .from('transactions')
-            .select('id', { count: 'exact', head: true })
-            .gte('checkin_at', weekRange.start);
+    const totalRevenue = revenueData?.reduce(
+        (sum: number, t: any) => sum + (t.cash_amount || 0) + (t.transfer_amount || 0), 0
+    ) || 0;
 
-        // This month's bookings — calendar-aligned (month boundaries), intentional
-        // Not period-dependent: "Bulan Ini" uses calendar month boundaries for predictability
-        const monthStart = format(toZonedTime(new Date(), timezone), 'yyyy-MM-01');
+    const totalTransactions = revenueData?.length || 0;
 
-        const { count: monthCount } = await supabase
-            .from('transactions')
-            .select('id', { count: 'exact', head: true })
-            .gte('checkin_at', `${monthStart}T00:00:00`);
+    // Average per day (for subtitle)
+    const rangeStart = new Date(range.start);
+    const rangeEnd = new Date(range.end);
+    const dayCount = Math.max(1, Math.ceil((rangeEnd.getTime() - rangeStart.getTime()) / 86400000));
 
-        // Total revenue this month — calendar-aligned, same as month count
-        const { data: monthRevenue } = await supabase
-            .from('transactions')
-            .select('cash_amount, transfer_amount')
-            .gte('checkin_at', `${monthStart}T00:00:00`);
+    // Compute comparison range
+    let comparison: {
+        prevBookingCount: number;
+        prevRevenue: number;
+        prevLabel: string;
+    } | null = null;
 
-        const totalMonthRevenue = monthRevenue?.reduce(
-            (sum: number, t: any) => sum + (t.cash_amount || 0) + (t.transfer_amount || 0), 0
-        ) || 0;
+    if (dateParams?.comparisonMode && dateParams.comparisonMode !== 'none') {
+        const cr = computeComparisonRange(
+            dateParams.comparisonMode,
+            range.start,
+            range.end,
+            dateParams.comparisonStartDate,
+            dateParams.comparisonEndDate,
+            mode,
+        );
+        if (cr) {
+            const { count: prevCount } = await supabase
+                .from('transactions')
+                .select('id', { count: 'exact', head: true })
+                .gte('checkin_at', cr.start)
+                .lte('checkin_at', cr.end);
 
-        return {
-            todayCount: todayCount || 0,
-            weekCount: weekCount || 0,
-            monthCount: monthCount || 0,
-            monthRevenue: totalMonthRevenue,
-        };
-    } catch (error) {
-        console.error('Error in fetchBookingStats:', error);
-        return { todayCount: 0, weekCount: 0, monthCount: 0, monthRevenue: 0 };
+            const { data: prevRevData } = await supabase
+                .from('transactions')
+                .select('cash_amount, transfer_amount')
+                .gte('checkin_at', cr.start)
+                .lte('checkin_at', cr.end);
+
+            const prevRevenue = prevRevData?.reduce(
+                (sum: number, t: any) => sum + (t.cash_amount || 0) + (t.transfer_amount || 0), 0
+            ) || 0;
+
+            comparison = {
+                prevBookingCount: prevCount || 0,
+                prevRevenue,
+                prevLabel: cr.label,
+            };
+        }
     }
+
+    return {
+        bookingCount: bookingCount || 0,
+        totalRevenue,
+        totalTransactions,
+        avgPerDay: dayCount > 0 ? totalRevenue / dayCount : 0,
+        comparison,
+        rangeLabel: 'label' in range ? (range as any).label : dateParams?.rangePreset || 'Periode ini',
+    };
 }
 
 /**

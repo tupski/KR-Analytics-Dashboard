@@ -1,7 +1,11 @@
 /**
- * 🗑️ SAFE TO REMOVE — Verified unused as of 2026-05-27 audit.
- * This file is dead code. No imports reference it.
- * Awaiting approval before deletion.
+ * 🗑️ DEPRECATED — Do not import or use.
+ * Replaced by:
+ *   - components/shared/DateRangeComparisonFilter.tsx (combined filter)
+ *   - components/shared/StickyComparisonBar.tsx (sticky bar)
+ *   - components/shared/DateFilterBar.tsx (URL-driven filter bar)
+ * Verified unused as of 2026-05-27 audit. No imports reference this file.
+ * Will be removed after all pages migrate to DateRangeComparisonFilter or StickyComparisonBar.
  */
 
 'use client';
@@ -173,8 +177,8 @@ export default function DateRangeComparison({ value, onChange, className = '' }:
                 <button
                     onClick={handleToggle}
                     className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${value.enabled
-                            ? 'bg-blue-600 text-white shadow-md hover:bg-blue-700'
-                            : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-50'
+                        ? 'bg-blue-600 text-white shadow-md hover:bg-blue-700'
+                        : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-50'
                         }`}
                 >
                     <ArrowLeftRight className="w-4 h-4" />

@@ -1,8 +1,9 @@
 import HeaderDashboard from '@/components/dashboard/HeaderDashboard';
 import AutoRefreshWrapper from '@/components/dashboard/AutoRefreshWrapper';
 import TabContent from '@/components/dashboard/TabContent';
+import KraiInsightCard from '@/components/ai/KraiInsightCard';
+import FilterBarWrapper from '@/components/shared/FilterBarWrapper';
 import ExportButton from '@/components/shared/ExportButton';
-import DateFilterBar from '@/components/shared/DateFilterBar';
 import {
     fetchKPIData,
     fetchRevenueData,
@@ -22,11 +23,10 @@ const VALID_COMPARE: KPICompareMode[] = ['yesterday', 'lastweek', 'lastmonth', '
 /**
  * DashboardPage - Main Dashboard Server Component
  *
- * Fetches all data in parallel, then delegates rendering to TabContent
- * which manages the operational/analitik tab system with bento-grid layout.
- *
- * Accepts date filter params: rangePreset, startDate, endDate, comparisonMode,
- * comparisonStartDate, comparisonEndDate for unified date range + comparison.
+ * Uses KraiInsightCard (collapsed by default) at very top,
+ * StickyComparisonBar for unified filter, MetricCardHorizontal
+ * for KPI cards, and CollapsibleChartTable under charts.
+ * No duplicate AI Insight — only KraiInsightCard.
  */
 export default async function DashboardPage({
     searchParams,
@@ -87,16 +87,26 @@ export default async function DashboardPage({
 
                 {/* Main Content */}
                 <main className="px-4 sm:px-6 lg:px-8 py-4 sm:py-6">
-                    {/* Date Filter Bar + Export */}
+                    {/* KraiInsightCard — collapsed by default, at very top */}
+                    <div className="mb-4">
+                        <KraiInsightCard
+                            pageContext="dashboard"
+                            title="Ringkasan Dashboard"
+                            subtitle="Analisis singkat performa bisnis hari ini"
+                            defaultCollapsed={true}
+                        />
+                    </div>
+
+                    {/* StickyComparisonBar + Export */}
                     <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
-                        <DateFilterBar
+                        <FilterBarWrapper
                             basePath="/dashboard"
-                            defaultPreset={rangePreset as any || 'last30days'}
-                            defaultStartDate={startDate}
-                            defaultEndDate={endDate}
-                            defaultComparisonMode={comparisonMode as any || 'none'}
-                            defaultComparisonStartDate={comparisonStartDate}
-                            defaultComparisonEndDate={comparisonEndDate}
+                            rangePreset={rangePreset || 'last30days'}
+                            startDate={startDate}
+                            endDate={endDate}
+                            comparisonMode={comparisonMode || 'none'}
+                            comparisonStartDate={comparisonStartDate}
+                            comparisonEndDate={comparisonEndDate}
                         />
                         <ExportButton page="dashboard" label="Export Dashboard" />
                     </div>
@@ -114,6 +124,7 @@ export default async function DashboardPage({
                         locationHealthData={locationHealthData}
                         unitPerformanceData={unitPerformanceData}
                         marketingPerformanceData={marketingPerformanceData}
+                        filterRangePreset={rangePreset}
                     />
                 </main>
             </div>

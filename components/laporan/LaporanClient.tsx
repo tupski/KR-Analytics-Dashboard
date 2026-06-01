@@ -1,7 +1,6 @@
 'use client';
 
 import { useState, useRef } from 'react';
-import { useRouter } from 'next/navigation';
 import {
     Wallet,
     TrendingUp,
@@ -11,12 +10,9 @@ import {
     X,
     Clock,
     User,
-    ChevronUp,
-    ChevronDown,
-    ChevronLeft,
-    ChevronRight,
 } from 'lucide-react';
-import type { LaporanData, RoomDetail, DateFilter, ExpenseDetail } from '@/app/(dashboard)/laporan/actions';
+import MetricCardHorizontal from '@/components/dashboard/MetricCardHorizontal';
+import type { LaporanData, RoomDetail, ExpenseDetail } from '@/app/(dashboard)/laporan/actions';
 import ExpenseCategoryModal from './ExpenseCategoryModal';
 import { formatDuration } from '@/lib/utils/formatDuration';
 import { formatCurrency } from '@/lib/utils/format';
@@ -26,26 +22,13 @@ interface LaporanClientProps {
     highOccupancy: { location: string; totalRooms: number; usedRoomDays: number; totalPossibleRoomDays: number; occupancyRate: number }[];
 }
 
-const FILTERS: { value: DateFilter; label: string }[] = [
-    { value: 'today', label: 'Hari Ini' },
-    { value: 'yesterday', label: 'Kemarin' },
-    { value: '7days', label: '7 Hari' },
-    { value: 'month', label: 'Bulan Ini' },
-    { value: 'year', label: 'Tahun Ini' },
-];
-
 export default function LaporanClient({ data, highOccupancy }: LaporanClientProps) {
-    const router = useRouter();
     const [selectedRoom, setSelectedRoom] = useState<{ location: string; room: string } | null>(null);
     const [roomDetails, setRoomDetails] = useState<RoomDetail[]>([]);
     const [roomExpenses, setRoomExpenses] = useState<ExpenseDetail[]>([]);
     const [loadingDetails, setLoadingDetails] = useState(false);
     const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
     const locationRefs = useRef<Record<string, HTMLDivElement | null>>({});
-
-    const handleFilterChange = (filter: DateFilter) => {
-        router.push(`/laporan?filter=${filter}`);
-    };
 
     const scrollToLocation = (name: string) => {
         locationRefs.current[name]?.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -85,100 +68,48 @@ export default function LaporanClient({ data, highOccupancy }: LaporanClientProp
 
     return (
         <div className="space-y-4 sm:space-y-6">
-            {/* Filter */}
-            <div className="flex flex-wrap gap-1.5 sm:gap-2">
-                {FILTERS.map(f => (
-                    <button
-                        key={f.value}
-                        onClick={() => handleFilterChange(f.value)}
-                        className={`px-2.5 sm:px-4 py-1.5 sm:py-2 text-xs sm:text-sm font-medium rounded-lg transition-colors ${data.filter === f.value
-                            ? 'bg-blue-600 text-white'
-                            : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-50'
-                            }`}
-                    >
-                        {f.label}
-                    </button>
-                ))}
-            </div>
-
-            {/* Summary Cards — equal height */}
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 auto-rows-fr">
-                <div className="bg-white rounded-xl border border-gray-200 p-3 sm:p-5 shadow-sm flex flex-col">
-                    <div className="flex items-center gap-2 sm:gap-3">
-                        <div className="p-2 sm:p-2.5 rounded-lg bg-green-50 flex-shrink-0"><Wallet className="w-4 h-4 sm:w-5 sm:h-5 text-green-600" /></div>
-                        <div className="min-w-0">
-                            <p className="text-xs sm:text-sm text-gray-500">Pendapatan</p>
-                            <p className="text-base sm:text-xl font-bold text-gray-900 truncate">{formatCurrency(data.totalRevenue)}</p>
-                            <p className="text-[10px] sm:text-xs text-gray-400">{data.totalTransactions} transaksi</p>
-                        </div>
-                    </div>
-                </div>
-
-                <div className="bg-white rounded-xl border border-gray-200 p-3 sm:p-5 shadow-sm flex flex-col">
-                    <p className="text-xs sm:text-sm text-gray-500 mb-1">Cash / Transfer</p>
-                    <p className="text-xs sm:text-sm font-bold text-gray-900 truncate">{formatCurrency(data.totalCash)}</p>
-                    <p className="text-xs sm:text-sm font-bold text-blue-600 truncate">{formatCurrency(data.totalTransfer)}</p>
-                </div>
-
-                <div className="bg-white rounded-xl border border-gray-200 p-3 sm:p-5 shadow-sm flex flex-col">
-                    <div className="flex items-center gap-2 sm:gap-3">
-                        <div className="p-2 sm:p-2.5 rounded-lg bg-red-50 flex-shrink-0"><Receipt className="w-4 h-4 sm:w-5 sm:h-5 text-red-600" /></div>
-                        <div className="min-w-0">
-                            <p className="text-xs sm:text-sm text-gray-500">Pengeluaran</p>
-                            <p className="text-base sm:text-xl font-bold text-red-600 truncate">{formatCurrency(data.totalExpenses)}</p>
-                        </div>
-                    </div>
-                </div>
-
-                {data.comparison && (
-                    <div className="bg-white rounded-xl border border-gray-200 p-3 sm:p-5 shadow-sm flex flex-col">
-                        <p className="text-xs sm:text-sm text-gray-500 mb-2 truncate">vs {data.comparison.prevLabel}</p>
-
-                        {/* Pendapatan delta */}
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                            {revenueGrowthPct === null ? (
-                                <span className="text-xs text-gray-500">Pendapatan: –</span>
-                            ) : revenueGrowthPct >= 0 ? (
-                                <>
-                                    <TrendingUp className="w-4 h-4 text-green-600 shrink-0" />
-                                    <span className="text-sm font-bold text-green-600">+{revenueGrowthPct.toFixed(1)}%</span>
-                                    <span className="text-xs text-gray-500 truncate hidden sm:inline">pendapatan naik</span>
-                                </>
-                            ) : (
-                                <>
-                                    <TrendingDown className="w-4 h-4 text-red-600 shrink-0" />
-                                    <span className="text-sm font-bold text-red-600">{revenueGrowthPct.toFixed(1)}%</span>
-                                    <span className="text-xs text-gray-500 truncate hidden sm:inline">pendapatan turun</span>
-                                </>
-                            )}
-                        </div>
-
-                        {/* Pengeluaran delta — caption "lebih besar/kecil" */}
-                        <div className="flex items-center gap-1.5 mt-1 flex-wrap">
-                            {expenseGrowthPct === null ? (
-                                <span className="text-xs text-gray-500 truncate">
-                                    Pengeluaran: {data.totalExpenses > 0 ? formatCurrency(data.totalExpenses) : '–'}
-                                </span>
-                            ) : expenseGrowthPct >= 0 ? (
-                                <>
-                                    <TrendingUp className="w-4 h-4 text-red-600 shrink-0" />
-                                    <span className="text-sm font-bold text-red-600">+{expenseGrowthPct.toFixed(1)}%</span>
-                                    <span className="text-xs text-gray-500 truncate hidden sm:inline">pengeluaran lebih besar</span>
-                                </>
-                            ) : (
-                                <>
-                                    <TrendingDown className="w-4 h-4 text-green-600 shrink-0" />
-                                    <span className="text-sm font-bold text-green-600">{expenseGrowthPct.toFixed(1)}%</span>
-                                    <span className="text-xs text-gray-500 truncate hidden sm:inline">pengeluaran lebih kecil</span>
-                                </>
-                            )}
-                        </div>
-
-                        <p className="text-[10px] sm:text-[11px] text-gray-400 mt-auto pt-2 hidden sm:block">
-                            Selisih: {revenueDelta >= 0 ? '+' : ''}{formatCurrency(revenueDelta)} pendapatan, {expenseDelta >= 0 ? '+' : ''}{formatCurrency(expenseDelta)} pengeluaran
-                        </p>
-                    </div>
-                )}
+            {/* Summary Cards — MetricCardHorizontal */}
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+                <MetricCardHorizontal
+                    icon={<Wallet className="w-5 h-5" />}
+                    title="Pendapatan"
+                    value={formatCurrency(data.totalRevenue)}
+                    subtitle={`${data.totalTransactions} transaksi`}
+                    comparisonValue={data.comparison ? formatCurrency(data.comparison.prevRevenue) : undefined}
+                    deltaAmount={data.comparison ? (revenueDelta >= 0 ? '+' : '') + formatCurrency(revenueDelta) : undefined}
+                    deltaPercentage={revenueGrowthPct ?? undefined}
+                    trend={revenueGrowthPct === null ? 'flat' : revenueGrowthPct >= 0 ? 'up' : 'down'}
+                    comparisonLabel={data.comparison?.prevLabel}
+                    isComparisonActive={!!data.comparison}
+                    semanticType="revenue"
+                />
+                <MetricCardHorizontal
+                    icon={<Receipt className="w-5 h-5" />}
+                    title="Pengeluaran"
+                    value={formatCurrency(data.totalExpenses)}
+                    subtitle={`${data.expenses.length} kategori`}
+                    comparisonValue={data.comparison ? formatCurrency(data.comparison.prevExpenses) : undefined}
+                    deltaAmount={data.comparison ? (expenseDelta >= 0 ? '+' : '') + formatCurrency(expenseDelta) : undefined}
+                    deltaPercentage={expenseGrowthPct ?? undefined}
+                    trend={expenseGrowthPct === null ? 'flat' : expenseGrowthPct >= 0 ? 'up' : 'down'}
+                    comparisonLabel={data.comparison?.prevLabel}
+                    isComparisonActive={!!data.comparison}
+                    semanticType="expense"
+                />
+                <MetricCardHorizontal
+                    icon={<Wallet className="w-5 h-5" />}
+                    title="Cash"
+                    value={formatCurrency(data.totalCash)}
+                    isComparisonActive={false}
+                    semanticType="neutral"
+                />
+                <MetricCardHorizontal
+                    icon={<Wallet className="w-5 h-5" />}
+                    title="Transfer"
+                    value={formatCurrency(data.totalTransfer)}
+                    isComparisonActive={false}
+                    semanticType="neutral"
+                />
             </div>
 
             {/* Tagihan & Fee */}
@@ -229,7 +160,7 @@ export default function LaporanClient({ data, highOccupancy }: LaporanClientProp
                                 className="w-full flex items-center justify-between gap-2 py-2 px-2 sm:px-3 -mx-2 sm:-mx-3 rounded-lg hover:bg-blue-50/60 transition-colors text-left border-b border-gray-50 last:border-0"
                             >
                                 <div className="flex items-center gap-2 min-w-0">
-                                    <span className="text-xs sm:text-sm text-gray-700 group-hover:text-blue-700 truncate">{e.category}</span>
+                                    <span className="text-xs sm:text-sm text-gray-700 truncate">{e.category}</span>
                                     <span className="text-[10px] sm:text-xs text-gray-400 flex-shrink-0">({e.count}x)</span>
                                 </div>
                                 <span className="text-xs sm:text-sm font-semibold text-gray-900 flex-shrink-0">{formatCurrency(e.total)}</span>
@@ -239,19 +170,22 @@ export default function LaporanClient({ data, highOccupancy }: LaporanClientProp
                 </div>
             )}
 
-            {/* Location Cards - clickable to scroll */}
+            {/* Location Cards with sticky filter */}
             <div>
                 <h2 className="text-base sm:text-lg font-semibold text-gray-900 mb-3">Laporan Per Lokasi</h2>
-                <div className="flex flex-wrap gap-1.5 sm:gap-2 mb-4">
-                    {data.locations.map(loc => (
-                        <button
-                            key={loc.name}
-                            onClick={() => scrollToLocation(loc.name)}
-                            className="px-2.5 sm:px-3 py-1 sm:py-1.5 text-xs font-medium bg-blue-50 text-blue-700 rounded-full border border-blue-200 hover:bg-blue-100 transition-colors"
-                        >
-                            {loc.name}
-                        </button>
-                    ))}
+                {/* Location filter pills — sticky on scroll */}
+                <div className="sticky top-[110px] sm:top-[104px] z-20 bg-gradient-to-b from-slate-50/95 to-slate-50/80 backdrop-blur-sm py-2 -mx-4 sm:-mx-6 lg:-mx-8 px-4 sm:px-6 lg:px-8 mb-2 border-b border-gray-200">
+                    <div className="flex flex-wrap gap-1.5 sm:gap-2">
+                        {data.locations.map(loc => (
+                            <button
+                                key={loc.name}
+                                onClick={() => scrollToLocation(loc.name)}
+                                className="px-2.5 sm:px-3 py-1 sm:py-1.5 text-xs font-medium bg-blue-50 text-blue-700 rounded-full border border-blue-200 hover:bg-blue-100 transition-colors"
+                            >
+                                {loc.name}
+                            </button>
+                        ))}
+                    </div>
                 </div>
 
                 {/* Location Details */}
@@ -362,7 +296,6 @@ export default function LaporanClient({ data, highOccupancy }: LaporanClientProp
                                             <p className="text-[10px] sm:text-xs font-semibold text-red-700 uppercase mb-2">Pengeluaran Unit Ini</p>
                                             <div className="space-y-1.5">
                                                 {(() => {
-                                                    // Group expenses by category
                                                     const catMap: Record<string, { total: number; count: number; items: typeof roomExpenses }> = {};
                                                     roomExpenses.forEach(e => {
                                                         const cat = e.namaPengeluaran || 'Lainnya';
@@ -390,16 +323,13 @@ export default function LaporanClient({ data, highOccupancy }: LaporanClientProp
                                     )}
                                     {roomDetails.map(detail => (
                                         <div key={detail.id} className="border border-gray-200 rounded-xl p-4 space-y-2">
-                                            {/* Date */}
                                             <p className="text-xs text-gray-500">
                                                 {new Date(detail.checkinAt).toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Jakarta' })} WIB
                                             </p>
-                                            {/* Customer */}
                                             <div className="flex items-center gap-2">
                                                 <User className="w-4 h-4 text-gray-400" />
                                                 <span className="font-bold text-gray-900">{detail.customerName}</span>
                                             </div>
-                                            {/* Marketing */}
                                             {detail.marketingName && (
                                                 <p className="text-sm text-gray-600">
                                                     Marketing: {detail.marketingName}
@@ -407,12 +337,10 @@ export default function LaporanClient({ data, highOccupancy }: LaporanClientProp
                                                     {detail.marketingFee === 0 && <span className="text-green-600"> · Rp 0 (Tanpa komisi)</span>}
                                                 </p>
                                             )}
-                                            {/* Time */}
                                             <div className="flex items-center gap-2 text-sm text-gray-600">
                                                 <Clock className="w-3.5 h-3.5" />
                                                 <span>Durasi: <strong>{formatDuration(detail.rentalDuration)}</strong></span>
                                             </div>
-                                            {/* Payment */}
                                             <div className="bg-slate-50 rounded-lg p-3 mt-2">
                                                 <p className="text-xs text-gray-500 uppercase font-semibold mb-1">Pembayaran</p>
                                                 {detail.cashAmount > 0 && <p className="text-sm">Tunai: <strong>{formatCurrency(detail.cashAmount)}</strong></p>}
@@ -423,7 +351,6 @@ export default function LaporanClient({ data, highOccupancy }: LaporanClientProp
                                                 )}
                                                 <p className="text-sm font-bold mt-1">Total: {formatCurrency(detail.cashAmount + detail.transferAmount)}</p>
                                             </div>
-                                            {/* Input by */}
                                             {detail.inputBy && (
                                                 <p className="text-xs text-gray-400 italic">Diinput oleh: {detail.inputBy} (shift: {detail.shift || '-'})</p>
                                             )}
@@ -436,7 +363,7 @@ export default function LaporanClient({ data, highOccupancy }: LaporanClientProp
                 </div>
             )}
 
-            {/* Expense Category Modal — paginated + sortable */}
+            {/* Expense Category Modal */}
             {selectedCategory && (
                 <ExpenseCategoryModal
                     category={selectedCategory}

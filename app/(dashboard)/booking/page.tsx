@@ -1,23 +1,19 @@
 import { fetchBookings, fetchLocations, fetchBookingStats } from './actions';
 import BookingTable from '@/components/booking/BookingTable';
-import BookingStatsCards from '@/components/booking/BookingStatsCards';
 import BookingFilters from '@/components/booking/BookingFilters';
-import DateFilterBar from '@/components/shared/DateFilterBar';
-import AIInsightCard from '@/components/ai/AIInsightCard';
-import ReportPeriodChip from '@/components/shared/ReportPeriodChip';
+import MetricCardHorizontal from '@/components/dashboard/MetricCardHorizontal';
+import KraiInsightCard from '@/components/ai/KraiInsightCard';
+import FilterBarWrapper from '@/components/shared/FilterBarWrapper';
 import ExportButton from '@/components/shared/ExportButton';
+import { Calendar, CalendarDays, DollarSign, TrendingUp } from 'lucide-react';
+import { formatCurrency } from '@/lib/utils/format';
 
 /**
  * Booking Page - Server Component
  *
- * Displays a paginated list of all bookings/transactions with:
- * - Summary stats cards (today, week, month, revenue)
- * - Filter by search, location, date range
- * - Sortable table with booking details
- * - Pagination
- *
- * Accepts unified date filter params for flexible date range + comparison.
- * READ ONLY - no data modification
+ * Uses KraiInsightCard at top (collapsed by default),
+ * MetricCardHorizontal for stats, StickyComparisonBar for filter.
+ * Keeps BookingFilters (search/location) but removes duplicate date filter.
  */
 export default async function BookingPage({
     searchParams,
@@ -27,8 +23,6 @@ export default async function BookingPage({
     const params = await searchParams;
     const search = typeof params.search === 'string' ? params.search : '';
     const location = typeof params.location === 'string' ? params.location : '';
-    const dateFrom = typeof params.dateFrom === 'string' ? params.dateFrom : '';
-    const dateTo = typeof params.dateTo === 'string' ? params.dateTo : '';
     const page = typeof params.page === 'string' ? parseInt(params.page) : 1;
 
     // Unified date filter params
@@ -39,22 +33,23 @@ export default async function BookingPage({
     const comparisonStartDate = typeof params.comparisonStartDate === 'string' ? params.comparisonStartDate : undefined;
     const comparisonEndDate = typeof params.comparisonEndDate === 'string' ? params.comparisonEndDate : undefined;
 
+    const dateParams = rangePreset ? { rangePreset, startDate, endDate, comparisonMode, comparisonStartDate, comparisonEndDate } : undefined;
+
     const [bookingResult, locations, stats] = await Promise.all([
         fetchBookings({
             search,
             location,
-            dateFrom,
-            dateTo,
             page,
             pageSize: 20,
-            // Pass unified date params to the action
             rangePreset,
             startDate,
             endDate,
         }),
         fetchLocations(),
-        fetchBookingStats(),
+        fetchBookingStats(dateParams),
     ]);
+
+    const isComparisonActive = !!stats.comparison;
 
     return (
         <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50/30">
@@ -67,46 +62,106 @@ export default async function BookingPage({
                             Daftar semua transaksi booking Kakarama Room
                         </p>
                     </div>
-                    <ReportPeriodChip className="hidden sm:inline-flex mt-1 flex-shrink-0" />
                 </div>
             </div>
 
             <main className="px-4 sm:px-6 lg:px-8 py-4 sm:py-6 space-y-4 sm:space-y-6">
-                {/* Export + AI Insight */}
-                <div className="flex flex-col sm:flex-row gap-3">
-                    <ExportButton page="booking" label="Export Booking" />
-                </div>
-
-                {/* AI Insight - Top */}
-                <AIInsightCard
+                {/* KraiInsightCard — collapsed by default, at very top */}
+                <KraiInsightCard
+                    pageContext="booking"
                     title="Insight Booking"
-                    prompt="Analisis tren booking: bandingkan jumlah booking hari ini vs rata-rata harian bulan ini. Sebutkan lokasi paling aktif dan jam check-in tersibuk. Maksimal 3 kalimat."
+                    subtitle="Analisis tren booking dan pola pemesanan"
+                    defaultCollapsed={true}
                 />
 
-                {/* Stats Cards */}
-                <BookingStatsCards stats={stats} />
-
-                {/* Date Filter Bar — unified date range + comparison */}
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                    <DateFilterBar
-                        basePath="/booking"
-                        defaultPreset={rangePreset as any || 'last30days'}
-                        defaultStartDate={startDate}
-                        defaultEndDate={endDate}
-                        defaultComparisonMode={comparisonMode as any || 'none'}
-                        defaultComparisonStartDate={comparisonStartDate}
-                        defaultComparisonEndDate={comparisonEndDate}
-                        extraPreservedParams={['search', 'location', 'page', 'pageSize']}
+                {/* Stats Cards — MetricCardHorizontal */}
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+                    <MetricCardHorizontal
+                        icon={<Calendar className="w-5 h-5" />}
+                        title="Booking"
+                        value={stats.bookingCount}
+                        subtitle={stats.rangeLabel}
+                        comparisonValue={stats.comparison?.prevBookingCount}
+                        deltaAmount={
+                            stats.comparison
+                                ? String(stats.bookingCount - (stats.comparison?.prevBookingCount || 0))
+                                : undefined
+                        }
+                        deltaPercentage={
+                            stats.comparison && stats.comparison.prevBookingCount > 0
+                                ? ((stats.bookingCount - stats.comparison.prevBookingCount) / stats.comparison.prevBookingCount) * 100
+                                : undefined
+                        }
+                        trend={
+                            stats.comparison && stats.bookingCount >= (stats.comparison?.prevBookingCount || 0)
+                                ? 'up' : 'down'
+                        }
+                        comparisonLabel={stats.comparison?.prevLabel}
+                        isComparisonActive={isComparisonActive}
+                        semanticType="booking"
+                    />
+                    <MetricCardHorizontal
+                        icon={<DollarSign className="w-5 h-5" />}
+                        title="Pendapatan"
+                        value={formatCurrency(stats.totalRevenue)}
+                        comparisonValue={stats.comparison ? formatCurrency(stats.comparison.prevRevenue) : undefined}
+                        deltaAmount={
+                            stats.comparison
+                                ? formatCurrency(stats.totalRevenue - stats.comparison.prevRevenue)
+                                : undefined
+                        }
+                        deltaPercentage={
+                            stats.comparison && stats.comparison.prevRevenue > 0
+                                ? ((stats.totalRevenue - stats.comparison.prevRevenue) / stats.comparison.prevRevenue) * 100
+                                : undefined
+                        }
+                        trend={
+                            stats.comparison && stats.totalRevenue >= (stats.comparison?.prevRevenue || 0)
+                                ? 'up' : 'down'
+                        }
+                        comparisonLabel={stats.comparison?.prevLabel}
+                        isComparisonActive={isComparisonActive}
+                        semanticType="revenue"
+                    />
+                    <MetricCardHorizontal
+                        icon={<CalendarDays className="w-5 h-5" />}
+                        title="Transaksi"
+                        value={stats.totalTransactions}
+                        subtitle={stats.rangeLabel}
+                        isComparisonActive={false}
+                        semanticType="neutral"
+                    />
+                    <MetricCardHorizontal
+                        icon={<TrendingUp className="w-5 h-5" />}
+                        title="Rata-rata / Hari"
+                        value={formatCurrency(stats.avgPerDay)}
+                        isComparisonActive={false}
+                        semanticType="neutral"
                     />
                 </div>
 
-                {/* Filters */}
+                {/* Export + Filter */}
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                    <FilterBarWrapper
+                        basePath="/booking"
+                        rangePreset={rangePreset || 'last30days'}
+                        startDate={startDate}
+                        endDate={endDate}
+                        comparisonMode={comparisonMode || 'none'}
+                        comparisonStartDate={comparisonStartDate}
+                        comparisonEndDate={comparisonEndDate}
+                        extraPreservedParams={['search', 'location', 'page', 'pageSize']}
+                    />
+                    <ExportButton page="booking" label="Export Booking" />
+                </div>
+
+                {/* Filters — search + location only (no date filter) */}
                 <BookingFilters
                     locations={locations}
                     currentSearch={search}
                     currentLocation={location}
-                    currentDateFrom={dateFrom}
-                    currentDateTo={dateTo}
+                    currentDateFrom=""
+                    currentDateTo=""
                 />
 
                 {/* Table */}

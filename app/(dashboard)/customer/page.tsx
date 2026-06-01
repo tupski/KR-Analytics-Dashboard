@@ -1,8 +1,10 @@
 import Link from 'next/link';
 import { fetchCustomers } from './actions';
-import DateFilterBar from '@/components/shared/DateFilterBar';
+import KraiInsightCard from '@/components/ai/KraiInsightCard';
+import MetricCardHorizontal from '@/components/dashboard/MetricCardHorizontal';
+import FilterBarWrapper from '@/components/shared/FilterBarWrapper';
 import ExportButton from '@/components/shared/ExportButton';
-import { Users, Search, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from 'lucide-react';
+import { Users, Search, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, UserCheck } from 'lucide-react';
 
 const PAGE_SIZE_OPTIONS = [10, 25, 50, 100];
 const DEFAULT_PAGE_SIZE = 10;
@@ -69,16 +71,44 @@ export default async function CustomerPage({
             </div>
 
             <main className="px-4 sm:px-6 lg:px-8 py-4 sm:py-6 space-y-4 sm:space-y-6">
-                {/* Date Filter Bar */}
+                {/* KraiInsightCard — collapsed by default, at very top */}
+                <KraiInsightCard
+                    pageContext="customer"
+                    title="Insight Customer"
+                    subtitle="Analisis pola booking pelanggan"
+                    defaultCollapsed={true}
+                />
+
+                {/* Stats cards */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+                    <MetricCardHorizontal
+                        icon={<Users className="w-5 h-5" />}
+                        title="Total Tamu"
+                        value={count}
+                        subtitle="Sepanjang periode terpilih"
+                        isComparisonActive={false}
+                        semanticType="neutral"
+                    />
+                    <MetricCardHorizontal
+                        icon={<UserCheck className="w-5 h-5" />}
+                        title="Unique Tamu"
+                        value={new Set(customers.map((c: any) => c.customerName)).size}
+                        subtitle="Nama unik dalam periode ini"
+                        isComparisonActive={false}
+                        semanticType="neutral"
+                    />
+                </div>
+
+                {/* Filter Bar */}
                 <div className="flex flex-wrap items-center justify-between gap-3">
-                    <DateFilterBar
+                    <FilterBarWrapper
                         basePath="/customer"
-                        defaultPreset={rangePreset as any || 'last30days'}
-                        defaultStartDate={startDate}
-                        defaultEndDate={endDate}
-                        defaultComparisonMode={comparisonMode as any || 'none'}
-                        defaultComparisonStartDate={comparisonStartDate}
-                        defaultComparisonEndDate={comparisonEndDate}
+                        rangePreset={rangePreset || 'last30days'}
+                        startDate={startDate}
+                        endDate={endDate}
+                        comparisonMode={comparisonMode || 'none'}
+                        comparisonStartDate={comparisonStartDate}
+                        comparisonEndDate={comparisonEndDate}
                         extraPreservedParams={['search', 'page', 'pageSize']}
                     />
                 </div>

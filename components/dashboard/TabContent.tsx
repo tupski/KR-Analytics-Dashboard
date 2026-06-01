@@ -1,25 +1,58 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import TabSwitcher, { DashboardTab } from './TabSwitcher';
-import KartuRingkasan from './KartuRingkasan';
+import MetricCardHorizontal from './MetricCardHorizontal';
 import GrafikPendapatan from './GrafikPendapatan';
 import GrafikOkupansi from './GrafikOkupansi';
 import CheckinHariIni from './CheckinHariIni';
 import CheckoutHariIni from './CheckoutHariIni';
 import StatusUnit from './StatusUnit';
-import CompareSwitcher from './CompareSwitcher';
-// import DashboardInsightSummary from './DashboardInsightSummary';
 import LocationHealthMatrix from './LocationHealthMatrix';
 import UnitPerformancePanel from './UnitPerformancePanel';
 import MarketingPerformancePanel from './MarketingPerformancePanel';
-import AIInsightCard from '@/components/ai/AIInsightCard';
-import AIInsightsExpandable from '@/components/ai/AIInsightsExpandable';
+import CollapsibleChartTable from '@/components/shared/CollapsibleChartTable';
 import type { KPIData, KPICompareMode, LocationHealthItem, MarketingPerformanceItem, DashboardInsight } from '@/types/dashboard';
 import type { UnitPerformanceData } from '@/lib/dashboard/unit-performance';
-import { Calendar, DollarSign, TrendingUp, Home } from 'lucide-react';
+import { Calendar, DollarSign, TrendingUp, Home, Clock, MapPin } from 'lucide-react';
+import { formatCurrency } from '@/lib/utils/format';
 
-// ─── Props (uses actual project types) ──────────────────────────
+// ─── Dynamic card titles ───────────────────────────────────────
+
+function getCardTitle(base: string, rangePreset?: string): string {
+    switch (rangePreset) {
+        case 'today': return `${base} Hari Ini`;
+        case 'yesterday': return `${base} Kemarin`;
+        case 'last7days':
+        case '7days': return `${base} 7 Hari`;
+        case 'last30days': return `${base} 30 Hari`;
+        case 'thisWeek': return `${base} Minggu Ini`;
+        case 'lastWeek': return `${base} Minggu Lalu`;
+        case 'thisMonth':
+        case 'month': return `${base} Bulan Ini`;
+        case 'lastMonth': return `${base} Bulan Lalu`;
+        case 'thisYear':
+        case 'year': return `${base} Tahun Ini`;
+        case 'lastYear': return `${base} Tahun Lalu`;
+        default: return `${base} Hari Ini`;
+    }
+}
+
+// ─── Busy-hour helper ─────────────────────────────────────────
+
+function computeBusyHours(checkins: any[]): { hour: string; count: number }[] {
+    const buckets: Record<string, number> = {};
+    checkins.forEach((item: any) => {
+        const hour = item.time?.split(':')[0] || '00';
+        buckets[hour] = (buckets[hour] || 0) + 1;
+    });
+    return Object.entries(buckets)
+        .map(([hour, count]) => ({ hour: `${hour}:00`, count }))
+        .sort((a, b) => a.hour.localeCompare(b.hour));
+}
+
+// ─── Props ──────────────────────────────────────────────────────
+
 interface TabContentProps {
     kpiData: KPIData;
     compareMode: KPICompareMode | null;
@@ -38,11 +71,15 @@ interface TabContentProps {
         totalTransactions: number;
         activeChannels: number;
     };
+    filterRangePreset?: string; // for dynamic card titles
 }
 
 /**
  * TabContent — Client component that manages tab state and renders
  * the appropriate dashboard section (Operasional or Analitik).
+ *
+ * Uses MetricCardHorizontal (replacing KartuRingkasan),
+ * CollapsibleChartTable under charts, and no duplicate AI insights.
  */
 export default function TabContent({
     kpiData,
@@ -57,102 +94,221 @@ export default function TabContent({
     locationHealthData,
     unitPerformanceData,
     marketingPerformanceData,
+    filterRangePreset,
 }: TabContentProps) {
     const [activeTab, setActiveTab] = useState<DashboardTab>('operasional');
 
-    const formatRupiah = new Intl.NumberFormat('id-ID', {
-        style: 'currency',
-        currency: 'IDR',
-        minimumFractionDigits: 0,
-        maximumFractionDigits: 0,
-    }).format;
-
     const change = kpiData.change;
-    const trendFor = (pct: number | null | undefined) =>
-        pct == null ? undefined : { value: Math.abs(pct), isPositive: pct >= 0 };
+
+    // Compute busy hour distribution from checkins data
+    const busyHours = useMemo(() => computeBusyHours(checkinsData), [checkinsData]);
+
+    // Compute occupancy per location from locationHealthData
+    const locOccupancy = useMemo(() =>
+        locationHealthData.map(loc => ({
+            location: loc.location,
+            totalUnits: loc.totalUnits,
+            occupiedUnits: loc.occupiedUnits,
+            occupancyRate: loc.occupancyRate,
+            revenue: loc.revenue,
+        })),
+        [locationHealthData],
+    );
+
+    const trendFor =
+        (pct: number | null | undefined, def: 'flat'): 'up' | 'down' | 'flat' =>
+            pct == null ? def : pct >= 0 ? 'up' : 'down';
 
     return (
         <>
-            {/* Tab Switcher — placed below header */}
+            {/* Tab Switcher */}
             <TabSwitcher activeTab={activeTab} onTabChange={setActiveTab} />
 
             {/* ══════════════════════════════════════════════════════ */}
-            {/* TAB: OPERASIONAL (Daily Ops View)                     */}
+            {/* TAB: OPERASIONAL                                      */}
             {/* ══════════════════════════════════════════════════════ */}
             {activeTab === 'operasional' && (
                 <div className="space-y-6">
-                    {/* Compare Switcher toolbar */}
-                    <div className="flex flex-wrap items-center justify-between gap-2 sm:gap-3 bg-white rounded-xl border border-gray-200 px-3 sm:px-4 py-2.5 sm:py-3 shadow-sm">
-                        <div className="flex items-center gap-2 text-xs text-gray-600 min-w-0 flex-1">
-                            {kpiData.prev ? (
-                                <>
-                                    <span className="font-semibold text-blue-700 flex-shrink-0">Bandingkan:</span>
-                                    <span className="truncate">Hari Ini vs {kpiData.prev.label}</span>
-                                </>
-                            ) : (
-                                <span className="truncate">Pilih mode bandingkan untuk melihat perubahan.</span>
-                            )}
-                        </div>
-                        <CompareSwitcher current={compareMode} />
-                    </div>
-
-                    {/* AI Insight — Top */}
-                    <AIInsightCard
-                        title="Ringkasan Harian"
-                        prompt="Berikan ringkasan performa bisnis hari ini dalam 3-4 kalimat. Sebutkan: jumlah booking, pendapatan, okupansi, dan satu rekomendasi singkat."
-                    />
-
-                    {/* KPI Cards — Bento grid */}
-                    <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 lg:gap-6">
-                        <KartuRingkasan
-                            title="Booking Hari Ini"
+                    {/* KPI Cards — MetricCardHorizontal bento grid */}
+                    <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+                        <MetricCardHorizontal
+                            icon={<Calendar className="w-5 h-5" />}
+                            title={getCardTitle('Booking', filterRangePreset)}
                             value={kpiData.bookingToday}
-                            icon={<Calendar className="w-6 h-6" />}
-                            href="/booking"
-                            trend={trendFor(change?.bookingChangePct)}
+                            comparisonValue={kpiData.prev?.booking}
+                            deltaAmount={
+                                change?.bookingChangePct != null
+                                    ? String(kpiData.bookingToday - (kpiData.prev?.booking || 0))
+                                    : undefined
+                            }
+                            deltaPercentage={change?.bookingChangePct ?? undefined}
+                            trend={trendFor(change?.bookingChangePct, 'flat')}
+                            comparisonLabel={kpiData.prev?.label}
+                            isComparisonActive={!!kpiData.prev}
+                            semanticType="booking"
                         />
-                        <KartuRingkasan
-                            title="Pendapatan Hari Ini"
-                            value={formatRupiah(kpiData.revenueToday)}
-                            icon={<DollarSign className="w-6 h-6" />}
-                            href="/booking"
-                            trend={trendFor(change?.revenueChangePct)}
+                        <MetricCardHorizontal
+                            icon={<DollarSign className="w-5 h-5" />}
+                            title={getCardTitle('Pendapatan', filterRangePreset)}
+                            value={formatCurrency(kpiData.revenueToday)}
+                            comparisonValue={kpiData.prev?.revenue ? formatCurrency(kpiData.prev.revenue) : undefined}
+                            deltaAmount={
+                                change?.revenueChangePct != null
+                                    ? formatCurrency(kpiData.revenueToday - (kpiData.prev?.revenue || 0))
+                                    : undefined
+                            }
+                            deltaPercentage={change?.revenueChangePct ?? undefined}
+                            trend={trendFor(change?.revenueChangePct, 'flat')}
+                            comparisonLabel={kpiData.prev?.label}
+                            isComparisonActive={!!kpiData.prev}
+                            semanticType="revenue"
                         />
-                        <KartuRingkasan
-                            title="Okupansi Rata-rata"
+                        <MetricCardHorizontal
+                            icon={<TrendingUp className="w-5 h-5" />}
+                            title={getCardTitle('Okupansi', filterRangePreset)}
                             value={`${kpiData.avgOccupancy.toFixed(2)}%`}
-                            icon={<TrendingUp className="w-6 h-6" />}
-                            href="/unit"
-                            trend={trendFor(change?.occupancyChangePct)}
+                            comparisonValue={kpiData.prev?.avgOccupancy ? `${kpiData.prev.avgOccupancy.toFixed(2)}%` : undefined}
+                            deltaPercentage={change?.occupancyChangePct ?? undefined}
+                            trend={trendFor(change?.occupancyChangePct, 'flat')}
+                            comparisonLabel={kpiData.prev?.label}
+                            isComparisonActive={!!kpiData.prev}
+                            semanticType="occupancy"
                         />
-                        <KartuRingkasan
-                            title="Unit Tersedia"
+                        <MetricCardHorizontal
+                            icon={<Home className="w-5 h-5" />}
+                            title={getCardTitle('Unit Tersedia', filterRangePreset)}
                             value={kpiData.availableUnits}
-                            icon={<Home className="w-6 h-6" />}
-                            href="/unit"
-                            trend={trendFor(change?.availableChangePct)}
+                            isComparisonActive={false}
+                            semanticType="neutral"
                         />
                     </div>
-
-                    {kpiData.prev && (
-                        <p className="text-[11px] text-gray-500 -mt-4">
-                            Pembanding: {kpiData.prev.label} — Booking: {kpiData.prev.booking} ·{' '}
-                            Pendapatan: {formatRupiah(kpiData.prev.revenue)} ·{' '}
-                            Okupansi: {kpiData.prev.avgOccupancy.toFixed(2)}% ·{' '}
-                            Unit Tersedia: {kpiData.prev.availableUnits}
-                        </p>
-                    )}
-
-                    {/* Insight Summary */}
-                    {/* <DashboardInsightSummary insights={insights} /> */}
-
-                    {/* AI Insights — Expandable (deterministic rule-based insights) */}
-                    <AIInsightsExpandable insights={insights} maxVisible={3} />
 
                     {/* Charts — Side-by-side */}
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                        <GrafikPendapatan initialData={revenueData} initialFilter="daily" />
-                        <GrafikOkupansi data={occupancyData} period={occupancyPeriod} />
+                        <div className="space-y-2">
+                            <GrafikPendapatan initialData={revenueData} initialFilter="daily" />
+                            {revenueData && revenueData.length > 0 && (
+                                <CollapsibleChartTable
+                                    title="Data Pendapatan"
+                                    columns={[
+                                        { key: 'label', label: 'Tanggal', format: 'text' },
+                                        { key: 'revenue', label: 'Pendapatan', format: 'currency' },
+                                        { key: 'transactionCount', label: 'Transaksi', format: 'number' },
+                                    ]}
+                                    rows={revenueData}
+                                    defaultCollapsed={true}
+                                />
+                            )}
+                        </div>
+                        <div className="space-y-2">
+                            <GrafikOkupansi data={occupancyData} period={occupancyPeriod} />
+                            {occupancyData && occupancyData.length > 0 && (
+                                <CollapsibleChartTable
+                                    title="Data Okupansi"
+                                    columns={[
+                                        { key: 'date', label: 'Tanggal', format: 'text' },
+                                        { key: 'occupancyRate', label: 'Okupansi', format: 'percentage' },
+                                        { key: 'occupiedUnits', label: 'Terisi', format: 'number' },
+                                        { key: 'totalUnits', label: 'Total Unit', format: 'number' },
+                                    ]}
+                                    rows={occupancyData}
+                                    defaultCollapsed={true}
+                                />
+                            )}
+                        </div>
+                    </div>
+
+                    {/* Check-in Busy Hour + Occupancy per Location */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        {/* Busy Hour */}
+                        <div className="bg-white rounded-xl border border-gray-200 p-4 sm:p-5 shadow-sm">
+                            <h3 className="text-sm font-semibold text-gray-900 mb-3 flex items-center gap-2">
+                                <Clock className="w-4 h-4 text-blue-600" />
+                                Jam Check-in Tersibuk
+                            </h3>
+                            {busyHours.length === 0 ? (
+                                <p className="text-sm text-gray-400 py-4 text-center">
+                                    Tidak ada data check-in hari ini.
+                                </p>
+                            ) : (
+                                <>
+                                    {/* Simple bar chart */}
+                                    <div className="space-y-2 mb-4">
+                                        {busyHours.map((bh) => {
+                                            const maxCount = Math.max(...busyHours.map((b) => b.count));
+                                            const barWidth = maxCount > 0 ? (bh.count / maxCount) * 100 : 0;
+                                            return (
+                                                <div key={bh.hour} className="flex items-center gap-2">
+                                                    <span className="text-xs text-gray-500 w-12 shrink-0">{bh.hour}</span>
+                                                    <div className="flex-1 bg-gray-100 rounded-full h-5 overflow-hidden">
+                                                        <div
+                                                            className="bg-blue-500 h-full rounded-full transition-all"
+                                                            style={{ width: `${Math.max(barWidth, 5)}%` }}
+                                                        />
+                                                    </div>
+                                                    <span className="text-xs font-medium text-gray-700 w-6 text-right">{bh.count}</span>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                    <CollapsibleChartTable
+                                        title="Distribusi Check-in per Jam"
+                                        columns={[
+                                            { key: 'hour', label: 'Jam', format: 'text' },
+                                            { key: 'count', label: 'Check-in', format: 'number' },
+                                        ]}
+                                        rows={busyHours}
+                                        defaultCollapsed={true}
+                                    />
+                                </>
+                            )}
+                        </div>
+
+                        {/* Occupancy per Location */}
+                        <div className="bg-white rounded-xl border border-gray-200 p-4 sm:p-5 shadow-sm">
+                            <h3 className="text-sm font-semibold text-gray-900 mb-3 flex items-center gap-2">
+                                <MapPin className="w-4 h-4 text-blue-600" />
+                                Okupansi per Lokasi
+                            </h3>
+                            {locOccupancy.length === 0 ? (
+                                <p className="text-sm text-gray-400 py-4 text-center">
+                                    Tidak ada data okupansi per lokasi.
+                                </p>
+                            ) : (
+                                <>
+                                    {/* Simple bar chart */}
+                                    <div className="space-y-2 mb-4">
+                                        {locOccupancy.map((loc) => (
+                                            <div key={loc.location} className="flex items-center gap-2">
+                                                <span className="text-xs text-gray-500 w-20 truncate shrink-0" title={loc.location}>
+                                                    {loc.location}
+                                                </span>
+                                                <div className="flex-1 bg-gray-100 rounded-full h-5 overflow-hidden">
+                                                    <div
+                                                        className={`h-full rounded-full transition-all ${loc.occupancyRate >= 80 ? 'bg-green-500' : loc.occupancyRate >= 50 ? 'bg-yellow-500' : 'bg-red-400'}`}
+                                                        style={{ width: `${Math.max(loc.occupancyRate, 3)}%` }}
+                                                    />
+                                                </div>
+                                                <span className="text-xs font-medium text-gray-700 w-12 text-right">
+                                                    {loc.occupancyRate.toFixed(1)}%
+                                                </span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                    <CollapsibleChartTable
+                                        title="Data Okupansi per Lokasi"
+                                        columns={[
+                                            { key: 'location', label: 'Lokasi', format: 'text' },
+                                            { key: 'occupancyRate', label: 'Okupansi', format: 'percentage' },
+                                            { key: 'occupiedUnits', label: 'Terisi', format: 'number' },
+                                            { key: 'totalUnits', label: 'Total Unit', format: 'number' },
+                                        ]}
+                                        rows={locOccupancy}
+                                        defaultCollapsed={true}
+                                    />
+                                </>
+                            )}
+                        </div>
                     </div>
 
                     {/* Operational — 3-column */}
@@ -165,7 +321,7 @@ export default function TabContent({
             )}
 
             {/* ══════════════════════════════════════════════════════ */}
-            {/* TAB: ANALITIK (Performance Analytics View)            */}
+            {/* TAB: ANALITIK                                         */}
             {/* ══════════════════════════════════════════════════════ */}
             {activeTab === 'analitik' && (
                 <div className="space-y-6">
@@ -179,7 +335,7 @@ export default function TabContent({
                         <UnitPerformancePanel data={unitPerformanceData} isLoading={false} />
                     </div>
 
-                    {/* Performa Channel (Top 5 default) */}
+                    {/* Performa Channel */}
                     <div className="rounded-xl border border-gray-200 bg-white p-4 sm:p-6 shadow-sm">
                         <MarketingPerformancePanel
                             items={marketingPerformanceData.items}
@@ -190,9 +346,6 @@ export default function TabContent({
                             maxRows={5}
                         />
                     </div>
-
-                    {/* AI Insights — Expandable (3 lines default) */}
-                    <AIInsightsExpandable insights={insights} maxVisible={3} />
                 </div>
             )}
         </>
