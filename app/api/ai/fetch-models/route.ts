@@ -83,8 +83,27 @@ export async function POST(request: NextRequest) {
         let apiKey: string;
         try {
             apiKey = decryptApiKey(configData.api_key_enc, configData.api_key_iv);
+
+            // Validate decrypted key is not empty
+            if (!apiKey || apiKey.trim().length === 0) {
+                throw new Error('Decrypted API key is empty');
+            }
         } catch (error) {
             console.error('[POST /api/ai/fetch-models] Decryption error:', error);
+
+            // Check if this might be a key format issue
+            const errorMsg = error instanceof Error ? error.message : String(error);
+            if (errorMsg.includes('authenticate') || errorMsg.includes('Unsupported state')) {
+                return NextResponse.json(
+                    {
+                        error: 'API key tidak dapat didekripsi. Kemungkinan encryption key telah berubah atau data rusak. Silakan atur ulang API key untuk provider ini.',
+                        needsReconfiguration: true,
+                        providerId: providerId
+                    },
+                    { status: 500 }
+                );
+            }
+
             return NextResponse.json(
                 { error: 'Gagal mendekripsi API key. Silakan atur ulang konfigurasi.' },
                 { status: 500 }

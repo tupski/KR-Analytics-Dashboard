@@ -52,6 +52,11 @@ export function encryptApiKey(plaintext: string): { enc: string; iv: string } {
 export function decryptApiKey(enc: string, ivB64: string): string {
     const { createDecipheriv } = require('crypto') as typeof import('crypto');
     const key = getEncryptionKey();
+
+    if (!enc || !ivB64) {
+        throw new Error('Missing encrypted data or IV');
+    }
+
     const iv = Buffer.from(ivB64, 'base64');
 
     // Detect legacy format (saved by ai-actions.ts):
@@ -61,6 +66,9 @@ export function decryptApiKey(enc: string, ivB64: string): string {
     if (enc.includes('.')) {
         // Legacy format: "${encrypted}.${authTag}" from ai-actions.ts
         const [cipherB64, authTagB64] = enc.split('.');
+        if (!cipherB64 || !authTagB64) {
+            throw new Error('Invalid legacy format: missing cipher or auth tag');
+        }
         const decipher = createDecipheriv('aes-256-gcm', key, iv);
         decipher.setAuthTag(Buffer.from(authTagB64, 'base64'));
         const decrypted = Buffer.concat([
@@ -72,6 +80,9 @@ export function decryptApiKey(enc: string, ivB64: string): string {
 
     // New format: authTag (16 bytes) prepended to ciphertext
     const combined = Buffer.from(enc, 'base64');
+    if (combined.length < 16) {
+        throw new Error('Invalid encrypted data: too short');
+    }
     const authTag = combined.subarray(0, 16);
     const ciphertext = combined.subarray(16);
     const decipher = createDecipheriv('aes-256-gcm', key, iv);

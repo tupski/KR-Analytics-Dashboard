@@ -6,10 +6,6 @@ import {
     getInsightSettings,
     getAIConfigForInsight,
 } from '@/lib/ai/insight';
-import { createServerClient } from '@/lib/supabase/server';
-import { loadAllProviderConfigs } from '@/lib/ai/configServer';
-import { format, subDays } from 'date-fns';
-import { toZonedTime } from 'date-fns-tz';
 import { generateFallbackInsight } from '@/lib/analytics/insights';
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -65,7 +61,6 @@ export async function POST(request: NextRequest) {
             reportPeriodMode,
             forceRefresh = false,
             withCompare = false,
-            pageContext,
             dataSummary,
         } = body;
 
@@ -142,7 +137,7 @@ export async function POST(request: NextRequest) {
 
         // ── 4. Generate insight via AI ─────────────────────────────
         try {
-            const systemContent = buildInsightSystemPrompt(page, dataSummary, prompt, withCompare);
+            const systemContent = buildInsightSystemPrompt(page, dataSummary, withCompare);
 
             const result = await callProviderForInsight(
                 aiConfig,
@@ -274,7 +269,6 @@ export async function POST(request: NextRequest) {
 function buildInsightSystemPrompt(
     page: string,
     dataSummary?: Record<string, any>,
-    userPrompt?: string,
     withCompare?: boolean,
 ): string {
     const pageLabels: Record<string, string> = {
@@ -357,17 +351,37 @@ async function callProviderForInsight(
     const { getEndpoint, getHeaders } = resolveProviderEndpoint(cfg);
     const { parseAIResponse } = await import('@/lib/ai/responseParser');
 
-    const conversation = [
-        { role: 'system', content: systemContent },
-    ];
+    // Build request body based on provider
+    let body: any;
 
-    const body = {
-        model: cfg.modelId,
-        messages: conversation,
-        // NO tools — we want natural language text, not function calls
-        temperature: 0.7,
-        max_tokens: 1024,
-    };
+    if (cfg.providerSlug === 'gemini' || cfg.providerSlug === 'google') {
+        // Google Gemini uses 'contents' array with different structure
+        body = {
+            contents: [
+                {
+                    role: 'user',
+                    parts: [{ text: systemContent }]
+                }
+            ],
+            generationConfig: {
+                temperature: 0.7,
+                maxOutputTokens: 1024,
+            }
+        };
+    } else {
+        // OpenAI-compatible format (OpenAI, DeepSeek, Groq, OpenRouter, etc.)
+        const conversation = [
+            { role: 'system', content: systemContent },
+        ];
+
+        body = {
+            model: cfg.modelId,
+            messages: conversation,
+            // NO tools — we want natural language text, not function calls
+            temperature: 0.7,
+            max_tokens: 1024,
+        };
+    }
 
     const res = await fetch(getEndpoint, {
         method: 'POST',
@@ -388,6 +402,26 @@ async function callProviderForInsight(
         data = JSON.parse(rawText);
     }
 
+    // Handle Gemini response format
+    if (cfg.providerSlug === 'gemini' || cfg.providerSlug === 'google') {
+        const candidate = data?.candidates?.[0];
+        const content = candidate?.content;
+        const text = content?.parts?.[0]?.text;
+
+        if (!text) {
+            throw new Error('Respons AI kosong dari Gemini.');
+        }
+
+        const usage = {
+            prompt_tokens: data.usageMetadata?.promptTokenCount || 0,
+            completion_tokens: data.usageMetadata?.candidatesTokenCount || 0,
+            total_tokens: data.usageMetadata?.totalTokenCount || 0,
+        };
+
+        return { message: text, usage };
+    }
+
+    // Handle OpenAI-compatible response format
     const choice = data?.choices?.[0];
     const message = choice?.message;
 
@@ -432,7 +466,8 @@ function resolveProviderEndpoint(cfg: { providerSlug: string; baseUrl?: string; 
     const PROVIDER_ENDPOINTS: Record<string, string> = {
         openai: 'https://api.openai.com/v1/chat/completions',
         deepseek: 'https://api.deepseek.com/v1/chat/completions',
-        gemini: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
+        gemini: 'https://generativelanguage.googleapis.com/v1beta/models',
+        google: 'https://generativelanguage.googleapis.com/v1beta/models',
         groq: 'https://api.groq.com/openai/v1/chat/completions',
         openrouter: 'https://openrouter.ai/api/v1/chat/completions',
         kiro: '',
@@ -441,6 +476,19 @@ function resolveProviderEndpoint(cfg: { providerSlug: string; baseUrl?: string; 
     };
 
     let baseUrl = cfg.baseUrl || PROVIDER_ENDPOINTS[cfg.providerSlug] || '';
+
+    // Handle Gemini/Google with native API format
+    if (cfg.providerSlug === 'gemini' || cfg.providerSlug === 'google') {
+        // Use native Gemini API format: /v1beta/models/{model}:generateContent
+        const endpoint = `${baseUrl}/${cfg.modelId}:generateContent?key=${cfg.apiKey}`;
+        return {
+            getEndpoint: endpoint,
+            getHeaders: {
+                'Content-Type': 'application/json',
+            },
+        };
+    }
+
     if (cfg.providerSlug === 'openrouter') {
         if (baseUrl.endsWith('/v1')) baseUrl = `${baseUrl}/chat/completions`;
         return {
