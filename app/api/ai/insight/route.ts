@@ -7,6 +7,12 @@ import {
     getAIConfigForInsight,
 } from '@/lib/ai/insight';
 import { generateFallbackInsight } from '@/lib/analytics/insights';
+import {
+    resolveProviderRequest,
+    buildProviderBody,
+    parseProviderResponse,
+} from '@/lib/ai/providerAdapter';
+import { parseAIResponse } from '@/lib/ai/responseParser';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -69,6 +75,23 @@ export async function POST(request: NextRequest) {
                 { error: 'page and prompt are required' },
                 { status: 400 },
             );
+        }
+
+        // ── 0a. Prompt validation — never send empty request to provider ──
+        if (!prompt.trim() || prompt.trim().length < 10) {
+            console.warn('[ai/insight] Empty/short prompt — using rule-based fallback');
+            const fallbackText = generateFallbackInsight(page, dataSummary);
+            return NextResponse.json({
+                cached: false,
+                response: {
+                    message: fallbackText || 'KRAI belum bisa membuat insight AI. Menampilkan insight rule-based.',
+                    model: '',
+                    provider: '',
+                    fallback: true,
+                },
+                generated_at: new Date().toISOString(),
+                expires_at: new Date(Date.now() + 3600000).toISOString(),
+            });
         }
 
         // ── 0. Load settings ──────────────────────────────────────
@@ -348,44 +371,22 @@ async function callProviderForInsight(
     cfg: { providerSlug: string; apiKey: string; modelId: string; baseUrl?: string },
     systemContent: string,
 ): Promise<{ message: string; usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number } }> {
-    const { getEndpoint, getHeaders } = resolveProviderEndpoint(cfg);
-    const { parseAIResponse } = await import('@/lib/ai/responseParser');
+    const { url, headers } = resolveProviderRequest(
+        cfg.providerSlug,
+        cfg.modelId,
+        cfg.apiKey,
+        cfg.baseUrl,
+    );
 
-    // Build request body based on provider
-    let body: any;
+    const body = buildProviderBody(cfg.providerSlug, cfg.modelId, {
+        systemContent,
+        maxTokens: 1024,
+        temperature: 0.7,
+    });
 
-    if (cfg.providerSlug === 'gemini' || cfg.providerSlug === 'google') {
-        // Google Gemini uses 'contents' array with different structure
-        body = {
-            contents: [
-                {
-                    role: 'user',
-                    parts: [{ text: systemContent }]
-                }
-            ],
-            generationConfig: {
-                temperature: 0.7,
-                maxOutputTokens: 1024,
-            }
-        };
-    } else {
-        // OpenAI-compatible format (OpenAI, DeepSeek, Groq, OpenRouter, etc.)
-        const conversation = [
-            { role: 'system', content: systemContent },
-        ];
-
-        body = {
-            model: cfg.modelId,
-            messages: conversation,
-            // NO tools — we want natural language text, not function calls
-            temperature: 0.7,
-            max_tokens: 1024,
-        };
-    }
-
-    const res = await fetch(getEndpoint, {
+    const res = await fetch(url, {
         method: 'POST',
-        headers: getHeaders,
+        headers,
         body: JSON.stringify(body),
     });
 
@@ -395,53 +396,11 @@ async function callProviderForInsight(
     }
 
     const rawText = await res.text();
-    let data: any;
-    try {
-        data = parseAIResponse(rawText);
-    } catch {
-        data = JSON.parse(rawText);
-    }
 
-    // Handle Gemini response format
-    if (cfg.providerSlug === 'gemini' || cfg.providerSlug === 'google') {
-        const candidate = data?.candidates?.[0];
-        const content = candidate?.content;
-        const text = content?.parts?.[0]?.text;
-
-        if (!text) {
-            throw new Error('Respons AI kosong dari Gemini.');
-        }
-
-        const usage = {
-            prompt_tokens: data.usageMetadata?.promptTokenCount || 0,
-            completion_tokens: data.usageMetadata?.candidatesTokenCount || 0,
-            total_tokens: data.usageMetadata?.totalTokenCount || 0,
-        };
-
-        return { message: text, usage };
-    }
-
-    // Handle OpenAI-compatible response format
-    const choice = data?.choices?.[0];
-    const message = choice?.message;
-
-    if (!message) {
-        if (data?.output_text) {
-            return { message: data.output_text };
-        }
-        if (data?.content) {
-            return { message: typeof data.content === 'string' ? data.content : JSON.stringify(data.content) };
-        }
-        throw new Error('Respons AI kosong.');
-    }
-
-    const usage = {
-        prompt_tokens: data.usage?.prompt_tokens || 0,
-        completion_tokens: data.usage?.completion_tokens || 0,
-        total_tokens: data.usage?.total_tokens || 0,
-    };
-
-    return { message: message.content || 'Tidak ada respons.', usage };
+    // Parse response using centralized adapter
+    const data = parseAIResponse(rawText);
+    const parsed = parseProviderResponse(cfg.providerSlug, data);
+    return parsed;
 }
 
 // ── Generic Fallback ─────────────────────────────────────────────────────────
@@ -457,69 +416,4 @@ function generateGenericFallback(page: string): string {
     return msgs[page] || '**Ringkasan:** Data belum tersedia. Silakan coba lagi.';
 }
 
-// ── Provider endpoint resolution ─────────────────────────────────────────────
 
-function resolveProviderEndpoint(cfg: { providerSlug: string; baseUrl?: string; apiKey: string; modelId: string }): {
-    getEndpoint: string;
-    getHeaders: Record<string, string>;
-} {
-    const PROVIDER_ENDPOINTS: Record<string, string> = {
-        openai: 'https://api.openai.com/v1/chat/completions',
-        deepseek: 'https://api.deepseek.com/v1/chat/completions',
-        gemini: 'https://generativelanguage.googleapis.com/v1beta/models',
-        google: 'https://generativelanguage.googleapis.com/v1beta/models',
-        groq: 'https://api.groq.com/openai/v1/chat/completions',
-        openrouter: 'https://openrouter.ai/api/v1/chat/completions',
-        kiro: '',
-        anthropic: '',
-        'openai-compatible': '',
-    };
-
-    let baseUrl = cfg.baseUrl || PROVIDER_ENDPOINTS[cfg.providerSlug] || '';
-
-    // Handle Gemini/Google with native API format
-    if (cfg.providerSlug === 'gemini' || cfg.providerSlug === 'google') {
-        // Use native Gemini API format: /v1beta/models/{model}:generateContent
-        const endpoint = `${baseUrl}/${cfg.modelId}:generateContent?key=${cfg.apiKey}`;
-        return {
-            getEndpoint: endpoint,
-            getHeaders: {
-                'Content-Type': 'application/json',
-            },
-        };
-    }
-
-    if (cfg.providerSlug === 'openrouter') {
-        if (baseUrl.endsWith('/v1')) baseUrl = `${baseUrl}/chat/completions`;
-        return {
-            getEndpoint: baseUrl,
-            getHeaders: {
-                'Content-Type': 'application/json',
-                Authorization: `Bearer ${cfg.apiKey}`,
-                'HTTP-Referer': 'https://kakarama.com',
-                'X-Title': 'KR Analytics',
-            },
-        };
-    }
-
-    if (cfg.providerSlug === 'kiro') {
-        if (!cfg.baseUrl) throw new Error('Base URL Kiro belum dikonfigurasi.');
-        return {
-            getEndpoint: cfg.baseUrl,
-            getHeaders: { 'Content-Type': 'application/json', Authorization: `Bearer ${cfg.apiKey}` },
-        };
-    }
-
-    if (cfg.providerSlug === 'anthropic') {
-        throw new Error('Anthropic provider not supported for insight generation directly.');
-    }
-
-    if (cfg.providerSlug === 'openai-compatible' || cfg.providerSlug === 'openai') {
-        if (baseUrl.endsWith('/v1')) baseUrl = `${baseUrl}/chat/completions`;
-    }
-
-    return {
-        getEndpoint: baseUrl || `https://api.openai.com/v1/chat/completions`,
-        getHeaders: { 'Content-Type': 'application/json', Authorization: `Bearer ${cfg.apiKey}` },
-    };
-}
