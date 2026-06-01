@@ -83,3 +83,5 @@ sync-worker/dist/
 
 # Test Files
 **/__tests__/
+scripts/*.md
+scripts/*.bat

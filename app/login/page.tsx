@@ -1,38 +1,60 @@
 'use client';
 
-import { useState, useTransition, Suspense } from 'react';
-import { useSearchParams } from 'next/navigation';
-import { loginAction } from './actions';
+import { useState, FormEvent, Suspense, useEffect } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { Building, Mail, Lock, AlertCircle, Loader2 } from 'lucide-react';
 
 function LoginForm() {
+    const router = useRouter();
     const searchParams = useSearchParams();
+    const redirectTo = searchParams.get('redirect') || '/dashboard';
+
+    const [email, setEmail] = useState('');
+    const [password, setPassword] = useState('');
+    const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
-    const [isPending, startTransition] = useTransition();
 
     // Check for error from URL params
-    useState(() => {
+    useEffect(() => {
         const errorParam = searchParams.get('error');
         if (errorParam === 'unauthorized') {
             setError('Akses ditolak. Hanya super admin yang dapat mengakses dashboard.');
+        } else if (errorParam === 'session_expired') {
+            setError('Sesi Anda telah berakhir. Silakan login kembali.');
         }
-    });
+    }, [searchParams]);
 
-    const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
+    const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
         e.preventDefault();
+        setLoading(true);
         setError(null);
 
-        const formData = new FormData(e.currentTarget);
+        try {
+            const res = await fetch('/api/auth/login', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email, password }),
+            });
 
-        startTransition(async () => {
-            const result = await loginAction(formData);
-            if (result?.error) {
-                setError(result.error);
-            } else if (result?.success) {
-                // Login berhasil - redirect langsung ke dashboard
-                window.location.href = '/dashboard';
+            const data = await res.json();
+
+            if (!data.success) {
+                setError(data.message || 'Login gagal');
+                return;
             }
-        });
+
+            // Guard: prevent redirect loop
+            if (typeof window !== 'undefined') {
+                (window as any).__loginRedirected = true;
+            }
+
+            router.replace(data.redirectTo || redirectTo);
+            router.refresh();
+        } catch (err) {
+            setError('Terjadi kesalahan jaringan');
+        } finally {
+            setLoading(false);
+        }
     };
 
     return (
@@ -70,7 +92,9 @@ function LoginForm() {
                                 name="email"
                                 type="email"
                                 required
-                                disabled={isPending}
+                                disabled={loading}
+                                value={email}
+                                onChange={(e) => setEmail(e.target.value)}
                                 placeholder="admin@kakarama.com"
                                 className="w-full pl-10 pr-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-colors disabled:bg-gray-50 disabled:text-gray-500"
                             />
@@ -89,7 +113,9 @@ function LoginForm() {
                                 name="password"
                                 type="password"
                                 required
-                                disabled={isPending}
+                                disabled={loading}
+                                value={password}
+                                onChange={(e) => setPassword(e.target.value)}
                                 placeholder="••••••••"
                                 className="w-full pl-10 pr-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-colors disabled:bg-gray-50 disabled:text-gray-500"
                             />
@@ -99,10 +125,10 @@ function LoginForm() {
                     {/* Submit Button */}
                     <button
                         type="submit"
-                        disabled={isPending}
+                        disabled={loading}
                         className="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-2.5 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                     >
-                        {isPending ? (
+                        {loading ? (
                             <>
                                 <Loader2 className="w-4 h-4 animate-spin" />
                                 <span>Memproses login...</span>

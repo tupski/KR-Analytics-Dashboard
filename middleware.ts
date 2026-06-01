@@ -7,7 +7,7 @@ import { createServerClient } from '@supabase/ssr';
  * Prevents Cloudflare / proxy / browser from caching HTML, RSC, or server action responses.
  */
 function setNoCacheHeaders(response: NextResponse): void {
-    response.headers.set('Cache-Control', 'no-cache, no-store, must-revalidate');
+    response.headers.set('Cache-Control', 'no-cache, no-store, must-revalidate, proxy-revalidate');
     response.headers.set('Pragma', 'no-cache');
     response.headers.set('Expires', '0');
 }
@@ -33,6 +33,14 @@ export async function middleware(request: NextRequest) {
 
     // Allow public access to login page (handles /login?redirect=%2Fdashboard)
     if (pathname === '/login') {
+        const response = NextResponse.next();
+        setNoCacheHeaders(response);
+        return response;
+    }
+
+    // Allow public access to auth API routes (login, etc.) and debug endpoints
+    // Skipping auth here prevents infinite redirect loop when login API is called
+    if (pathname.startsWith('/api/auth/') || pathname.startsWith('/api/debug/')) {
         const response = NextResponse.next();
         setNoCacheHeaders(response);
         return response;
@@ -65,14 +73,51 @@ export async function middleware(request: NextRequest) {
         },
     );
 
+    // Try to refresh session if exists
+    try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session) {
+            // Attempt to refresh the session
+            await supabase.auth.refreshSession();
+        }
+    } catch (refreshError) {
+        // If refresh fails, clear cookies and redirect to login
+        console.error('Session refresh failed:', refreshError);
+        const loginUrl = new URL('/login', request.url);
+        loginUrl.searchParams.set('redirect', pathname);
+        loginUrl.searchParams.set('error', 'session_expired');
+        const redirectResponse = redirectWithNoCache(loginUrl);
+
+        // Clear all Supabase auth cookies
+        const cookiesToClear = request.cookies.getAll().filter(cookie =>
+            cookie.name.startsWith('sb-') || cookie.name.includes('auth-token')
+        );
+        cookiesToClear.forEach(cookie => {
+            redirectResponse.cookies.delete(cookie.name);
+        });
+
+        return redirectResponse;
+    }
+
     // Get user (secure - authenticates with Supabase Auth server)
     const { data: { user }, error } = await supabase.auth.getUser();
 
     // Not authenticated → redirect to login
     if (error || !user) {
+        // Clear invalid cookies before redirecting
         const loginUrl = new URL('/login', request.url);
         loginUrl.searchParams.set('redirect', pathname);
-        return redirectWithNoCache(loginUrl);
+        const redirectResponse = redirectWithNoCache(loginUrl);
+
+        // Clear all Supabase auth cookies
+        const cookiesToClear = request.cookies.getAll().filter(cookie =>
+            cookie.name.startsWith('sb-') || cookie.name.includes('auth-token')
+        );
+        cookiesToClear.forEach(cookie => {
+            redirectResponse.cookies.delete(cookie.name);
+        });
+
+        return redirectResponse;
     }
 
     // Check role for protected routes
@@ -106,7 +151,17 @@ export async function middleware(request: NextRequest) {
         await supabase.auth.signOut();
         const loginUrl = new URL('/login', request.url);
         loginUrl.searchParams.set('error', 'unauthorized');
-        return redirectWithNoCache(loginUrl);
+        const redirectResponse = redirectWithNoCache(loginUrl);
+
+        // Clear all Supabase auth cookies
+        const cookiesToClear = request.cookies.getAll().filter(cookie =>
+            cookie.name.startsWith('sb-') || cookie.name.includes('auth-token')
+        );
+        cookiesToClear.forEach(cookie => {
+            redirectResponse.cookies.delete(cookie.name);
+        });
+
+        return redirectResponse;
     }
 
     return response;
@@ -121,7 +176,9 @@ export const config = {
          * - favicon.ico (favicon file)
          * - public files (public folder)
          * - /login (login page)
+         * - /api/auth/* (auth API routes: login, register, etc.)
+         * - /api/debug/* (debug endpoints)
          */
-        '/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
+        '/((?!_next/static|_next/image|favicon.ico|api/auth/|api/debug/|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
     ],
 };

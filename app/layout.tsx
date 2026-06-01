@@ -53,6 +53,18 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                 <ErrorBoundary>
                     {children}
                 </ErrorBoundary>
+                {/* Build version debug — client-side console log */}
+                <script
+                    dangerouslySetInnerHTML={{
+                        __html: [
+                            "console.info('KR Dashboard Build:', {",
+                            "  buildId: '" + (process.env.NEXT_PUBLIC_BUILD_ID || 'N/A') + "',",
+                            "  gitSha: '" + (process.env.NEXT_PUBLIC_GIT_SHA || 'N/A') + "',",
+                            "  buildTime: '" + (process.env.NEXT_PUBLIC_BUILD_TIME || 'N/A') + "',",
+                            "});",
+                        ].join('\n'),
+                    }}
+                />
             </body>
         </html>
     );

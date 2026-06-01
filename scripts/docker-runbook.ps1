@@ -4,7 +4,7 @@
 # Commands: start, stop, logs, health, check-rows, backup, restore, refresh-summary, status, build, up-build, deploy, cloudflare-help, help
 
 param(
-    [ValidateSet('start','stop','logs','health','check-rows','backup','restore','refresh-summary','status','build','up-build','deploy','cloudflare-help','help')]
+    [ValidateSet('start','stop','logs','health','check-rows','backup','restore','refresh-summary','status','build','up-build','deploy','fix','cloudflare-help','help')]
     [string]$Command,
     [string]$BackupFile,
     [switch]$Help
@@ -32,6 +32,7 @@ Commands:
   build             Build images (docker compose build)
   up-build          Build and start (docker compose up -d --build)
   deploy            Full clean deploy — no-cache build + up
+  fix               Fix Server Action & Refresh Token errors (rebuild + restart)
   cloudflare-help   Show Cloudflare proxy compatibility notes
   help              Show this help message
 
@@ -40,6 +41,7 @@ Options:
 
 Examples:
   .\scripts\docker-runbook.ps1 -Command deploy
+  .\scripts\docker-runbook.ps1 -Command fix
   .\scripts\docker-runbook.ps1 -Command start
   .\scripts\docker-runbook.ps1 -Command status
   .\scripts\docker-runbook.ps1 -Command cloudflare-help
@@ -204,6 +206,11 @@ If users are still stuck:
 "@ -ForegroundColor Green
 }
 
+function Fix-Errors {
+    Write-Host ">>> Running error fix script..." -ForegroundColor Yellow
+    & "$PSScriptRoot\docker-fix-errors.ps1"
+}
+
 function Show-CloudflareHelp {
     Write-Host @"
 
@@ -269,6 +276,7 @@ try {
         'build'           { Build-Images }
         'up-build'        { Up-Build }
         'deploy'          { Deploy }
+        'fix'             { Fix-Errors }
         'cloudflare-help' { Show-CloudflareHelp }
         default {
             Write-Host ">>> Unknown command: $Command" -ForegroundColor Red
