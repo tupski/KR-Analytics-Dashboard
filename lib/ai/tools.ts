@@ -462,6 +462,359 @@ async function fetchUnpaidBillsDetail(location?: string, limit: number = 50): Pr
     return { location: location || 'Semua Lokasi', unpaid_bills: data || [], total_count: data?.[0]?.total_count || 0, total_amount: data?.[0]?.total_amount || 0 };
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// NEW TOOLS (2026-06-01) — 13 tools + 4 composite panel tools
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * fetchMarketingPerformance — performa marketing per nama.
+ * Panggil RPC get_marketing_performance.
+ */
+async function fetchMarketingPerformance(start: string, end: string, location?: string, limit: number = 10): Promise<any> {
+    const supabase = createServerClient();
+    const { data, error } = await supabase.rpc('get_marketing_performance', {
+        p_start_date: start,
+        p_end_date: end,
+        p_location: location || null,
+        p_limit: Math.min(limit, 50),
+        p_offset: 0,
+    });
+    if (error) throw error;
+    return {
+        period: { start_date: start, end_date: end, location: location || null },
+        marketing: (data || []).filter((r: any) => r.marketing_name),
+        total_count: data?.[0]?.total_count || 0,
+    };
+}
+
+/**
+ * fetchRepeatGuests — tamu yang berkunjung lebih dari 1x dalam periode.
+ * Panggil RPC get_repeat_guests.
+ */
+async function fetchRepeatGuests(start: string, end: string, location?: string, limit: number = 10): Promise<any> {
+    const supabase = createServerClient();
+    const { data, error } = await supabase.rpc('get_repeat_guests', {
+        p_start_date: start,
+        p_end_date: end,
+        p_location: location || null,
+        p_limit: Math.min(limit, 50),
+        p_offset: 0,
+    });
+    if (error) throw error;
+    return {
+        period: { start_date: start, end_date: end, location: location || null },
+        repeat_guests: (data || []).filter((r: any) => r.customer_name),
+        total_count: data?.[0]?.total_count || 0,
+    };
+}
+
+/**
+ * fetchStayDurationSummary — distribusi durasi menginap (transit, fullday, per malam).
+ * Panggil RPC get_stay_duration_summary.
+ */
+async function fetchStayDurationSummary(start: string, end: string, location?: string): Promise<any> {
+    const supabase = createServerClient();
+    const { data, error } = await supabase.rpc('get_stay_duration_summary', {
+        p_start_date: start,
+        p_end_date: end,
+        p_location: location || null,
+    });
+    if (error) throw error;
+    return {
+        period: { start_date: start, end_date: end, location: location || null },
+        duration_distribution: data || [],
+    };
+}
+
+/**
+ * fetchGuestSourceSummary — sumber kedatangan tamu (marketing vs langsung).
+ * Panggil RPC get_guest_source_summary.
+ */
+async function fetchGuestSourceSummary(start: string, end: string, location?: string, limit: number = 10): Promise<any> {
+    const supabase = createServerClient();
+    const { data, error } = await supabase.rpc('get_guest_source_summary', {
+        p_start_date: start,
+        p_end_date: end,
+        p_location: location || null,
+        p_limit: Math.min(limit, 50),
+        p_offset: 0,
+    });
+    if (error) throw error;
+    return {
+        period: { start_date: start, end_date: end, location: location || null },
+        sources: (data || []).filter((r: any) => r.source_name),
+        total_count: data?.[0]?.total_count || 0,
+    };
+}
+
+/**
+ * fetchCheckinHeatmap — heatmap jam checkin (0-23) dalam periode.
+ * Panggil RPC get_checkin_heatmap.
+ */
+async function fetchCheckinHeatmap(start: string, end: string, location?: string): Promise<any> {
+    const supabase = createServerClient();
+    const { data, error } = await supabase.rpc('get_checkin_heatmap', {
+        p_start_date: start,
+        p_end_date: end,
+        p_location: location || null,
+    });
+    if (error) throw error;
+    return {
+        period: { start_date: start, end_date: end, location: location || null },
+        hourly_distribution: data || [],
+        peak_hour: (data || []).reduce((best: any, cur: any) => !best || cur.transaction_count > best.transaction_count ? cur : best, null),
+    };
+}
+
+/**
+ * fetchExpenseBreakdown — breakdown pengeluaran per kategori dalam periode.
+ * Panggil RPC get_expense_breakdown_summary.
+ */
+async function fetchExpenseBreakdown(start: string, end: string, location?: string): Promise<any> {
+    const supabase = createServerClient();
+    const { data, error } = await supabase.rpc('get_expense_breakdown_summary', {
+        p_start_date: start,
+        p_end_date: end,
+        p_location: location || null,
+    });
+    if (error) throw error;
+    return {
+        period: { start_date: start, end_date: end, location: location || null },
+        breakdown: data || [],
+    };
+}
+
+/**
+ * fetchOccupancyPerLocation — occupancy rate per lokasi.
+ * Panggil RPC get_occupancy_per_location.
+ */
+async function fetchOccupancyPerLocation(start: string, end: string, location?: string): Promise<any> {
+    const supabase = createServerClient();
+    const { data, error } = await supabase.rpc('get_occupancy_per_location', {
+        p_start_date: start,
+        p_end_date: end,
+        p_location: location || null,
+    });
+    if (error) throw error;
+    return {
+        period: { start_date: start, end_date: end, location: location || null },
+        locations: data || [],
+    };
+}
+
+/**
+ * fetchRevenueYoY — year-over-year comparison.
+ * Panggil RPC get_revenue_yoy_comparison.
+ */
+async function fetchRevenueYoY(start: string, end: string, location?: string): Promise<any> {
+    const supabase = createServerClient();
+    const { data, error } = await supabase.rpc('get_revenue_yoy_comparison', {
+        p_start_date: start,
+        p_end_date: end,
+        p_location: location || null,
+    });
+    if (error) throw error;
+    return {
+        period: { start_date: start, end_date: end, location: location || null },
+        ...(data?.[0] || { current_revenue: 0, current_transactions: 0, previous_revenue: 0, previous_transactions: 0 }),
+    };
+}
+
+/**
+ * fetchPerformanceByEmployee — performa transaksi per karyawan.
+ * Panggil RPC get_performance_by_employee.
+ */
+async function fetchPerformanceByEmployee(start: string, end: string, location?: string, limit: number = 10): Promise<any> {
+    const supabase = createServerClient();
+    const { data, error } = await supabase.rpc('get_performance_by_employee', {
+        p_start_date: start,
+        p_end_date: end,
+        p_location: location || null,
+        p_limit: Math.min(limit, 50),
+        p_offset: 0,
+    });
+    if (error) throw error;
+    return {
+        period: { start_date: start, end_date: end, location: location || null },
+        employees: (data || []).filter((r: any) => r.employee_name),
+        total_count: data?.[0]?.total_count || 0,
+    };
+}
+
+/**
+ * fetchMonthlyRevenueTrend — tren revenue bulanan.
+ * Panggil RPC get_monthly_revenue_trend.
+ */
+async function fetchMonthlyRevenueTrend(start: string, end: string, location?: string): Promise<any> {
+    const supabase = createServerClient();
+    const { data, error } = await supabase.rpc('get_monthly_revenue_trend', {
+        p_start_date: start,
+        p_end_date: end,
+        p_location: location || null,
+    });
+    if (error) throw error;
+    return {
+        period: { start_date: start, end_date: end, location: location || null },
+        monthly: data || [],
+    };
+}
+
+/**
+ * fetchNetProfitPerLocation — profit bersih per lokasi.
+ * Panggil RPC get_net_profit_per_location.
+ */
+async function fetchNetProfitPerLocation(start: string, end: string, location?: string): Promise<any> {
+    const supabase = createServerClient();
+    const { data, error } = await supabase.rpc('get_net_profit_per_location', {
+        p_start_date: start,
+        p_end_date: end,
+        p_location: location || null,
+    });
+    if (error) throw error;
+    return {
+        period: { start_date: start, end_date: end, location: location || null },
+        locations: data || [],
+    };
+}
+
+/**
+ * fetchPaymentMethodSummary — ringkasan metode pembayaran per lokasi.
+ * Panggil RPC get_payment_method_summary.
+ */
+async function fetchPaymentMethodSummary(start: string, end: string, location?: string): Promise<any> {
+    const supabase = createServerClient();
+    const { data, error } = await supabase.rpc('get_payment_method_summary', {
+        p_start_date: start,
+        p_end_date: end,
+        p_location: location || null,
+    });
+    if (error) throw error;
+    return {
+        period: { start_date: start, end_date: end, location: location || null },
+        locations: data || [],
+    };
+}
+
+/**
+ * fetchPerformanceByShift — performa per shift (pagi/siang/malam).
+ * Panggil RPC get_performance_by_shift.
+ */
+async function fetchPerformanceByShift(start: string, end: string, location?: string): Promise<any> {
+    const supabase = createServerClient();
+    const { data, error } = await supabase.rpc('get_performance_by_shift', {
+        p_start_date: start,
+        p_end_date: end,
+        p_location: location || null,
+    });
+    if (error) throw error;
+    return {
+        period: { start_date: start, end_date: end, location: location || null },
+        shifts: data || [],
+    };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// COMPOSITE PANEL FETCHERS — reduce tool calls by bundling related data
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * fetchDashboardKpiPanel — ONE call gets ALL dashboard KPIs.
+ * Replaces: get_daily_summary + get_latest_status + get_period_summary + expense_breakdown
+ */
+async function fetchDashboardKpiPanel(start: string, end: string, location?: string): Promise<any> {
+    const supabase = createServerClient();
+    const { data, error } = await supabase.rpc('get_dashboard_kpis', {
+        p_start_date: start,
+        p_end_date: end,
+        p_location: location || null,
+    });
+    const [expenseBreakdown, latestStatus, dailySummary] = await Promise.all([
+        fetchExpenseBreakdown(start, end, location).catch(() => null),
+        fetchLatestStatus().catch(() => null),
+        fetchDailySummary().catch(() => null),
+    ]);
+    if (error) throw error;
+    return {
+        period: { start_date: start, end_date: end, location: location || null },
+        kpis: data?.[0] || null,
+        expense_breakdown: expenseBreakdown?.breakdown || [],
+        latest_status: latestStatus?.today || null,
+        daily_summary: dailySummary || null,
+    };
+}
+
+/**
+ * fetchMarketingPanel — ONE call gets marketing + guest sources + repeat guests + weekend analysis.
+ * Replaces: get_marketing_performance + get_guest_source_summary + get_repeat_guests
+ */
+async function fetchMarketingPanel(start: string, end: string, location?: string): Promise<any> {
+    const [marketing, guests, repeat, weekend] = await Promise.all([
+        fetchMarketingPerformance(start, end, location, 20).catch(() => null),
+        fetchGuestSourceSummary(start, end, location, 20).catch(() => null),
+        fetchRepeatGuests(start, end, location, 10).catch(() => null),
+        fetchWeekendVsWeekday(start, end, location).catch(() => null),
+    ]);
+    return {
+        period: { start_date: start, end_date: end, location: location || null },
+        marketing_performance: marketing?.marketing || [],
+        guest_sources: guests?.sources || [],
+        repeat_guests: repeat?.repeat_guests || [],
+        weekend_vs_weekday: weekend?.analysis || [],
+    };
+}
+
+/**
+ * fetchOperationsPanel — ONE call gets occupancy + heatmap + employee perf + shift perf.
+ * Replaces: get_occupancy_per_location + get_checkin_heatmap + get_performance_by_employee + get_performance_by_shift
+ */
+async function fetchOperationsPanel(start: string, end: string, location?: string): Promise<any> {
+    const [occupancy, heatmap, employees, shifts, underperforming] = await Promise.all([
+        fetchOccupancyPerLocation(start, end, location).catch(() => null),
+        fetchCheckinHeatmap(start, end, location).catch(() => null),
+        fetchPerformanceByEmployee(start, end, location, 10).catch(() => null),
+        fetchPerformanceByShift(start, end, location).catch(() => null),
+        fetchUnderperformingUnits(start, end, location, 50, 10).catch(() => null),
+    ]);
+    return {
+        period: { start_date: start, end_date: end, location: location || null },
+        occupancy_per_location: occupancy?.locations || [],
+        checkin_heatmap: heatmap?.hourly_distribution || [],
+        peak_hour: heatmap?.peak_hour || null,
+        employee_performance: employees?.employees || [],
+        shift_performance: shifts?.shifts || [],
+        underperforming_units: underperforming?.underperforming_units || [],
+    };
+}
+
+/**
+ * fetchFinancialPanel — ONE call gets profit + YoY + monthly trend + payment methods.
+ * Replaces: get_net_profit_per_location + get_revenue_yoy + get_monthly_revenue_trend + get_payment_method_summary
+ */
+async function fetchFinancialPanel(start: string, end: string, location?: string): Promise<any> {
+    const [profit, yoy, monthly, payment, revenueTrend] = await Promise.all([
+        fetchNetProfitPerLocation(start, end, location).catch(() => null),
+        fetchRevenueYoY(start, end, location).catch(() => null),
+        fetchMonthlyRevenueTrend(start, end, location).catch(() => null),
+        fetchPaymentMethodSummary(start, end, location).catch(() => null),
+        fetchRevenueTrend(start, end, location).catch(() => null),
+    ]);
+    return {
+        period: { start_date: start, end_date: end, location: location || null },
+        profit_per_location: profit?.locations || [],
+        revenue_yoy: yoy ? {
+            current_revenue: yoy.current_revenue,
+            current_transactions: yoy.current_transactions,
+            previous_revenue: yoy.previous_revenue,
+            previous_transactions: yoy.previous_transactions,
+            revenue_change_pct: yoy.revenue_change_pct,
+            transactions_change_pct: yoy.transactions_change_pct,
+        } : null,
+        monthly_revenue_trend: monthly?.monthly || [],
+        payment_methods: payment?.locations || [],
+        daily_revenue_trend: revenueTrend?.daily_revenue || [],
+    };
+}
+
 // =====================================================
 // Public exports
 // =====================================================
@@ -473,7 +826,81 @@ export interface ToolCall {
 
 /** OpenAI / DeepSeek / openai-compatible function-calling schema. */
 export const OPENAI_TOOLS = [
-    // ── HARI INI (fast, no params) ─────────────────────────────────────────
+    // ═══════════════════════════════════════════════════════════════════════════
+    // META-TOOLS — Composite panels (reduce "too many tool calls" errors)
+    // ═══════════════════════════════════════════════════════════════════════════
+    {
+        type: 'function',
+        function: {
+            name: 'get_dashboard_kpi_panel',
+            description:
+                'PANEL DASHBOARD LENGKAP — SATU TOOL untuk semua KPI dashboard: revenue, expense, net profit, transaksi, occupancy, perbandingan periode sebelumnya, breakdown pengeluaran, status hari ini, ringkasan harian. **Gunakan ini untuk pertanyaan dashboard umum.** Menggantikan 4 tool calls sekaligus.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    start_date: { type: 'string', description: 'Tanggal mulai YYYY-MM-DD (inclusive)' },
+                    end_date: { type: 'string', description: 'Tanggal akhir YYYY-MM-DD (inclusive)' },
+                    location: { type: 'string', description: 'Filter lokasi (opsional)' },
+                },
+                required: ['start_date', 'end_date'],
+            },
+        },
+    },
+    {
+        type: 'function',
+        function: {
+            name: 'get_marketing_panel',
+            description:
+                'PANEL MARKETING LENGKAP — SATU TOOL untuk semua data marketing: performa marketing, sumber tamu, repeat guests, analisis weekend vs weekday. **Gunakan untuk pertanyaan tentang marketing, guest sources, loyalitas.** Menggantikan 4 tool calls sekaligus.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    start_date: { type: 'string', description: 'Tanggal mulai YYYY-MM-DD (inclusive)' },
+                    end_date: { type: 'string', description: 'Tanggal akhir YYYY-MM-DD (inclusive)' },
+                    location: { type: 'string', description: 'Filter lokasi (opsional)' },
+                },
+                required: ['start_date', 'end_date'],
+            },
+        },
+    },
+    {
+        type: 'function',
+        function: {
+            name: 'get_operations_panel',
+            description:
+                'PANEL OPERASIONAL LENGKAP — SATU TOOL untuk data operasional: occupancy per lokasi, heatmap jam checkin, performa karyawan, performa shift, unit underperforming. **Gunakan untuk pertanyaan tentang operasional, jam sibuk, kinerja karyawan.** Menggantikan 5 tool calls sekaligus.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    start_date: { type: 'string', description: 'Tanggal mulai YYYY-MM-DD (inclusive)' },
+                    end_date: { type: 'string', description: 'Tanggal akhir YYYY-MM-DD (inclusive)' },
+                    location: { type: 'string', description: 'Filter lokasi (opsional)' },
+                },
+                required: ['start_date', 'end_date'],
+            },
+        },
+    },
+    {
+        type: 'function',
+        function: {
+            name: 'get_financial_panel',
+            description:
+                'PANEL KEUANGAN LENGKAP — SATU TOOL untuk semua data keuangan: profit per lokasi, YoY comparison, tren revenue bulanan, metode pembayaran, tren revenue harian. **Gunakan untuk pertanyaan tentang profit, perbandingan tahunan, analisis keuangan.** Menggantikan 5 tool calls sekaligus.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    start_date: { type: 'string', description: 'Tanggal mulai YYYY-MM-DD (inclusive)' },
+                    end_date: { type: 'string', description: 'Tanggal akhir YYYY-MM-DD (inclusive)' },
+                    location: { type: 'string', description: 'Filter lokasi (opsional)' },
+                },
+                required: ['start_date', 'end_date'],
+            },
+        },
+    },
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // EXISTING TOOLS — Hari Ini (fast, no params)
+    // ═══════════════════════════════════════════════════════════════════════════
     {
         type: 'function',
         function: {
@@ -499,7 +926,9 @@ export const OPENAI_TOOLS = [
         },
     },
 
-    // ── PERIODE ─────────────────────────────────────────────────────────────
+    // ═══════════════════════════════════════════════════════════════════════════
+    // EXISTING TOOLS — Periode
+    // ═══════════════════════════════════════════════════════════════════════════
     {
         type: 'function',
         function: {
@@ -554,7 +983,9 @@ export const OPENAI_TOOLS = [
         },
     },
 
-    // ── LOKASI & PELANGGAN ─────────────────────────────────────────────────
+    // ═══════════════════════════════════════════════════════════════════════════
+    // EXISTING TOOLS — Lokasi & Pelanggan
+    // ═══════════════════════════════════════════════════════════════════════════
     {
         type: 'function',
         function: {
@@ -588,7 +1019,9 @@ export const OPENAI_TOOLS = [
         },
     },
 
-    // ── TAGIHAN & INVENTARIS ────────────────────────────────────────────────
+    // ═══════════════════════════════════════════════════════════════════════════
+    // EXISTING TOOLS — Tagihan & Inventaris
+    // ═══════════════════════════════════════════════════════════════════════════
     {
         type: 'function',
         function: {
@@ -616,7 +1049,9 @@ export const OPENAI_TOOLS = [
         },
     },
 
-    // ── SEARCH & DISCOVERY (NEW) ────────────────────────────────────────────
+    // ═══════════════════════════════════════════════════════════════════════════
+    // EXISTING TOOLS — Search & Discovery
+    // ═══════════════════════════════════════════════════════════════════════════
     {
         type: 'function',
         function: {
@@ -655,7 +1090,9 @@ export const OPENAI_TOOLS = [
         },
     },
 
-    // ── REALTIME & MONITORING (NEW) ─────────────────────────────────────────
+    // ═══════════════════════════════════════════════════════════════════════════
+    // EXISTING TOOLS — Realtime & Monitoring
+    // ═══════════════════════════════════════════════════════════════════════════
     {
         type: 'function',
         function: {
@@ -686,7 +1123,9 @@ export const OPENAI_TOOLS = [
         },
     },
 
-    // ── ANALYTICS & INSIGHTS (NEW) ──────────────────────────────────────────
+    // ═══════════════════════════════════════════════════════════════════════════
+    // EXISTING TOOLS — Analytics & Insights
+    // ═══════════════════════════════════════════════════════════════════════════
     {
         type: 'function',
         function: {
@@ -750,6 +1189,230 @@ export const OPENAI_TOOLS = [
             },
         },
     },
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // NEW TOOLS (2026-06-01) — 13 specialized tools
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    // ── MARKETING & CUSTOMER ──────────────────────────────────────────────────
+    {
+        type: 'function',
+        function: {
+            name: 'get_marketing_performance',
+            description: 'PERFORMA MARKETING — breakdown transaksi, revenue, fee per marketing. Berguna untuk: "marketing mana paling produktif?", "berapa fee marketing?", "ROI marketing X?".',
+            parameters: {
+                type: 'object',
+                properties: {
+                    start_date: { type: 'string', description: 'Tanggal mulai YYYY-MM-DD' },
+                    end_date: { type: 'string', description: 'Tanggal akhir YYYY-MM-DD' },
+                    location: { type: 'string', description: 'Filter lokasi (opsional)' },
+                    limit: { type: 'number', description: 'Jumlah hasil, default 10, max 50' },
+                },
+                required: ['start_date', 'end_date'],
+            },
+        },
+    },
+    {
+        type: 'function',
+        function: {
+            name: 'get_repeat_guests',
+            description: 'TAMU REPEAT — daftar tamu yang menginap lebih dari 1x dalam periode, berapa kali, total revenue. Berguna untuk: "siapa tamu loyal?", "customer paling sering booking?", "repeat guest analysis".',
+            parameters: {
+                type: 'object',
+                properties: {
+                    start_date: { type: 'string', description: 'Tanggal mulai YYYY-MM-DD' },
+                    end_date: { type: 'string', description: 'Tanggal akhir YYYY-MM-DD' },
+                    location: { type: 'string', description: 'Filter lokasi (opsional)' },
+                    limit: { type: 'number', description: 'Jumlah hasil, default 10, max 50' },
+                },
+                required: ['start_date', 'end_date'],
+            },
+        },
+    },
+    {
+        type: 'function',
+        function: {
+            name: 'get_guest_source_summary',
+            description: 'SUMBER TAMU — dari mana tamu berasal (marketing atau langsung), berapa transaksi dan revenue per sumber. Berguna untuk: "berapa % tamu dari marketing?", "sumber tamu terbanyak?".',
+            parameters: {
+                type: 'object',
+                properties: {
+                    start_date: { type: 'string', description: 'Tanggal mulai YYYY-MM-DD' },
+                    end_date: { type: 'string', description: 'Tanggal akhir YYYY-MM-DD' },
+                    location: { type: 'string', description: 'Filter lokasi (opsional)' },
+                    limit: { type: 'number', description: 'Jumlah hasil, default 10, max 50' },
+                },
+                required: ['start_date', 'end_date'],
+            },
+        },
+    },
+
+    // ── DURASI & WAKTU ───────────────────────────────────────────────────────
+    {
+        type: 'function',
+        function: {
+            name: 'get_stay_duration_summary',
+            description: 'DURASI MENGINAP — distribusi durasi menginap (transit, fullday, per malam, 2+ malam). Berguna untuk: "rata-rata durasi menginap?", "lebih banyak transit atau fullstay?", "pola durasi customer".',
+            parameters: {
+                type: 'object',
+                properties: {
+                    start_date: { type: 'string', description: 'Tanggal mulai YYYY-MM-DD' },
+                    end_date: { type: 'string', description: 'Tanggal akhir YYYY-MM-DD' },
+                    location: { type: 'string', description: 'Filter lokasi (opsional)' },
+                },
+                required: ['start_date', 'end_date'],
+            },
+        },
+    },
+    {
+        type: 'function',
+        function: {
+            name: 'get_checkin_heatmap',
+            description: 'HEATMAP JAM CHECKIN — distribusi jam checkin (0-23) dalam periode. Berguna untuk: "jam berapa paling ramai checkin?", "pola jam operasional", "peak hour checkin".',
+            parameters: {
+                type: 'object',
+                properties: {
+                    start_date: { type: 'string', description: 'Tanggal mulai YYYY-MM-DD' },
+                    end_date: { type: 'string', description: 'Tanggal akhir YYYY-MM-DD' },
+                    location: { type: 'string', description: 'Filter lokasi (opsional)' },
+                },
+                required: ['start_date', 'end_date'],
+            },
+        },
+    },
+    {
+        type: 'function',
+        function: {
+            name: 'get_performance_by_shift',
+            description: 'PERFORMA SHIFT — perbandingan performa shift (pagi/siang/malam): transaksi, revenue, rata-rata. Berguna untuk: "shift mana paling produktif?", "performa shift pagi vs malam?".',
+            parameters: {
+                type: 'object',
+                properties: {
+                    start_date: { type: 'string', description: 'Tanggal mulai YYYY-MM-DD' },
+                    end_date: { type: 'string', description: 'Tanggal akhir YYYY-MM-DD' },
+                    location: { type: 'string', description: 'Filter lokasi (opsional)' },
+                },
+                required: ['start_date', 'end_date'],
+            },
+        },
+    },
+
+    // ── EXPENSE & KEUANGAN ───────────────────────────────────────────────────
+    {
+        type: 'function',
+        function: {
+            name: 'get_expense_breakdown',
+            description: 'BREAKDOWN PENGELUARAN — rincian pengeluaran per kategori, total, jumlah transaksi, persentase. Berguna untuk: "pengeluaran terbesar kategori apa?", "breakdown biaya", "analisis pengeluaran".',
+            parameters: {
+                type: 'object',
+                properties: {
+                    start_date: { type: 'string', description: 'Tanggal mulai YYYY-MM-DD' },
+                    end_date: { type: 'string', description: 'Tanggal akhir YYYY-MM-DD' },
+                    location: { type: 'string', description: 'Filter lokasi (opsional)' },
+                },
+                required: ['start_date', 'end_date'],
+            },
+        },
+    },
+    {
+        type: 'function',
+        function: {
+            name: 'get_net_profit_per_location',
+            description: 'PROFIT PER LOKASI — revenue, expense, net profit, profit margin per lokasi. Berguna untuk: "lokasi mana paling menguntungkan?", "profit margin per lokasi", "analisis profitabilitas".',
+            parameters: {
+                type: 'object',
+                properties: {
+                    start_date: { type: 'string', description: 'Tanggal mulai YYYY-MM-DD' },
+                    end_date: { type: 'string', description: 'Tanggal akhir YYYY-MM-DD' },
+                    location: { type: 'string', description: 'Filter lokasi (opsional)' },
+                },
+                required: ['start_date', 'end_date'],
+            },
+        },
+    },
+    {
+        type: 'function',
+        function: {
+            name: 'get_payment_method_summary',
+            description: 'METODE PEMBAYARAN — rasio cash vs transfer per lokasi, total dan persentase. Berguna untuk: "berapa % tamu bayar cash?", "preferensi metode bayar per lokasi".',
+            parameters: {
+                type: 'object',
+                properties: {
+                    start_date: { type: 'string', description: 'Tanggal mulai YYYY-MM-DD' },
+                    end_date: { type: 'string', description: 'Tanggal akhir YYYY-MM-DD' },
+                    location: { type: 'string', description: 'Filter lokasi (opsional)' },
+                },
+                required: ['start_date', 'end_date'],
+            },
+        },
+    },
+
+    // ── OCCUPANCY & TREND ────────────────────────────────────────────────────
+    {
+        type: 'function',
+        function: {
+            name: 'get_occupancy_per_location',
+            description: 'OCCUPANCY PER LOKASI — total kamar, transaksi, revenue, occupancy rate per lokasi. Berguna untuk: "lokasi mana occupancy tertinggi?", "rate okupansi per lokasi".',
+            parameters: {
+                type: 'object',
+                properties: {
+                    start_date: { type: 'string', description: 'Tanggal mulai YYYY-MM-DD' },
+                    end_date: { type: 'string', description: 'Tanggal akhir YYYY-MM-DD' },
+                    location: { type: 'string', description: 'Filter lokasi (opsional)' },
+                },
+                required: ['start_date', 'end_date'],
+            },
+        },
+    },
+    {
+        type: 'function',
+        function: {
+            name: 'get_revenue_yoy_comparison',
+            description: 'YoY COMPARISON — perbandingan revenue dan transaksi tahun ini vs tahun lalu untuk periode yang sama. Berguna untuk: "performa tahun ini vs tahun lalu?", "growth YoY".',
+            parameters: {
+                type: 'object',
+                properties: {
+                    start_date: { type: 'string', description: 'Tanggal mulai YYYY-MM-DD' },
+                    end_date: { type: 'string', description: 'Tanggal akhir YYYY-MM-DD' },
+                    location: { type: 'string', description: 'Filter lokasi (opsional)' },
+                },
+                required: ['start_date', 'end_date'],
+            },
+        },
+    },
+    {
+        type: 'function',
+        function: {
+            name: 'get_monthly_revenue_trend',
+            description: 'TREN REVENUE BULANAN — revenue, transaksi, rata-rata per transaksi per bulan dalam rentang. Berguna untuk: "tren revenue bulanan", "chart pendapatan per bulan".',
+            parameters: {
+                type: 'object',
+                properties: {
+                    start_date: { type: 'string', description: 'Tanggal mulai YYYY-MM-DD' },
+                    end_date: { type: 'string', description: 'Tanggal akhir YYYY-MM-DD' },
+                    location: { type: 'string', description: 'Filter lokasi (opsional)' },
+                },
+                required: ['start_date', 'end_date'],
+            },
+        },
+    },
+    {
+        type: 'function',
+        function: {
+            name: 'get_performance_by_employee',
+            description: 'PERFORMA KARYAWAN — transaksi dan revenue per karyawan (input_by). Berguna untuk: "karyawan mana paling produktif?", "siapa yang paling banyak input transaksi?".',
+            parameters: {
+                type: 'object',
+                properties: {
+                    start_date: { type: 'string', description: 'Tanggal mulai YYYY-MM-DD' },
+                    end_date: { type: 'string', description: 'Tanggal akhir YYYY-MM-DD' },
+                    location: { type: 'string', description: 'Filter lokasi (opsional)' },
+                    limit: { type: 'number', description: 'Jumlah hasil, default 10, max 50' },
+                },
+                required: ['start_date', 'end_date'],
+            },
+        },
+    },
 ];
 
 /** Anthropic Messages tool schema (compatible). */
@@ -763,6 +1426,36 @@ export const ANTHROPIC_TOOLS = OPENAI_TOOLS.map(t => ({
 export async function executeTool(call: ToolCall): Promise<any> {
     try {
         switch (call.name) {
+            // ── COMPOSITE PANEL TOOLS ─────────────────────────────────────────
+            case 'get_dashboard_kpi_panel':
+                return await fetchDashboardKpiPanel(
+                    call.arguments.start_date,
+                    call.arguments.end_date,
+                    call.arguments.location,
+                );
+
+            case 'get_marketing_panel':
+                return await fetchMarketingPanel(
+                    call.arguments.start_date,
+                    call.arguments.end_date,
+                    call.arguments.location,
+                );
+
+            case 'get_operations_panel':
+                return await fetchOperationsPanel(
+                    call.arguments.start_date,
+                    call.arguments.end_date,
+                    call.arguments.location,
+                );
+
+            case 'get_financial_panel':
+                return await fetchFinancialPanel(
+                    call.arguments.start_date,
+                    call.arguments.end_date,
+                    call.arguments.location,
+                );
+
+            // ── EXISTING TOOLS ────────────────────────────────────────────────
             case 'get_period_summary':
                 return await fetchPeriodSummary(
                     call.arguments.start_date,
@@ -827,7 +1520,6 @@ export async function executeTool(call: ToolCall): Promise<any> {
             case 'get_unit_inventory':
                 return await fetchUnitInventory(call.arguments.location);
 
-            // ── NEW TOOLS (2026-05-27) ──────────────────────────────────────────
             case 'search_transactions':
                 return await fetchSearchTransactions(
                     call.arguments.query,
@@ -887,6 +1579,102 @@ export async function executeTool(call: ToolCall): Promise<any> {
                 return await fetchUnpaidBillsDetail(
                     call.arguments.location,
                     call.arguments.limit || 50,
+                );
+
+            // ── NEW TOOLS (2026-06-01) ──────────────────────────────────────────
+            case 'get_marketing_performance':
+                return await fetchMarketingPerformance(
+                    call.arguments.start_date,
+                    call.arguments.end_date,
+                    call.arguments.location,
+                    call.arguments.limit || 10,
+                );
+
+            case 'get_repeat_guests':
+                return await fetchRepeatGuests(
+                    call.arguments.start_date,
+                    call.arguments.end_date,
+                    call.arguments.location,
+                    call.arguments.limit || 10,
+                );
+
+            case 'get_guest_source_summary':
+                return await fetchGuestSourceSummary(
+                    call.arguments.start_date,
+                    call.arguments.end_date,
+                    call.arguments.location,
+                    call.arguments.limit || 10,
+                );
+
+            case 'get_stay_duration_summary':
+                return await fetchStayDurationSummary(
+                    call.arguments.start_date,
+                    call.arguments.end_date,
+                    call.arguments.location,
+                );
+
+            case 'get_checkin_heatmap':
+                return await fetchCheckinHeatmap(
+                    call.arguments.start_date,
+                    call.arguments.end_date,
+                    call.arguments.location,
+                );
+
+            case 'get_performance_by_shift':
+                return await fetchPerformanceByShift(
+                    call.arguments.start_date,
+                    call.arguments.end_date,
+                    call.arguments.location,
+                );
+
+            case 'get_expense_breakdown':
+                return await fetchExpenseBreakdown(
+                    call.arguments.start_date,
+                    call.arguments.end_date,
+                    call.arguments.location,
+                );
+
+            case 'get_net_profit_per_location':
+                return await fetchNetProfitPerLocation(
+                    call.arguments.start_date,
+                    call.arguments.end_date,
+                    call.arguments.location,
+                );
+
+            case 'get_payment_method_summary':
+                return await fetchPaymentMethodSummary(
+                    call.arguments.start_date,
+                    call.arguments.end_date,
+                    call.arguments.location,
+                );
+
+            case 'get_occupancy_per_location':
+                return await fetchOccupancyPerLocation(
+                    call.arguments.start_date,
+                    call.arguments.end_date,
+                    call.arguments.location,
+                );
+
+            case 'get_revenue_yoy_comparison':
+                return await fetchRevenueYoY(
+                    call.arguments.start_date,
+                    call.arguments.end_date,
+                    call.arguments.location,
+                );
+
+            case 'get_monthly_revenue_trend':
+                return await fetchMonthlyRevenueTrend(
+                    call.arguments.start_date,
+                    call.arguments.end_date,
+                    call.arguments.location,
+                );
+
+            case 'get_performance_by_employee':
+                return await fetchPerformanceByEmployee(
+                    call.arguments.start_date,
+                    call.arguments.end_date,
+                    call.arguments.location,
+                    call.arguments.limit || 10,
                 );
 
             default:

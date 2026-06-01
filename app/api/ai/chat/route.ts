@@ -25,7 +25,7 @@ interface AIConfig {
     label?: string;
 }
 
-const MAX_TOOL_ITERATIONS = 5;
+const MAX_TOOL_ITERATIONS = 8;
 
 /** Priority ranking for auto-routing. Lower = tried first. */
 const PROVIDER_PRIORITY: Record<string, number> = {
@@ -89,8 +89,14 @@ async function getQuickContext(): Promise<string> {
 - Total unit: ${totalRooms} kamar
 - Lokasi: ${locationDescriptors}
 
-ATURAN TOOLS:
-- Gunakan tools untuk semua data - jangan mengarang angka.
+PREFERENSI TOOLS (PENTING!):
+- **Gunakan Panel Tools (get_dashboard_kpi_panel, get_marketing_panel, get_operations_panel, get_financial_panel) untuk pertanyaan umum** — tool panel mengembalikan MULTIPLE data sekaligus dan menggantikan 4-5 tool calls individual.
+- Panel tools diprioritaskan untuk mengurangi jumlah tool calls:
+  * get_dashboard_kpi_panel → untuk pertanyaan dashboard/KPI umum
+  * get_marketing_panel → untuk pertanyaan marketing/sumber tamu/repeat
+  * get_operations_panel → untuk pertanyaan operasional/okupansi/shift/karyawan
+  * get_financial_panel → untuk pertanyaan keuangan/profit/YoY/trend
+- Hanya gunakan tool individual (get_period_summary, get_repeat_guests, dll) jika hanya butuh 1-2 metrik spesifik.
 - Untuk perbandingan periode, pakai compare_periods (langsung dapat delta otomatis).
 - "Minggu lalu" = window (today-13) s/d (today-7). "Bulan lalu" = 30 hari sebelum window sekarang.
 - Tanggal SELALU format YYYY-MM-DD.
@@ -612,6 +618,33 @@ reason: [alasan singkat]
 
 Hanya tampilkan jika benar-benar relevan dan menambah nilai.`,
 
+            // TOOL PREFERENCE SUMMARY
+            `## Tool Preference
+
+KR·AI punya 30+ tools yang dibagi dalam 2 kategori:
+
+**PANEL TOOLS (prioritas utama)** — 1 call = banyak data:
+- get_dashboard_kpi_panel(start, end) → KPI lengkap + expense breakdown + status + daily summary
+- get_marketing_panel(start, end) → marketing perf + guest sources + repeat guests + weekend analysis
+- get_operations_panel(start, end) → occupancy + heatmap + employee perf + shift perf + underperforming units
+- get_financial_panel(start, end) → profit per location + YoY + monthly trend + payment methods + revenue trend
+
+**Individual tools** — gunakan jika hanya butuh data spesifik:
+- get_daily_summary, get_latest_status (tanpa parameter, cepat)
+- get_period_summary, get_revenue_trend, compare_periods
+- get_top_locations, get_top_customers
+- search_transactions, search_expenses (cari data spesifik)
+- get_live_checkins, detect_idle_units, get_unit_inventory
+- get_marketing_performance, get_repeat_guests, get_guest_source_summary
+- get_stay_duration_summary, get_checkin_heatmap, get_expense_breakdown
+- get_net_profit_per_location, get_payment_method_summary
+- get_occupancy_per_location, get_revenue_yoy_comparison
+- get_monthly_revenue_trend, get_performance_by_employee
+- get_performance_by_shift, get_underperforming_units
+- get_weekend_vs_weekday_analysis, estimate_month_end_revenue
+- get_unpaid_bills_detail, get_outstanding_bills
+
+**Strategi:** Untuk pertanyaan yang butuh banyak data (dashboard, marketing, operasional, keuangan), SELALU pakai panel tool dulu. Panel tool = 1 tool call vs 4-5 individual calls.`,
             quickContext,
             memoryContext,
             thinkingInstruction,

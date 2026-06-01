@@ -233,7 +233,13 @@ async function getQuickContext(): Promise<string> {
 - Total unit: ${totalRooms} kamar
 - Lokasi: ${locationDescriptors}
 
-ATURAN:
+PREFERENSI TOOLS:
+- **Panel tools** (get_dashboard_kpi_panel, get_marketing_panel, get_operations_panel, get_financial_panel) adalah prioritas — 1 call dapat banyak data.
+- Panel get_dashboard_kpi_panel untuk KPI dashboard umum.
+- Panel get_marketing_panel untuk marketing/customer analysis.
+- Panel get_operations_panel untuk operasional/okupansi.
+- Panel get_financial_panel untuk keuangan/profit/YoY.
+- Hanya pakai tool individual jika butuh data spesifik 1-2 metrik.
 - Gunakan tools untuk semua data - jangan mengarang angka.
 - Untuk perbandingan periode, pakai compare_periods.
 - Tanggal SELALU format YYYY-MM-DD.
