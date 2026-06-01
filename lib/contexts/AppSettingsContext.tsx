@@ -2,6 +2,7 @@
 
 import { createContext, useContext, useState, useEffect, type ReactNode } from 'react';
 import type { AppSettings } from '@/app/(dashboard)/pengaturan/actions';
+import { DEFAULTS, AI_CONFIG } from '@/lib/config/constants';
 
 interface AppSettingsContextValue {
     settings: AppSettings;
@@ -10,19 +11,19 @@ interface AppSettingsContextValue {
 }
 
 const defaults: AppSettings = {
-    app_name: 'Kakarama Room Analytics',
+    app_name: DEFAULTS.APP_NAME,
     logo_url: null,
     favicon_url: null,
-    primary_color: '#2563eb',
-    report_period_mode: 'calendar_day',
-    timezone: 'Asia/Jakarta',
-    sidebar_behavior: 'default',
-    compact_display: 'false',
+    primary_color: DEFAULTS.PRIMARY_COLOR,
+    report_period_mode: DEFAULTS.REPORT_PERIOD_MODE,
+    timezone: DEFAULTS.TIMEZONE,
+    sidebar_behavior: DEFAULTS.SIDEBAR_BEHAVIOR,
+    compact_display: String(DEFAULTS.COMPACT_DISPLAY),
     ai_insight_enabled: 'false',
-    ai_insight_mode: 'ai-with-fallback',
+    ai_insight_mode: DEFAULTS.INSIGHT_MODE,
     ai_insight_provider: '',
     ai_insight_model: '',
-    ai_insight_cache_ttl_minutes: '30',
+    ai_insight_cache_ttl_minutes: String(AI_CONFIG.INSIGHT_CACHE_TTL_MINUTES),
     ai_insight_auto_refresh: 'true',
 };
 

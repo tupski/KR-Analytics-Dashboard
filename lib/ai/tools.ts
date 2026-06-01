@@ -47,9 +47,143 @@ import type { ReportPeriodMode } from '@/lib/reporting-period';
 import { queryAnalytics, parseNumeric } from '@/lib/analytics/db';
 import { withCache, pickTTL } from '@/lib/analytics/cache';
 import { getGuestStayHistory } from '@/lib/ai/tools/guest-history';
+import { DATE_RANGE, API_LIMITS, IDLE_THRESHOLDS, TIME, LOCATION_HEALTH } from '@/lib/config/constants';
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Type Definitions — replace `any` types for proper type safety
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/** Raw transaction record from Supabase */
+export interface TransactionRecord {
+    cash_amount: number;
+    transfer_amount: number;
+    customer_name?: string;
+    room_number?: string;
+    apartment_location?: string;
+    marketing_name?: string;
+    marketing_fee?: number;
+    status?: string;
+    checkin_at?: string;
+    checkout_at?: string;
+    rental_duration?: number;
+    created_at?: string;
+    is_deleted?: boolean;
+}
+
+/** Raw expense record from Supabase */
+export interface ExpenseRecord {
+    jumlah: number;
+    category?: string;
+    apartment_location?: string;
+    tanggal?: string;
+}
+
+/** Raw billing record from Supabase */
+export interface BillingRecord {
+    amount: number;
+    due_date?: string;
+    status?: string;
+    apartment_location?: string;
+}
+
+/** Period summary result from fetchPeriodSummary */
+export interface PeriodSummary {
+    period: { start_date: string; end_date: string; location: string | null };
+    transactions: number;
+    revenue: number;
+    revenue_cash: number;
+    revenue_transfer: number;
+    marketing_fee_total: number;
+    expense_total: number;
+    net: number;
+    distinct_customers: number;
+    location_breakdown: { location: string; count: number; revenue: number }[];
+    expense_by_category: { category: string; total: number }[];
+}
+
+/** Daily summary result */
+export interface DailySummary {
+    today: { date: string;[key: string]: unknown };
+    yesterday: { date: string;[key: string]: unknown };
+    comparison: { revenue_change: number; transaction_change: number };
+}
+
+/** Revenue trend result */
+export interface RevenueTrend {
+    period: { start_date: string; end_date: string; location: string | null };
+    total_revenue: number;
+    days: number;
+    daily_revenue: { date: string; revenue: number }[];
+    avg_per_day: number;
+    max_day: { date: string; revenue: number } | null;
+    min_day: { date: string; revenue: number } | null;
+}
+
+/** Latest status result */
+export interface LatestStatus {
+    snapshot_time: string;
+    today: {
+        date: string;
+        checkin_count: number;
+        checkout_count: number;
+        revenue: number;
+        active_stays: number;
+    };
+}
+
+/** Generic search result */
+export interface SearchResult {
+    query: string;
+    results: Record<string, unknown>[];
+    total_count: number;
+}
+
+/** Live checkins result */
+export interface LiveCheckinsResult {
+    snapshot_time: string;
+    location: string;
+    active_guests: Record<string, unknown>[];
+    total_count: number;
+}
+
+/** Idle units result */
+export interface IdleUnitsResult {
+    threshold_days: number;
+    location: string;
+    idle_units: Record<string, unknown>[];
+    total_count: number;
+}
+
+/** Underperforming units result */
+export interface UnderperformingUnitsResult {
+    period: { start_date: string; end_date: string };
+    threshold_occupancy: number;
+    location: string;
+    underperforming_units: Record<string, unknown>[];
+    total_count: number;
+}
+
+/** Weekend vs weekday analysis result */
+export interface WeekendWeekdayResult {
+    period: { start_date: string; end_date: string };
+    location: string;
+    analysis: Record<string, unknown>[];
+}
+
+/** Month end estimate result */
+export interface MonthEndEstimate {
+    [key: string]: unknown;
+}
+
+/** Unpaid bills result */
+export interface UnpaidBillsResult {
+    location: string;
+    unpaid_bills: Record<string, unknown>[];
+    total_count: number;
+    total_amount: number;
+}
 
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
-const MAX_RANGE_DAYS = 730; // 2 years
 
 /**
  * Type A — user-explicit date range: calendar-day aligned.
@@ -63,8 +197,8 @@ function validateDateRange(start: string, end: string) {
     const e = new Date(end + 'T23:59:59+07:00').getTime();
     if (Number.isNaN(s) || Number.isNaN(e)) throw new Error('Tanggal tidak valid.');
     if (e < s) throw new Error('end_date harus >= start_date.');
-    if ((e - s) / 86400000 > MAX_RANGE_DAYS) {
-        throw new Error(`Rentang maksimum ${MAX_RANGE_DAYS} hari.`);
+    if ((e - s) / TIME.MS_PER_DAY > DATE_RANGE.MAX_DAYS) {
+        throw new Error(`Rentang maksimum ${DATE_RANGE.MAX_DAYS} hari.`);
     }
     return { startIso: `${start}T00:00:00`, endIso: `${end}T23:59:59` };
 }
@@ -80,7 +214,7 @@ async function fetchPeriodSummary(
     end: string,
     location?: string,
     mode?: ReportPeriodMode,
-): Promise<any> {
+): Promise<PeriodSummary> {
     const supabase = createServerClient();
 
     // Type B: period-aware boundaries via helper
@@ -121,30 +255,30 @@ async function fetchPeriodSummary(
     ]);
 
     const revenue = (txData || []).reduce(
-        (s: number, t: any) => s + (t.cash_amount || 0) + (t.transfer_amount || 0),
+        (s: number, t: TransactionRecord) => s + (t.cash_amount || 0) + (t.transfer_amount || 0),
         0,
     );
-    const cash = (txData || []).reduce((s: number, t: any) => s + (t.cash_amount || 0), 0);
-    const transfer = (txData || []).reduce((s: number, t: any) => s + (t.transfer_amount || 0), 0);
-    const marketingFeeTotal = (txData || []).reduce((s: number, t: any) => s + (t.marketing_fee || 0), 0);
+    const cash = (txData || []).reduce((s: number, t: TransactionRecord) => s + (t.cash_amount || 0), 0);
+    const transfer = (txData || []).reduce((s: number, t: TransactionRecord) => s + (t.transfer_amount || 0), 0);
+    const marketingFeeTotal = (txData || []).reduce((s: number, t: TransactionRecord) => s + (t.marketing_fee || 0), 0);
 
     const distinctCustomers = new Set(
         (txData || [])
-            .filter((t: any) => t.customer_name)
-            .map((t: any) => String(t.customer_name).toLowerCase().trim()),
+            .filter((t: TransactionRecord) => t.customer_name)
+            .map((t: TransactionRecord) => String(t.customer_name).toLowerCase().trim()),
     ).size;
 
     const locationBreakdown: Record<string, { count: number; revenue: number }> = {};
-    (txData || []).forEach((t: any) => {
+    (txData || []).forEach((t: TransactionRecord) => {
         const loc = t.apartment_location || '(tanpa lokasi)';
         if (!locationBreakdown[loc]) locationBreakdown[loc] = { count: 0, revenue: 0 };
         locationBreakdown[loc].count++;
         locationBreakdown[loc].revenue += (t.cash_amount || 0) + (t.transfer_amount || 0);
     });
 
-    const expenseTotal = (expData || []).reduce((s: number, e: any) => s + (e.jumlah || 0), 0);
+    const expenseTotal = (expData || []).reduce((s: number, e: ExpenseRecord) => s + (e.jumlah || 0), 0);
     const expenseByCategory: Record<string, number> = {};
-    (expData || []).forEach((e: any) => {
+    (expData || []).forEach((e: ExpenseRecord) => {
         const cat = e.category || 'Lainnya';
         expenseByCategory[cat] = (expenseByCategory[cat] || 0) + (e.jumlah || 0);
     });
@@ -173,7 +307,7 @@ async function fetchTopLocations(start: string, end: string, limit: number) {
     const r = await fetchPeriodSummary(start, end);
     return {
         period: r.period,
-        top_locations: r.location_breakdown.slice(0, Math.min(limit, 50)),
+        top_locations: r.location_breakdown.slice(0, Math.min(limit, API_LIMITS.MAX_LOCATION_BREAKDOWN)),
     };
 }
 
@@ -188,7 +322,7 @@ async function fetchTopCustomers(start: string, end: string, limit: number) {
         .lte('checkin_at', endIso);
 
     const map: Record<string, { visits: number; revenue: number; raw: string }> = {};
-    (data || []).forEach((t: any) => {
+    (data || []).forEach((t: TransactionRecord) => {
         if (!t.customer_name) return;
         const key = String(t.customer_name).toLowerCase().trim();
         if (!map[key]) map[key] = { visits: 0, revenue: 0, raw: t.customer_name };
@@ -198,7 +332,7 @@ async function fetchTopCustomers(start: string, end: string, limit: number) {
 
     const top = Object.values(map)
         .sort((a, b) => b.visits - a.visits || b.revenue - a.revenue)
-        .slice(0, Math.min(limit, 50))
+        .slice(0, Math.min(limit, API_LIMITS.MAX_TOP_CUSTOMERS))
         .map(c => ({ customer: c.raw, visits: c.visits, revenue: c.revenue }));
 
     return { period: { start_date: start, end_date: end }, top_customers: top };
@@ -221,7 +355,7 @@ async function fetchOutstandingBills(location?: string) {
             .eq('status', 'unpaid');
         if (location) q = q.eq('apartment_location', location);
         const { data, count } = await q;
-        const total = (data || []).reduce((s: number, b: any) => s + (b.amount || 0), 0);
+        const total = (data || []).reduce((s: number, b: BillingRecord) => s + (b.amount || 0), 0);
         return {
             source: 'fallback',
             unpaid_count: count || 0,
@@ -246,7 +380,7 @@ async function fetchUnitInventory(location?: string) {
     if (location) txQ = txQ.eq('apartment_location', location);
     const { data: active } = await txQ;
     const occupied = new Set(
-        (active || []).map((t: any) => `${t.apartment_location}-${t.room_number}`),
+        (active || []).map((t) => `${t.apartment_location}-${t.room_number}`),
     ).size;
 
     return {
@@ -265,7 +399,7 @@ async function fetchUnitInventory(location?: string) {
  * Respects report_period_mode from DB (calendar_day or hotel_day).
  * No parameters needed — uses system clock in Asia/Jakarta timezone.
  */
-async function fetchDailySummary(): Promise<any> {
+async function fetchDailySummary(): Promise<DailySummary> {
     const { format, subDays } = await import('date-fns');
     const { toZonedTime } = await import('date-fns-tz');
     const tz = 'Asia/Jakarta';
@@ -295,7 +429,7 @@ async function fetchDailySummary(): Promise<any> {
  * get_revenue_trend — daily revenue data points for a range.
  * Uses getReportPeriodRange() for period-aware boundaries.
  */
-async function fetchRevenueTrend(start: string, end: string, location?: string): Promise<any> {
+async function fetchRevenueTrend(start: string, end: string, location?: string): Promise<RevenueTrend> {
     const supabase = createServerClient();
 
     // Fetch mode for period-aware boundaries
@@ -314,7 +448,7 @@ async function fetchRevenueTrend(start: string, end: string, location?: string):
 
     const { data } = await q;
     if (!data || data.length === 0) {
-        return { period: { start_date: start, end_date: end }, daily_revenue: [], total_revenue: 0 };
+        return { period: { start_date: start, end_date: end, location: location || null }, total_revenue: 0, days: 0, daily_revenue: [], avg_per_day: 0, max_day: null, min_day: null };
     }
 
     // Aggregate by date
@@ -344,7 +478,7 @@ async function fetchRevenueTrend(start: string, end: string, location?: string):
  * Equivalent to the dashboard "Ringkasan Hari Ini" card.
  * Respects report_period_mode from DB.
  */
-async function fetchLatestStatus(): Promise<any> {
+async function fetchLatestStatus(): Promise<LatestStatus> {
     const { format } = await import('date-fns');
     const { toZonedTime } = await import('date-fns-tz');
     const tz = 'Asia/Jakarta';
@@ -379,7 +513,7 @@ async function fetchLatestStatus(): Promise<any> {
         .lte('checkout_at', dayEnd);
 
     const revenueToday = (todayTx || []).reduce(
-        (s: number, t: any) => s + (t.cash_amount || 0) + (t.transfer_amount || 0), 0
+        (s: number, t: TransactionRecord) => s + (t.cash_amount || 0) + (t.transfer_amount || 0), 0
     );
 
     return {
@@ -396,20 +530,20 @@ async function fetchLatestStatus(): Promise<any> {
 
 // ── New Tool Implementations (2026-05-27) ────────────────────────────────────
 
-async function fetchSearchTransactions(query: string, startDate?: string, endDate?: string, location?: string, limit: number = 20): Promise<any> {
+async function fetchSearchTransactions(query: string, startDate?: string, endDate?: string, location?: string, limit: number = API_LIMITS.DEFAULT_PAGE_SIZE): Promise<SearchResult> {
     const supabase = createServerClient();
     const { data, error } = await supabase.rpc('search_transactions', {
         p_query: query,
         p_start_date: startDate || null,
         p_end_date: endDate || null,
         p_location: location || null,
-        p_limit: Math.min(limit, 100),
+        p_limit: Math.min(limit, API_LIMITS.MAX_PAGE_SIZE),
     });
     if (error) throw error;
     return { query, results: data || [], total_count: data?.[0]?.total_count || 0 };
 }
 
-async function fetchSearchExpenses(query: string, startDate?: string, endDate?: string, location?: string, category?: string, limit: number = 20): Promise<any> {
+async function fetchSearchExpenses(query: string, startDate?: string, endDate?: string, location?: string, category?: string, limit: number = API_LIMITS.DEFAULT_PAGE_SIZE): Promise<SearchResult> {
     const supabase = createServerClient();
     const { data, error } = await supabase.rpc('search_expenses', {
         p_query: query,
@@ -417,34 +551,34 @@ async function fetchSearchExpenses(query: string, startDate?: string, endDate?: 
         p_end_date: endDate || null,
         p_location: location || null,
         p_category: category || null,
-        p_limit: Math.min(limit, 100),
+        p_limit: Math.min(limit, API_LIMITS.MAX_PAGE_SIZE),
     });
     if (error) throw error;
     return { query, results: data || [], total_count: data?.[0]?.total_count || 0 };
 }
 
-async function fetchLiveCheckins(location?: string, limit: number = 50): Promise<any> {
+async function fetchLiveCheckins(location?: string, limit: number = API_LIMITS.MAX_IDLE_UNITS): Promise<LiveCheckinsResult> {
     const supabase = createServerClient();
     const { data, error } = await supabase.rpc('get_live_checkins', {
         p_location: location || null,
-        p_limit: Math.min(limit, 100),
+        p_limit: Math.min(limit, API_LIMITS.MAX_PAGE_SIZE),
     });
     if (error) throw error;
     return { snapshot_time: new Date().toISOString(), location: location || 'Semua Lokasi', active_guests: data || [], total_count: data?.[0]?.total_count || 0 };
 }
 
-async function fetchIdleUnits(daysThreshold: number = 7, location?: string, limit: number = 50): Promise<any> {
+async function fetchIdleUnits(daysThreshold: number = IDLE_THRESHOLDS.DEFAULT_QUERY_DAYS, location?: string, limit: number = API_LIMITS.MAX_IDLE_UNITS): Promise<IdleUnitsResult> {
     const supabase = createServerClient();
     const { data, error } = await supabase.rpc('detect_idle_units', {
         p_days_threshold: daysThreshold,
         p_location: location || null,
-        p_limit: Math.min(limit, 100),
+        p_limit: Math.min(limit, API_LIMITS.MAX_PAGE_SIZE),
     });
     if (error) throw error;
     return { threshold_days: daysThreshold, location: location || 'Semua Lokasi', idle_units: data || [], total_count: data?.[0]?.total_count || 0 };
 }
 
-async function fetchUnderperformingUnits(startDate: string, endDate: string, location?: string, threshold: number = 50, limit: number = 20): Promise<any> {
+async function fetchUnderperformingUnits(startDate: string, endDate: string, location?: string, threshold: number = LOCATION_HEALTH.LOW_OCCUPANCY_RATE, limit: number = API_LIMITS.MAX_UNDERPERFORMING_UNITS): Promise<UnderperformingUnitsResult> {
     validateDateRange(startDate, endDate);
     const supabase = createServerClient();
     const { data, error } = await supabase.rpc('get_underperforming_units', {
@@ -452,13 +586,13 @@ async function fetchUnderperformingUnits(startDate: string, endDate: string, loc
         p_end_date: endDate,
         p_location: location || null,
         p_threshold: threshold,
-        p_limit: Math.min(limit, 100),
+        p_limit: Math.min(limit, API_LIMITS.MAX_PAGE_SIZE),
     });
     if (error) throw error;
     return { period: { start_date: startDate, end_date: endDate }, threshold_occupancy: threshold, location: location || 'Semua Lokasi', underperforming_units: data || [], total_count: data?.[0]?.total_count || 0 };
 }
 
-async function fetchWeekendVsWeekday(startDate: string, endDate: string, location?: string): Promise<any> {
+async function fetchWeekendVsWeekday(startDate: string, endDate: string, location?: string): Promise<WeekendWeekdayResult> {
     validateDateRange(startDate, endDate);
     const supabase = createServerClient();
     const { data, error } = await supabase.rpc('get_weekend_vs_weekday_analysis', {
@@ -470,7 +604,7 @@ async function fetchWeekendVsWeekday(startDate: string, endDate: string, locatio
     return { period: { start_date: startDate, end_date: endDate }, location: location || 'Semua Lokasi', analysis: data || [] };
 }
 
-async function fetchMonthEndEstimate(year?: number, month?: number, location?: string): Promise<any> {
+async function fetchMonthEndEstimate(year?: number, month?: number, location?: string): Promise<MonthEndEstimate> {
     const supabase = createServerClient();
     const { data, error } = await supabase.rpc('estimate_month_end_revenue', {
         p_year: year || null,
@@ -481,11 +615,11 @@ async function fetchMonthEndEstimate(year?: number, month?: number, location?: s
     return data?.[0] || { error: 'No data returned' };
 }
 
-async function fetchUnpaidBillsDetail(location?: string, limit: number = 50): Promise<any> {
+async function fetchUnpaidBillsDetail(location?: string, limit: number = API_LIMITS.MAX_IDLE_UNITS): Promise<UnpaidBillsResult> {
     const supabase = createServerClient();
     const { data, error } = await supabase.rpc('get_unpaid_bills_detail', {
         p_location: location || null,
-        p_limit: Math.min(limit, 100),
+        p_limit: Math.min(limit, API_LIMITS.MAX_PAGE_SIZE),
     });
     if (error) throw error;
     return { location: location || 'Semua Lokasi', unpaid_bills: data || [], total_count: data?.[0]?.total_count || 0, total_amount: data?.[0]?.total_amount || 0 };
@@ -499,7 +633,110 @@ async function fetchUnpaidBillsDetail(location?: string, limit: number = 50): Pr
  * fetchMarketingPerformance — performa marketing per nama.
  * Panggil RPC get_marketing_performance.
  */
-async function fetchMarketingPerformance(start: string, end: string, location?: string, limit: number = 10): Promise<any> {
+/** Generic RPC result row — RPC schemas may vary */
+interface RpcResultRow {
+    [key: string]: unknown;
+    marketing_name?: string;
+    customer_name?: string;
+    source_name?: string;
+    transaction_count?: number;
+}
+
+/** Marketing performance result */
+interface MarketingPerformanceResult {
+    period: { start_date: string; end_date: string; location: string | null };
+    marketing: RpcResultRow[];
+    total_count: number;
+}
+
+/** Repeat guests result */
+interface RepeatGuestsResult {
+    period: { start_date: string; end_date: string; location: string | null };
+    repeat_guests: RpcResultRow[];
+    total_count: number;
+}
+
+/** Stay duration result */
+interface StayDurationResult {
+    period: { start_date: string; end_date: string; location: string | null };
+    duration_distribution: RpcResultRow[];
+}
+
+/** Guest source result */
+interface GuestSourceResult {
+    period: { start_date: string; end_date: string; location: string | null };
+    sources: RpcResultRow[];
+    total_count: number;
+}
+
+/** Checkin heatmap result */
+interface CheckinHeatmapResult {
+    period: { start_date: string; end_date: string; location: string | null };
+    hourly_distribution: RpcResultRow[];
+    peak_hour: RpcResultRow | null;
+}
+
+/** Expense breakdown result */
+interface ExpenseBreakdownResult {
+    period: { start_date: string; end_date: string; location: string | null };
+    breakdown: RpcResultRow[];
+}
+
+/** Occupancy per location result */
+interface OccupancyPerLocationResult {
+    period: { start_date: string; end_date: string; location: string | null };
+    locations: RpcResultRow[];
+}
+
+/** Revenue YoY result */
+interface RevenueYoYResult {
+    period: { start_date: string; end_date: string; location: string | null };
+    current_revenue?: number;
+    current_transactions?: number;
+    previous_revenue?: number;
+    previous_transactions?: number;
+    revenue_change_pct?: number;
+    transactions_change_pct?: number;
+}
+
+/** Employee performance result */
+interface EmployeePerformanceResult {
+    period: { start_date: string; end_date: string; location: string | null };
+    employees: RpcResultRow[];
+    total_count: number;
+}
+
+/** Monthly revenue trend result */
+interface MonthlyRevenueTrendResult {
+    period: { start_date: string; end_date: string; location: string | null };
+    monthly: RpcResultRow[];
+}
+
+/** Net profit per location result */
+interface NetProfitPerLocationResult {
+    period: { start_date: string; end_date: string; location: string | null };
+    locations: RpcResultRow[];
+}
+
+/** Payment method summary result */
+interface PaymentMethodResult {
+    period: { start_date: string; end_date: string; location: string | null };
+    locations: RpcResultRow[];
+}
+
+/** Shift performance result */
+interface ShiftPerformanceResult {
+    period: { start_date: string; end_date: string; location: string | null };
+    shifts: RpcResultRow[];
+}
+
+/** Generic RPC array result */
+interface RpcArrayResult {
+    period: { start_date: string; end_date: string; location: string | null };
+    [key: string]: unknown;
+}
+
+async function fetchMarketingPerformance(start: string, end: string, location?: string, limit: number = 10): Promise<MarketingPerformanceResult> {
     const supabase = createServerClient();
     const { data, error } = await supabase.rpc('get_marketing_performance', {
         p_start_date: start,
@@ -511,7 +748,7 @@ async function fetchMarketingPerformance(start: string, end: string, location?: 
     if (error) throw error;
     return {
         period: { start_date: start, end_date: end, location: location || null },
-        marketing: (data || []).filter((r: any) => r.marketing_name),
+        marketing: (data || []).filter((r: RpcResultRow) => r.marketing_name) as RpcResultRow[],
         total_count: data?.[0]?.total_count || 0,
     };
 }
@@ -520,7 +757,7 @@ async function fetchMarketingPerformance(start: string, end: string, location?: 
  * fetchRepeatGuests — tamu yang berkunjung lebih dari 1x dalam periode.
  * Panggil RPC get_repeat_guests.
  */
-async function fetchRepeatGuests(start: string, end: string, location?: string, limit: number = 10): Promise<any> {
+async function fetchRepeatGuests(start: string, end: string, location?: string, limit: number = 10): Promise<RepeatGuestsResult> {
     const supabase = createServerClient();
     const { data, error } = await supabase.rpc('get_repeat_guests', {
         p_start_date: start,
@@ -532,7 +769,7 @@ async function fetchRepeatGuests(start: string, end: string, location?: string, 
     if (error) throw error;
     return {
         period: { start_date: start, end_date: end, location: location || null },
-        repeat_guests: (data || []).filter((r: any) => r.customer_name),
+        repeat_guests: (data || []).filter((r: RpcResultRow) => r.customer_name) as RpcResultRow[],
         total_count: data?.[0]?.total_count || 0,
     };
 }
@@ -541,7 +778,7 @@ async function fetchRepeatGuests(start: string, end: string, location?: string, 
  * fetchStayDurationSummary — distribusi durasi menginap (transit, fullday, per malam).
  * Panggil RPC get_stay_duration_summary.
  */
-async function fetchStayDurationSummary(start: string, end: string, location?: string): Promise<any> {
+async function fetchStayDurationSummary(start: string, end: string, location?: string): Promise<StayDurationResult> {
     const supabase = createServerClient();
     const { data, error } = await supabase.rpc('get_stay_duration_summary', {
         p_start_date: start,
@@ -559,7 +796,7 @@ async function fetchStayDurationSummary(start: string, end: string, location?: s
  * fetchGuestSourceSummary — sumber kedatangan tamu (marketing vs langsung).
  * Panggil RPC get_guest_source_summary.
  */
-async function fetchGuestSourceSummary(start: string, end: string, location?: string, limit: number = 10): Promise<any> {
+async function fetchGuestSourceSummary(start: string, end: string, location?: string, limit: number = 10): Promise<GuestSourceResult> {
     const supabase = createServerClient();
     const { data, error } = await supabase.rpc('get_guest_source_summary', {
         p_start_date: start,
@@ -571,7 +808,7 @@ async function fetchGuestSourceSummary(start: string, end: string, location?: st
     if (error) throw error;
     return {
         period: { start_date: start, end_date: end, location: location || null },
-        sources: (data || []).filter((r: any) => r.source_name),
+        sources: (data || []).filter((r: RpcResultRow) => r.source_name) as RpcResultRow[],
         total_count: data?.[0]?.total_count || 0,
     };
 }
@@ -580,7 +817,7 @@ async function fetchGuestSourceSummary(start: string, end: string, location?: st
  * fetchCheckinHeatmap — heatmap jam checkin (0-23) dalam periode.
  * Panggil RPC get_checkin_heatmap.
  */
-async function fetchCheckinHeatmap(start: string, end: string, location?: string): Promise<any> {
+async function fetchCheckinHeatmap(start: string, end: string, location?: string): Promise<CheckinHeatmapResult> {
     const supabase = createServerClient();
     const { data, error } = await supabase.rpc('get_checkin_heatmap', {
         p_start_date: start,
@@ -591,7 +828,11 @@ async function fetchCheckinHeatmap(start: string, end: string, location?: string
     return {
         period: { start_date: start, end_date: end, location: location || null },
         hourly_distribution: data || [],
-        peak_hour: (data || []).reduce((best: any, cur: any) => !best || cur.transaction_count > best.transaction_count ? cur : best, null),
+        peak_hour: (data || []).reduce(
+            (best: RpcResultRow | null, cur: RpcResultRow) =>
+                !best || (cur.transaction_count ?? 0) > (best.transaction_count ?? 0) ? cur : best,
+            null as RpcResultRow | null,
+        ),
     };
 }
 
@@ -607,7 +848,7 @@ async function fetchExpenseBreakdown(
     category?: string,
     comparisonStartDate?: string,
     comparisonEndDate?: string,
-): Promise<any> {
+): Promise<ExpenseBreakdownResult> {
     // If extended params present, delegate to analytics DB version
     if (category || comparisonStartDate || comparisonEndDate) {
         return fetchExpenseBreakdownExtended(start, end, location, category, comparisonStartDate, comparisonEndDate);
@@ -630,7 +871,7 @@ async function fetchExpenseBreakdown(
  * fetchOccupancyPerLocation — occupancy rate per lokasi.
  * Panggil RPC get_occupancy_per_location.
  */
-async function fetchOccupancyPerLocation(start: string, end: string, location?: string): Promise<any> {
+async function fetchOccupancyPerLocation(start: string, end: string, location?: string): Promise<OccupancyPerLocationResult> {
     const supabase = createServerClient();
     const { data, error } = await supabase.rpc('get_occupancy_per_location', {
         p_start_date: start,
@@ -648,7 +889,7 @@ async function fetchOccupancyPerLocation(start: string, end: string, location?: 
  * fetchRevenueYoY — year-over-year comparison.
  * Panggil RPC get_revenue_yoy_comparison.
  */
-async function fetchRevenueYoY(start: string, end: string, location?: string): Promise<any> {
+async function fetchRevenueYoY(start: string, end: string, location?: string): Promise<RevenueYoYResult> {
     const supabase = createServerClient();
     const { data, error } = await supabase.rpc('get_revenue_yoy_comparison', {
         p_start_date: start,
@@ -666,7 +907,7 @@ async function fetchRevenueYoY(start: string, end: string, location?: string): P
  * fetchPerformanceByEmployee — performa transaksi per karyawan.
  * Panggil RPC get_performance_by_employee.
  */
-async function fetchPerformanceByEmployee(start: string, end: string, location?: string, limit: number = 10): Promise<any> {
+async function fetchPerformanceByEmployee(start: string, end: string, location?: string, limit: number = 10): Promise<EmployeePerformanceResult> {
     const supabase = createServerClient();
     const { data, error } = await supabase.rpc('get_performance_by_employee', {
         p_start_date: start,
@@ -678,7 +919,7 @@ async function fetchPerformanceByEmployee(start: string, end: string, location?:
     if (error) throw error;
     return {
         period: { start_date: start, end_date: end, location: location || null },
-        employees: (data || []).filter((r: any) => r.employee_name),
+        employees: (data || []).filter((r: RpcResultRow) => r.employee_name) as RpcResultRow[],
         total_count: data?.[0]?.total_count || 0,
     };
 }
@@ -687,7 +928,7 @@ async function fetchPerformanceByEmployee(start: string, end: string, location?:
  * fetchMonthlyRevenueTrend — tren revenue bulanan.
  * Panggil RPC get_monthly_revenue_trend.
  */
-async function fetchMonthlyRevenueTrend(start: string, end: string, location?: string): Promise<any> {
+async function fetchMonthlyRevenueTrend(start: string, end: string, location?: string): Promise<MonthlyRevenueTrendResult> {
     const supabase = createServerClient();
     const { data, error } = await supabase.rpc('get_monthly_revenue_trend', {
         p_start_date: start,
@@ -705,7 +946,7 @@ async function fetchMonthlyRevenueTrend(start: string, end: string, location?: s
  * fetchNetProfitPerLocation — profit bersih per lokasi.
  * Panggil RPC get_net_profit_per_location.
  */
-async function fetchNetProfitPerLocation(start: string, end: string, location?: string): Promise<any> {
+async function fetchNetProfitPerLocation(start: string, end: string, location?: string): Promise<NetProfitPerLocationResult> {
     const supabase = createServerClient();
     const { data, error } = await supabase.rpc('get_net_profit_per_location', {
         p_start_date: start,
@@ -723,7 +964,7 @@ async function fetchNetProfitPerLocation(start: string, end: string, location?: 
  * fetchPaymentMethodSummary — ringkasan metode pembayaran per lokasi.
  * Panggil RPC get_payment_method_summary.
  */
-async function fetchPaymentMethodSummary(start: string, end: string, location?: string): Promise<any> {
+async function fetchPaymentMethodSummary(start: string, end: string, location?: string): Promise<PaymentMethodResult> {
     const supabase = createServerClient();
     const { data, error } = await supabase.rpc('get_payment_method_summary', {
         p_start_date: start,

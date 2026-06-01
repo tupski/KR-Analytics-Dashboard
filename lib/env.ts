@@ -1,9 +1,11 @@
 /**
  * Environment variable validation and type-safe access
- * 
+ *
  * This module validates that all required environment variables are present
  * and provides type-safe access to them throughout the application.
  */
+
+import { DEFAULTS } from '@/lib/config/constants';
 
 /**
  * Server-side environment variables
@@ -21,7 +23,7 @@ export const serverEnv = {
 export const clientEnv = {
     supabaseUrl: process.env.NEXT_PUBLIC_SUPABASE_URL,
     supabaseAnonKey: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
-    appUrl: process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000',
+    appUrl: process.env.NEXT_PUBLIC_APP_URL || DEFAULTS.APP_URL,
 } as const;
 
 /**

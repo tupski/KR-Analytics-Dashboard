@@ -2,6 +2,7 @@
 
 import { createServerClient } from '@/lib/supabase/server';
 import { revalidatePath } from 'next/cache';
+import { DEFAULTS, VALIDATION } from '@/lib/config/constants';
 
 export interface AppSettings {
     app_name: string;
@@ -46,17 +47,17 @@ export async function fetchAppSettings(): Promise<AppSettings> {
         };
     }
 
-    const map = Object.fromEntries(data.map((r: any) => [r.key, r.value]));
+    const map = Object.fromEntries(data.map((r: { key: string; value: string }) => [r.key, r.value]));
 
     return {
-        app_name: map.app_name || 'Kakarama Room Analytics',
+        app_name: map.app_name || DEFAULTS.APP_NAME,
         logo_url: map.logo_url || null,
         favicon_url: map.favicon_url || null,
-        primary_color: map.primary_color || '#2563eb',
-        report_period_mode: map.report_period_mode || 'calendar_day',
-        timezone: map.timezone || 'Asia/Jakarta',
-        sidebar_behavior: map.sidebar_behavior || 'default',
-        compact_display: map.compact_display || 'false',
+        primary_color: map.primary_color || DEFAULTS.PRIMARY_COLOR,
+        report_period_mode: map.report_period_mode || DEFAULTS.REPORT_PERIOD_MODE,
+        timezone: map.timezone || DEFAULTS.TIMEZONE,
+        sidebar_behavior: map.sidebar_behavior || DEFAULTS.SIDEBAR_BEHAVIOR,
+        compact_display: map.compact_display || String(DEFAULTS.COMPACT_DISPLAY),
         ai_insight_enabled: map.ai_insight_enabled || 'false',
         ai_insight_mode: map.ai_insight_mode || 'ai-with-fallback',
         ai_insight_provider: map.ai_insight_provider || '',
@@ -131,9 +132,10 @@ export async function updateAppSettings(settings: Partial<AppSettings>): Promise
 
         revalidatePath('/pengaturan');
         return { success: true };
-    } catch (error: any) {
-        console.error('[updateAppSettings] Error:', error);
-        return { success: false, error: error.message || 'Gagal menyimpan pengaturan' };
+    } catch (error: unknown) {
+        const errorMessage = error instanceof Error ? error.message : 'Gagal menyimpan pengaturan';
+        console.error('[updateAppSettings] Error:', errorMessage);
+        return { success: false, error: errorMessage };
     }
 }
 
@@ -164,8 +166,9 @@ export async function uploadToCatbox(file: File): Promise<{ success: boolean; ur
         }
 
         return { success: true, url: url.trim() };
-    } catch (error: any) {
-        console.error('[uploadToCatbox] Error:', error);
-        return { success: false, error: error.message || 'Gagal upload gambar' };
+    } catch (error: unknown) {
+        const errorMessage = error instanceof Error ? error.message : 'Gagal upload gambar';
+        console.error('[uploadToCatbox] Error:', errorMessage);
+        return { success: false, error: errorMessage };
     }
 }

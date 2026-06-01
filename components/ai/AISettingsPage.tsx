@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Brain, Key, Server, Check, AlertCircle, ExternalLink, Eye, Lightbulb, Wrench, Zap, DollarSign, Trash2, Clock, Plus, Copy, Cloud, CloudOff, Download, Upload, Pencil, Sparkles } from 'lucide-react';
 import dynamic from 'next/dynamic';
 
@@ -54,6 +54,32 @@ function isMaskedApiKey(value: string): boolean {
         value.includes('••') ||
         value.includes('...')
     );
+}
+
+/**
+ * Mask API key for display — shows first 4 and last 4 characters.
+ * Returns empty string if key is too short.
+ */
+function maskApiKey(key: string): string {
+    if (!key || key.length < 8) return '';
+    const visibleStart = key.slice(0, 4);
+    const visibleEnd = key.slice(-4);
+    const maskedLength = key.length - 8;
+    return `${visibleStart}${'•'.repeat(Math.min(maskedLength, 20))}${visibleEnd}`;
+}
+
+/** Validate API key format — basic length and character checks */
+function validateApiKey(key: string): { valid: boolean; error?: string } {
+    if (!key || key.trim().length === 0) {
+        return { valid: false, error: 'API key tidak boleh kosong' };
+    }
+    if (key.trim().length < 8) {
+        return { valid: false, error: 'API key terlalu pendek (minimum 8 karakter)' };
+    }
+    if (isMaskedApiKey(key)) {
+        return { valid: false, error: 'API key tidak valid — terdeteksi karakter masking (***, ••, ...). Masukkan key asli.' };
+    }
+    return { valid: true };
 }
 
 /** Capability badges for a model */
@@ -355,8 +381,9 @@ export default function AISettingsPage({ section = 'ai' }: AISettingsPageProps) 
 
             setSaved(activeProviderId);
             setTimeout(() => setSaved(null), 2500);
-        } catch (error: any) {
-            setSaveError(error.message);
+        } catch (error: unknown) {
+            const errorMessage = error instanceof Error ? error.message : 'Terjadi kesalahan saat menyimpan';
+            setSaveError(errorMessage);
         }
     };
 
@@ -378,8 +405,9 @@ export default function AISettingsPage({ section = 'ai' }: AISettingsPageProps) 
             setFetchedModelsLastFetched(null);
             setSaved(null);
             setSaveError(null);
-        } catch (error: any) {
-            alert(`Gagal menghapus: ${error.message}`);
+        } catch (error: unknown) {
+            const errorMessage = error instanceof Error ? error.message : 'Gagal menghapus konfigurasi';
+            alert(`Gagal menghapus: ${errorMessage}`);
         }
     };
 
@@ -390,8 +418,9 @@ export default function AISettingsPage({ section = 'ai' }: AISettingsPageProps) 
             setConfig(cfg);
             setSaved(activeProviderId);
             setTimeout(() => setSaved(null), 2000);
-        } catch (error: any) {
-            alert(`Gagal set active: ${error.message}`);
+        } catch (error: unknown) {
+            const errorMessage = error instanceof Error ? error.message : 'Gagal mengatur provider aktif';
+            alert(`Gagal set active: ${errorMessage}`);
         }
     };
 
@@ -463,8 +492,9 @@ export default function AISettingsPage({ section = 'ai' }: AISettingsPageProps) 
                 }
                 setTestResult({ success: false, message: errMsg });
             }
-        } catch (err: any) {
-            setTestResult({ success: false, message: err.message || 'Gagal menghubungi server' });
+        } catch (err: unknown) {
+            const errorMessage = err instanceof Error ? err.message : 'Gagal menghubungi server';
+            setTestResult({ success: false, message: errorMessage });
         } finally {
             setTesting(false);
         }
@@ -532,8 +562,9 @@ export default function AISettingsPage({ section = 'ai' }: AISettingsPageProps) 
             } else {
                 setTestResult({ success: false, message: data.error || 'Gagal terhubung' });
             }
-        } catch (err: any) {
-            setTestResult({ success: false, message: err.message || 'Gagal menghubungi server' });
+        } catch (err: unknown) {
+            const errorMessage = err instanceof Error ? err.message : 'Gagal menghubungi server';
+            setTestResult({ success: false, message: errorMessage });
         } finally {
             setTestingCustom(false);
         }
@@ -610,16 +641,28 @@ export default function AISettingsPage({ section = 'ai' }: AISettingsPageProps) 
                                 )}
                             </div>
 
-                            {/* ── PART 4 & 9: API Key UX ─────────────────────────────────── */}
+                            {/* ── PART 4 & 9: API Key UX — Enhanced Masking ─────────────── */}
                             <div>
                                 <label className="block text-xs font-medium text-gray-700 mb-1">API Key</label>
 
                                 {apiKeySet && !isEditingApiKey ? (
-                                    /* Key exists + not editing → show preview + Edit/Delete */
+                                    /* Key exists + not editing → show masked preview + Edit/Delete */
                                     <div className="flex items-center gap-2">
-                                        <code className="px-3 py-2 border rounded-lg text-sm bg-gray-50 font-mono select-all">
-                                            {apiKeyPreview}
-                                        </code>
+                                        <div className="flex items-center gap-2 px-3 py-2 border rounded-lg bg-gray-50 font-mono text-sm select-all">
+                                            <span className="text-gray-600 truncate" title="API Key tersimpan (enkripsi AES-256-GCM)">
+                                                {maskApiKey(apiKeyPreview) || '••••••••••••••••'}
+                                            </span>
+                                            <button
+                                                onClick={() => {
+                                                    navigator.clipboard.writeText(apiKeyPreview);
+                                                }}
+                                                className="p-0.5 hover:bg-gray-200 rounded transition-colors"
+                                                title="Salin API Key"
+                                                aria-label="Salin API Key ke clipboard"
+                                            >
+                                                <Copy className="w-3 h-3 text-gray-500" />
+                                            </button>
+                                        </div>
 
                                         <button
                                             onClick={() => {
@@ -628,28 +671,45 @@ export default function AISettingsPage({ section = 'ai' }: AISettingsPageProps) 
                                                 setSaveError(null);
                                             }}
                                             className="inline-flex items-center gap-1 px-3 py-2 text-blue-600 hover:bg-blue-50 rounded-lg text-sm font-medium transition-colors"
+                                            aria-label="Edit API Key"
                                         >
                                             <Pencil className="w-3.5 h-3.5" />
-                                            Edit API Key
+                                            Edit
                                         </button>
 
                                         <button
                                             onClick={handleDelete}
                                             className="inline-flex items-center gap-1 px-3 py-2 text-red-600 hover:bg-red-50 rounded-lg text-sm font-medium transition-colors"
+                                            aria-label="Hapus API Key"
                                         >
                                             <Trash2 className="w-3.5 h-3.5" />
-                                            Delete API Key
+                                            Hapus
                                         </button>
                                     </div>
                                 ) : (
-                                    /* No key OR editing → show empty password input */
-                                    <input
-                                        type="password"
-                                        value={draftApiKey}
-                                        onChange={e => setDraftApiKey(e.target.value)}
-                                        placeholder={isEditingApiKey ? "Masukkan API key baru" : provider.placeholder}
-                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
-                                    />
+                                    /* No key OR editing → show password input with validation feedback */
+                                    <div>
+                                        <input
+                                            type="password"
+                                            value={draftApiKey}
+                                            onChange={e => {
+                                                setDraftApiKey(e.target.value);
+                                                // Clear error when user starts typing
+                                                if (saveError && saveError.includes('API key')) {
+                                                    setSaveError(null);
+                                                }
+                                            }}
+                                            placeholder={isEditingApiKey ? "Masukkan API key baru" : provider.placeholder}
+                                            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                                            aria-label="API Key input"
+                                        />
+                                        {draftApiKey && !isMaskedApiKey(draftApiKey) && (
+                                            <p className="text-[10px] text-emerald-600 mt-1 flex items-center gap-1">
+                                                <Check className="w-3 h-3" />
+                                                Format API key valid
+                                            </p>
+                                        )}
+                                    </div>
                                 )}
 
                                 {isEditingApiKey && apiKeySet && (
@@ -1025,7 +1085,7 @@ export default function AISettingsPage({ section = 'ai' }: AISettingsPageProps) 
                                         checked={insightSettings.mode === opt.value}
                                         onChange={async () => {
                                             await saveInsightSetting('ai_insight_mode', opt.value);
-                                            setInsightSettings(prev => ({ ...prev, mode: opt.value as any }));
+                                            setInsightSettings(prev => ({ ...prev, mode: opt.value as 'rule-based' | 'ai-generated' | 'ai-with-fallback' }));
                                             setInsightSaved('Mode Insight');
                                             setTimeout(() => setInsightSaved(null), 2000);
                                         }}
@@ -1068,7 +1128,7 @@ export default function AISettingsPage({ section = 'ai' }: AISettingsPageProps) 
                     <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1.5">Model AI untuk Insight</label>
                         <ModelDropdown
-                            providerId={insightSettings.provider as any || activeProviderId}
+                            providerId={(insightSettings.provider as ProviderId) || activeProviderId}
                             value={insightSettings.model}
                             onChange={async (modelId) => {
                                 await saveInsightSetting('ai_insight_model', modelId);
@@ -1156,8 +1216,9 @@ export default function AISettingsPage({ section = 'ai' }: AISettingsPageProps) 
                                     } else {
                                         setInsightTestResult({ success: false, message: 'Respons tidak valid dari server.' });
                                     }
-                                } catch (err: any) {
-                                    setInsightTestResult({ success: false, message: err.message || 'Gagal menghubungi server' });
+                                } catch (err: unknown) {
+                                    const errorMessage = err instanceof Error ? err.message : 'Gagal menghubungi server';
+                                    setInsightTestResult({ success: false, message: errorMessage });
                                 } finally {
                                     setTestingInsight(false);
                                 }

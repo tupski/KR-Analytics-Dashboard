@@ -17,6 +17,7 @@
 
 import { createHash } from 'crypto';
 import { queryAnalytics } from './db';
+import { CACHE_TTL } from '@/lib/config/constants';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Types
@@ -71,23 +72,10 @@ export type MartName =
     | 'unit_performance';
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// TTL Constants
+// TTL Constants (re-exported from config/constants for backward compatibility)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-export const TTL = {
-    /** Today/dashboard data: 5 min */
-    DASHBOARD_TODAY: 300,
-    /** Week data: 15 min */
-    DASHBOARD_WEEK: 900,
-    /** Month data: 30 min */
-    DASHBOARD_MONTH: 1800,
-    /** Historical closed periods (past complete months): 24h */
-    HISTORICAL_CLOSED: 86400,
-    /** Old quarters/years: 72h */
-    HISTORICAL_OLD: 259200,
-    /** Mart tables refreshed by sync-worker: 5 min */
-    MART_DEFAULT: 300,
-} as const;
+export const TTL = CACHE_TTL;
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // CacheService
