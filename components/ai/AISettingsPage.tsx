@@ -339,6 +339,12 @@ export default function AISettingsPage() {
                 }
             }
 
+            // Auto-enable AI Insight if user just saved a key and AI insight is not yet enabled
+            if (shouldSendKey && !insightSettings.enabled) {
+                await saveInsightSetting('ai_insight_enabled', 'true');
+                setInsightSettings(prev => ({ ...prev, enabled: true }));
+            }
+
             setSaved(activeProviderId);
             setTimeout(() => setSaved(null), 2500);
         } catch (error: any) {

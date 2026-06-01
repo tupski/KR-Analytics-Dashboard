@@ -1,36 +1,8 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { RefreshCw, Sparkles, ChevronDown, ChevronUp, Lightbulb, GitCompareArrows, ChevronRight, Zap, Settings } from 'lucide-react';
+import { RefreshCw, Sparkles, ChevronDown, ChevronUp, Lightbulb, GitCompareArrows, ChevronRight, Zap, AlertCircle } from 'lucide-react';
 import MarkdownRenderer from './MarkdownRenderer';
-
-/**
- * Rule-based fallback text based on page context.
- * Used when AI disabled or AI generation fails.
- */
-function getRuleBasedFallback(title: string, prompt: string): string {
-    const now = new Date();
-    const dayName = now.toLocaleDateString('id-ID', { weekday: 'long', timeZone: 'Asia/Jakarta' });
-    const dateStr = now.toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Asia/Jakarta' });
-
-    if (title.includes('Booking') || prompt.includes('booking')) {
-        return `📊 **Insight Rule-based** (${dayName}, ${dateStr})\n\n📈 **Performa Booking Hari Ini:**\n- Periksa jumlah booking hari ini vs rata-rata harian\n- Identifikasi jam check-in tersibuk dari data operasional\n- Lokasi paling aktif biasanya terlihat dari tabel booking\n\n💡 **Rekomendasi:**\n- Pastikan semua unit siap untuk check-in hari ini\n- Review booking yang akan datang 7 hari kedepan\n- Monitor pembatalan yang perlu ditindaklanjuti\n\n⚠️ *Konfigurasi AI API key untuk mendapatkan insight otomatis yang lebih cerdas.*`;
-    }
-
-    if (title.includes('Laporan') || prompt.includes('laporan') || prompt.includes('keuangan')) {
-        return `📊 **Insight Rule-based** (${dayName}, ${dateStr})\n\n💰 **Ringkasan Keuangan:**\n- Periksa total pendapatan vs bulan sebelumnya\n- Identifikasi kategori pengeluaran terbesar\n- Cek apakah ada tagihan yang belum dibayar\n\n💡 **Rekomendasi:**\n- Review pengeluaran yang melebihi budget\n- Pastikan semua pendapatan tercatat dengan benar\n- Verifikasi tagihan yang jatuh tempo bulan ini\n\n⚠️ *Konfigurasi AI API key untuk mendapatkan insight otomatis yang lebih cerdas.*`;
-    }
-
-    if (title.includes('Okupansi') || prompt.includes('okupansi') || prompt.includes('unit')) {
-        return `📊 **Insight Rule-based** (${dayName}, ${dateStr})\n\n🏠 **Performa Okupansi:**\n- Periksa tingkat okupansi hari ini vs rata-rata\n- Identifikasi unit yang idle terlalu lama\n- Lihat lokasi dengan okupansi tertinggi dan terendah\n\n💡 **Rekomendasi:**\n- Optimalkan harga untuk unit yang jarang terisi\n- Pertimbangkan promosi untuk meningkatkan okupansi\n- Review maintenance unit yang sering kosong\n\n⚠️ *Konfigurasi AI API key untuk mendapatkan insight otomatis yang lebih cerdas.*`;
-    }
-
-    if (title.includes('Customer')) {
-        return `📊 **Insight Rule-based** (${dayName}, ${dateStr})\n\n👥 **Analisis Customer:**\n- Periksa jumlah tamu unik bulan ini\n- Identifikasi tamu yang sering kembali (repeat guest)\n- Lihat lokasi favorit berdasarkan data booking\n\n💡 **Rekomendasi:**\n- Beri perhatian khusus pada repeat guest\n- Kumpulkan feedback dari tamu untuk meningkatkan layanan\n- Buat program loyalitas untuk tamu setia\n\n⚠️ *Konfigurasi AI API key untuk mendapatkan insight otomatis yang lebih cerdas.*`;
-    }
-
-    return `📊 **Insight Rule-based** (${dayName}, ${dateStr})\n\n📈 **Ringkasan Performa:**\n- Periksa metrik utama: booking, pendapatan, okupansi\n- Bandingkan dengan periode sebelumnya menggunakan fitur "Bandingkan"\n- Review aktivitas check-in dan check-out hari ini\n\n💡 **Rekomendasi:**\n- Monitor unit yang tersedia untuk antisipasi permintaan\n- Pastikan semua data tercatat dengan benar\n- Review tren mingguan untuk perencanaan\n\n⚠️ *Konfigurasi AI API key di Pengaturan untuk mendapatkan insight AI otomatis.*`;
-}
 
 interface AIInsightCardProps {
     prompt: string;
@@ -69,6 +41,7 @@ export default function AIInsightCard({
     const [insight, setInsight] = useState<string | null>(null);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [fetchError, setFetchError] = useState<string | null>(null);
     const [aiEnabled, setAiEnabled] = useState<boolean | null>(null);
     const [insightMode, setInsightMode] = useState<string>('ai-with-fallback');
     const [expanded, setExpanded] = useState(false);
@@ -86,7 +59,7 @@ export default function AIInsightCard({
     const getClientCacheKey = (p: string, cmp: boolean) =>
         CACHE_PREFIX + btoa(encodeURIComponent(page + '|' + p + (cmp ? '|cmp' : ''))).slice(0, 32);
 
-    const getClientCached = (p: string, cmp: boolean): string | null => {
+    const getClientCached = useCallback((p: string, cmp: boolean): string | null => {
         try {
             const raw = sessionStorage.getItem(getClientCacheKey(p, cmp));
             if (raw) {
@@ -95,16 +68,16 @@ export default function AIInsightCard({
             }
         } catch { }
         return null;
-    };
+    }, [page]);
 
-    const setClientCache = (p: string, cmp: boolean, text: string) => {
+    const setClientCache = useCallback((p: string, cmp: boolean, text: string) => {
         try {
             sessionStorage.setItem(
                 getClientCacheKey(p, cmp),
                 JSON.stringify({ text, timestamp: Date.now() }),
             );
         } catch { }
-    };
+    }, [page]);
 
     // Load AI Insight settings on mount
     useEffect(() => {
@@ -142,8 +115,10 @@ export default function AIInsightCard({
             }
         }
 
-        setLoading(true);
+        // Clear transient fetch errors on retry — aiEnabled stays as config-truth
+        setFetchError(null);
         setError(null);
+        setLoading(true);
         setDynamicSuggestions([]);
 
         try {
@@ -167,24 +142,24 @@ export default function AIInsightCard({
             });
 
             if (!res.ok) {
-                // Server error — use rule-based fallback
-                setAiEnabled(false);
+                // Transient server error — compact banner, don't touch aiEnabled
+                setFetchError('Gagal menghubungi server insight');
                 setLoading(false);
                 return;
             }
 
             const data = await res.json();
 
-            // Insight disabled → rule-based fallback
+            // Insight disabled from server (redundant check) — compact banner
             if (data.disabled) {
-                setAiEnabled(false);
+                setFetchError('Insight tidak tersedia');
                 setLoading(false);
                 return;
             }
 
-            // AI error with fallback flag → rule-based
+            // AI error with fallback flag → transient fetch error
             if (data.error && data.fallback) {
-                setAiEnabled(false);
+                setFetchError(data.message || 'Gagal mendapatkan insight AI');
                 setLoading(false);
                 return;
             }
@@ -192,7 +167,6 @@ export default function AIInsightCard({
             // AI error without fallback → show error
             if (data.error && !data.fallback) {
                 setError(data.message || 'Gagal mendapatkan insight');
-                setAiEnabled(true);
                 setLoading(false);
                 return;
             }
@@ -205,15 +179,15 @@ export default function AIInsightCard({
                 setAiEnabled(true);
                 generateDynamicSuggestions(p, msg);
             } else {
-                setAiEnabled(false);
+                // Empty response — transient, no fallback needed
+                setFetchError('Insight kosong');
             }
         } catch (err: any) {
-            setError(err.message);
-            setAiEnabled(true);
+            setFetchError(err.message || 'Gagal menghubungi server');
         } finally {
             setLoading(false);
         }
-    }, [page, title, rangePreset, startDate, endDate, comparisonMode, comparisonStartDate, comparisonEndDate, reportPeriodMode]);
+    }, [page, title, rangePreset, startDate, endDate, comparisonMode, comparisonStartDate, comparisonEndDate, reportPeriodMode, getClientCached, setClientCache]);
 
     useEffect(() => {
         if (aiEnabled !== null) {
@@ -269,50 +243,17 @@ Insight: ${insightText.slice(0, 300)}
         fetchInsight(currentPrompt, next);
     };
 
-    // ── Rule-based fallback display (AI disabled or error with fallback) ──
+    // ── Compact disabled banner (aiEnabled=false from config) ──
     if (aiEnabled === false && !loading && !insight) {
-        const fallbackText = getRuleBasedFallback(title, prompt);
         return (
-            <div className={`bg-gradient-to-r from-amber-50 to-yellow-50 rounded-xl border border-amber-200 p-4 shadow-sm ${className}`}>
-                <div className="flex items-center justify-between mb-3 gap-2">
-                    <div className="flex items-center gap-2 min-w-0">
-                        <Zap className="w-4 h-4 text-amber-600 shrink-0" />
-                        <h3 className="text-sm font-semibold text-amber-900 truncate">{title}</h3>
-                        <span className="text-[10px] uppercase font-bold bg-amber-500 text-white px-1.5 py-0.5 rounded">
-                            Rule-based
-                        </span>
-                    </div>
-                    <div className="flex items-center gap-1">
-                        <a
-                            href="/pengaturan"
-                            className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium bg-white text-amber-700 border border-amber-200 hover:bg-amber-100 transition-colors"
-                        >
-                            <Settings className="w-3 h-3" />
-                            <span className="hidden sm:inline">Pengaturan AI</span>
-                        </a>
-                    </div>
-                </div>
-                <div className="text-sm text-amber-800 leading-relaxed whitespace-pre-wrap">{fallbackText}</div>
-                <div className="mt-3 pt-3 border-t border-amber-100">
-                    <div className="flex items-center gap-1.5 mb-2">
-                        <Lightbulb className="w-3 h-3 text-amber-500" />
-                        <span className="text-xs text-amber-600 font-medium">Tips:</span>
-                    </div>
-                    <div className="flex flex-col gap-1.5 sm:flex-row sm:flex-wrap">
-                        {(alternativeQuestions || [
-                            'Apa yang perlu diperhatikan hari ini?',
-                            'Berikan rekomendasi untuk meningkatkan pendapatan.',
-                        ]).slice(0, 2).map((q) => (
-                            <div
-                                key={q}
-                                className="text-xs px-3 py-2 bg-white border border-amber-200 rounded-xl text-amber-700 text-left flex items-start gap-1.5 sm:max-w-xs"
-                            >
-                                <ChevronRight className="w-3 h-3 flex-shrink-0 mt-0.5" />
-                                <span>{q}</span>
-                            </div>
-                        ))}
-                    </div>
-                </div>
+            <div className={`flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 shadow-sm ${className}`}>
+                <Zap className="w-4 h-4 text-amber-600 shrink-0" />
+                <p className="text-sm text-amber-800">
+                    AI Insights disabled.
+                    <a href="/pengaturan" className="font-medium text-amber-900 underline hover:no-underline ml-1">
+                        Enable in Settings
+                    </a>
+                </p>
             </div>
         );
     }
@@ -371,6 +312,22 @@ Insight: ${insightText.slice(0, 300)}
                     </button>
                 </div>
             </div>
+
+            {/* Transient fetch error banner (compact) — aiEnabled remains untouched */}
+            {fetchError && !loading && (
+                <div className="flex items-center gap-2 p-2.5 rounded-lg bg-amber-50 border border-amber-200 mb-2">
+                    <AlertCircle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                    <div className="flex items-center gap-2 flex-1 min-w-0">
+                        <p className="text-xs text-amber-700">{fetchError}</p>
+                        <button
+                            onClick={() => fetchInsight(currentPrompt, compareMode, true)}
+                            className="ml-auto shrink-0 text-xs font-medium text-amber-700 underline hover:no-underline whitespace-nowrap"
+                        >
+                            Retry
+                        </button>
+                    </div>
+                </div>
+            )}
 
             {loading && (
                 <div className="flex items-center gap-2 text-sm text-blue-600 py-2">
