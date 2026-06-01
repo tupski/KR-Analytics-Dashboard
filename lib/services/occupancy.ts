@@ -1,5 +1,6 @@
 import { format, subDays, eachDayOfInterval } from 'date-fns';
 import { createServerClient } from '@/lib/supabase/server';
+import { getOccupancyWindow } from '@/lib/dashboard/periods';
 import {
     getOccupancyDaily as getOccupancyDailyAnalytics,
     getOccupancyRate as getOccupancyRateAnalytics,
@@ -106,7 +107,7 @@ function normalizeDate(d: unknown): string {
 // getLiveOccupancy()
 //
 // Get live occupancy: active stays right now.
-// Active stay = checkin_at <= now AND checkout_at >= now.
+// Active stay = checkin_at <= now AND (checkout_at >= now OR checkout_at IS NULL).
 //
 // NOT MIGRATED TO ANALYTICS DB: No real-time occupancy table
 // in analytics DB. Kept as Supabase-only.
@@ -124,13 +125,15 @@ export async function getLiveOccupancy(): Promise<LiveOccupancyResult> {
 
         const totalRooms = totalRoomCount || 0;
 
-        // Get distinct rooms currently occupied (checkin <= now AND checkout >= now)
+        // Get distinct rooms currently occupied.
+        // Overlap: checkin_at <= now AND (checkout_at >= now OR checkout_at IS NULL).
+        // null checkout_at means guest is still staying (no checkout time recorded yet).
         const now = new Date().toISOString();
         const { data: occupiedData, error: occError } = await supabase
             .from('transactions')
             .select('room_number, apartment_location')
             .lte('checkin_at', now)
-            .gte('checkout_at', now);
+            .or(`checkout_at.gte.${now},checkout_at.is.null`);
 
         if (occError) {
             console.error('Error fetching occupied rooms:', occError);
@@ -261,9 +264,7 @@ async function getDailyOccupancyTrendLegacy(days: number = 30): Promise<DailyOcc
 
         // Step 2: Fetch ALL transactions that could overlap the date range.
         // Stay-span overlap query — not a report period boundary.
-        // This is a transactional overlap range (checkin ≤ rangeEnd AND checkout ≥ rangeStart).
-        // report_period_mode does NOT apply here because we need the FULL day boundaries
-        // to correctly determine if a stay occupies each calendar day.
+        // Overlap: checkin ≤ rangeEnd AND (checkout ≥ rangeStart OR checkout IS NULL).
         const rangeStart = `${formattedDays[0]}T00:00:00`;
         const rangeEnd = `${formattedDays[formattedDays.length - 1]}T23:59:59`;
 
@@ -271,7 +272,7 @@ async function getDailyOccupancyTrendLegacy(days: number = 30): Promise<DailyOcc
             .from('transactions')
             .select('room_number, apartment_location, checkin_at, checkout_at')
             .lte('checkin_at', rangeEnd)
-            .gte('checkout_at', rangeStart);
+            .or(`checkout_at.gte.${rangeStart},checkout_at.is.null`);
 
         if (txError) {
             console.error('Error fetching transactions for occupancy:', txError);
@@ -279,7 +280,6 @@ async function getDailyOccupancyTrendLegacy(days: number = 30): Promise<DailyOcc
         }
 
         // Step 3: For each day, count unique occupied rooms (stay-span model)
-        // These boundaries define individual day windows for overlap check (checkin ≤ dayEnd AND checkout ≥ dayStart).
         // Calendar-day boundaries are intentional — a room occupies a FULL calendar day regardless of report_period_mode.
         const result: DailyOccupancyTrendPoint[] = formattedDays.map((day) => {
             const dayStart = `${day}T00:00:00`;
@@ -290,10 +290,10 @@ async function getDailyOccupancyTrendLegacy(days: number = 30): Promise<DailyOcc
             if (transactions) {
                 for (const tx of transactions) {
                     const checkin = (tx as any).checkin_at as string;
-                    const checkout = (tx as any).checkout_at as string;
+                    const checkout = (tx as any).checkout_at as string | null;
 
-                    // Check overlap: checkin <= dayEnd AND checkout >= dayStart
-                    if (checkin <= dayEnd && checkout >= dayStart) {
+                    // Overlap: checkin <= dayEnd AND (checkout >= dayStart OR checkout IS NULL)
+                    if (checkin <= dayEnd && (checkout === null || checkout >= dayStart)) {
                         occupiedOnDay.add(`${(tx as any).apartment_location}-${(tx as any).room_number}`);
                     }
                 }
@@ -415,12 +415,12 @@ async function getRoomDayUtilizationLegacy(start: string, end: string): Promise<
 
     // Fetch ALL transactions that could overlap the date range.
     // Stay-span overlap query — not a report period boundary.
-    // Calendar-day boundaries needed for correct per-day overlap check.
+    // Overlap: checkin ≤ rangeEnd AND (checkout ≥ rangeStart OR checkout IS NULL).
     const { data: transactions } = await supabase
         .from('transactions')
         .select('room_number, apartment_location, checkin_at, checkout_at')
         .lte('checkin_at', `${endDate}T23:59:59`)
-        .gte('checkout_at', `${startDate}T00:00:00`);
+        .or(`checkout_at.gte.${startDate}T00:00:00,checkout_at.is.null`);
 
     // Count rooms per location
     const roomsPerLocation: Record<string, number> = {};
@@ -486,13 +486,19 @@ export async function getDailyCheckinVolume(days: number = 30): Promise<DailyChe
     const startDate = subDays(today, days);
 
     try {
-        // Count by checkin_at date — calendar-day range for date-bounded query.
-        // NOT a report-period query: this counts transaction creation volume per calendar day.
+        // Use centralized boundaries. Calendar-day range since this counts
+        // check-in volume per calendar day (not report-period-dependent).
+        const { getDateBoundariesISO } = await import('@/lib/dashboard/periods');
+        const [startISO, endISO] = await Promise.all([
+            getDateBoundariesISO(startDate).then(r => r.startISO),
+            getDateBoundariesISO(today).then(r => r.endISO),
+        ]);
+
         const { data: transactions, error } = await supabase
             .from('transactions')
             .select('checkin_at')
-            .gte('checkin_at', `${format(startDate, 'yyyy-MM-dd')}T00:00:00`)
-            .lte('checkin_at', `${format(today, 'yyyy-MM-dd')}T23:59:59`)
+            .gte('checkin_at', startISO)
+            .lte('checkin_at', endISO)
             .order('checkin_at', { ascending: true });
 
         if (error) {

@@ -159,7 +159,7 @@ async function fetchDailyKPISnapshot(
     // Use period-aware boundaries (calendar_day or hotel_day) when mode provided
     const range = mode
         ? getReportPeriodRange(targetDay, mode)
-        : getReportPeriodRange(targetDay, 'calendar_day');
+        : getReportPeriodRange(targetDay);
     const dayStart = range.start;
     const dayEnd = range.end;
 
@@ -199,7 +199,7 @@ async function fetchDailyKPISnapshot(
 }
 
 function getCompareDay(todayStr: string, mode: KPICompareMode): { day: string; label: string } {
-    const today = new Date(todayStr + 'T00:00:00');
+    const today = new Date(todayStr + 'T00:00:00+07:00');
     switch (mode) {
         case 'yesterday':
             return { day: format(subDays(today, 1), 'yyyy-MM-dd'), label: 'Kemarin' };
@@ -270,6 +270,7 @@ export async function fetchKPIData(
         ) || 0;
 
         // Occupancy & available — point-in-time (currently active)
+        // Overlap: checkin_at ≤ now AND (checkout_at ≥ now OR checkout_at IS NULL)
         const nowIso = new Date().toISOString();
         let currentlyOccupiedCount = 0;
         let avgOccupancy = 0;
@@ -278,7 +279,7 @@ export async function fetchKPIData(
                 .from('transactions')
                 .select('room_number, apartment_location')
                 .lte('checkin_at', nowIso)
-                .gte('checkout_at', nowIso);
+                .or(`checkout_at.gte.${nowIso},checkout_at.is.null`);
             currentlyOccupiedCount = new Set(
                 (occData || []).map((t: any) => `${t.apartment_location}-${t.room_number}`),
             ).size;
@@ -632,11 +633,12 @@ export async function fetchLocationHealthData(): Promise<LocationHealthItem[]> {
         });
 
         // 3. Get active stays (occupancy) per location — stay-span overlap
+        // Overlap: checkin_at ≤ now AND (checkout_at ≥ now OR checkout_at IS NULL)
         const { data: activeStays } = await supabase
             .from('transactions')
             .select('room_number, apartment_location')
             .lte('checkin_at', nowIso)
-            .gte('checkout_at', nowIso);
+            .or(`checkout_at.gte.${nowIso},checkout_at.is.null`);
 
         const occupiedPerLocation: Record<string, Set<string>> = {};
         activeStays?.forEach((t: any) => {
