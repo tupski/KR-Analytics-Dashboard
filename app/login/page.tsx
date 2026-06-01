@@ -48,8 +48,7 @@ function LoginForm() {
                 (window as any).__loginRedirected = true;
             }
 
-            router.replace(data.redirectTo || redirectTo);
-            router.refresh();
+            window.location.href = data.redirectTo || redirectTo;
         } catch (err) {
             setError('Terjadi kesalahan jaringan');
         } finally {

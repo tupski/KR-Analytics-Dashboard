@@ -59,6 +59,9 @@ export async function middleware(request: NextRequest) {
         process.env.NEXT_PUBLIC_SUPABASE_URL!,
         process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
         {
+            auth: {
+                autoRefreshToken: false,
+            },
             cookies: {
                 getAll() {
                     return request.cookies.getAll();
@@ -77,8 +80,28 @@ export async function middleware(request: NextRequest) {
     try {
         const { data: { session } } = await supabase.auth.getSession();
         if (session) {
-            // Attempt to refresh the session
-            await supabase.auth.refreshSession();
+            // Skip refresh if token still fresh (> 60s remaining)
+            const now = Math.floor(Date.now() / 1000);
+            if (!session.expires_at || session.expires_at <= now + 60) {
+                const { error: refreshError } = await supabase.auth.refreshSession();
+                if (refreshError) {
+                    console.error('Session refresh failed:', refreshError);
+                    const loginUrl = new URL('/login', request.url);
+                    loginUrl.searchParams.set('redirect', pathname);
+                    loginUrl.searchParams.set('error', 'session_expired');
+                    const redirectResponse = redirectWithNoCache(loginUrl);
+
+                    // Clear all Supabase auth cookies
+                    const cookiesToClear = request.cookies.getAll().filter(cookie =>
+                        cookie.name.startsWith('sb-') || cookie.name.includes('auth-token')
+                    );
+                    cookiesToClear.forEach(cookie => {
+                        redirectResponse.cookies.delete(cookie.name);
+                    });
+
+                    return redirectResponse;
+                }
+            }
         }
     } catch (refreshError) {
         // If refresh fails, clear cookies and redirect to login
@@ -179,6 +202,6 @@ export const config = {
          * - /api/auth/* (auth API routes: login, register, etc.)
          * - /api/debug/* (debug endpoints)
          */
-        '/((?!_next/static|_next/image|favicon.ico|api/auth/|api/debug/|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
+        '/((?!_next/static|_next/image|favicon.ico|api/auth/|api/debug/|login|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
     ],
 };
