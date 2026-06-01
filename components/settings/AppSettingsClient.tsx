@@ -2,14 +2,15 @@
 
 import { useState, useRef } from 'react';
 import { Save, Upload, X, Loader2, Check, AlertCircle } from 'lucide-react';
-import { updateAppSettings, uploadToCatbox, type AppSettings } from '@/app/(dashboard)/pengaturan/actions';
+import { updateAppSettings, type AppSettings } from '@/app/(dashboard)/pengaturan/actions';
 import { useAppSettings } from '@/lib/contexts/AppSettingsContext';
 
 interface Props {
     initialSettings: AppSettings;
+    mode: 'umum' | 'tampilan';
 }
 
-export default function AppSettingsClient({ initialSettings }: Props) {
+export default function AppSettingsClient({ initialSettings, mode }: Props) {
     const [settings, setSettings] = useState(initialSettings);
     const [saving, setSaving] = useState(false);
     const [uploadingLogo, setUploadingLogo] = useState(false);
@@ -23,13 +24,11 @@ export default function AppSettingsClient({ initialSettings }: Props) {
         const file = e.target.files?.[0];
         if (!file) return;
 
-        // Validate file type
         if (!file.type.startsWith('image/')) {
             setMessage({ type: 'error', text: 'File harus berupa gambar' });
             return;
         }
 
-        // Validate file size (max 5MB)
         if (file.size > 5 * 1024 * 1024) {
             setMessage({ type: 'error', text: 'Ukuran file maksimal 5MB' });
             return;
@@ -114,7 +113,7 @@ export default function AppSettingsClient({ initialSettings }: Props) {
             const result = await updateAppSettings(settings);
 
             if (result.success) {
-                refreshAppSettings(); // Update all components using context
+                refreshAppSettings();
                 setMessage({ type: 'success', text: 'Pengaturan berhasil disimpan' });
                 setTimeout(() => {
                     window.location.reload();
@@ -148,163 +147,226 @@ export default function AppSettingsClient({ initialSettings }: Props) {
                 </div>
             )}
 
-            {/* App Name */}
-            <div>
-                <label htmlFor="app_name" className="block text-sm font-medium text-gray-700 mb-1.5">
-                    Nama Aplikasi
-                </label>
-                <input
-                    id="app_name"
-                    type="text"
-                    value={settings.app_name}
-                    onChange={(e) => setSettings(prev => ({ ...prev, app_name: e.target.value }))}
-                    placeholder="Kakarama Room Analytics"
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
-                />
-                <p className="text-xs text-gray-500 mt-1">Nama ini akan ditampilkan di sidebar dan header</p>
-            </div>
-
-            {/* Logo */}
-            <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1.5">Logo Aplikasi</label>
-                <div className="flex items-start gap-3">
-                    {settings.logo_url && (
-                        <div className="relative">
-                            {/* eslint-disable-next-line @next/next/no-img-element */}
-                            <img
-                                src={settings.logo_url}
-                                alt="Logo"
-                                className="w-20 h-20 object-contain border border-gray-200 rounded-lg bg-white"
-                            />
-                            <button
-                                onClick={() => setSettings(prev => ({ ...prev, logo_url: null }))}
-                                className="absolute -top-2 -right-2 w-5 h-5 bg-red-500 hover:bg-red-600 text-white rounded-full flex items-center justify-center"
-                            >
-                                <X className="w-3 h-3" />
-                            </button>
-                        </div>
-                    )}
-                    <div className="flex-1">
+            {/* ── Mode: Umum ── */}
+            {mode === 'umum' && (
+                <>
+                    {/* App Name */}
+                    <div>
+                        <label htmlFor="app_name" className="block text-sm font-medium text-gray-700 mb-1.5">
+                            Nama Aplikasi
+                        </label>
                         <input
-                            ref={logoInputRef}
-                            type="file"
-                            accept="image/*"
-                            onChange={handleLogoUpload}
-                            className="hidden"
+                            id="app_name"
+                            type="text"
+                            value={settings.app_name}
+                            onChange={(e) => setSettings(prev => ({ ...prev, app_name: e.target.value }))}
+                            placeholder="Kakarama Room Analytics"
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
                         />
-                        <button
-                            onClick={() => logoInputRef.current?.click()}
-                            disabled={uploadingLogo}
-                            className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded-lg transition-colors disabled:opacity-50"
-                        >
-                            {uploadingLogo ? (
-                                <>
-                                    <Loader2 className="w-4 h-4 animate-spin" />
-                                    <span>Uploading...</span>
-                                </>
-                            ) : (
-                                <>
-                                    <Upload className="w-4 h-4" />
-                                    <span>Upload Logo</span>
-                                </>
-                            )}
-                        </button>
-                        <p className="text-xs text-gray-500 mt-1">PNG, JPG, atau SVG. Maksimal 5MB.</p>
+                        <p className="text-xs text-gray-500 mt-1">Nama ini akan ditampilkan di sidebar dan header</p>
                     </div>
-                </div>
-            </div>
 
-            {/* Favicon */}
-            <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1.5">Favicon</label>
-                <div className="flex items-start gap-3">
-                    {settings.favicon_url && (
-                        <div className="relative">
-                            {/* eslint-disable-next-line @next/next/no-img-element */}
-                            <img
-                                src={settings.favicon_url}
-                                alt="Favicon"
-                                className="w-12 h-12 object-contain border border-gray-200 rounded-lg bg-white"
-                            />
-                            <button
-                                onClick={() => setSettings(prev => ({ ...prev, favicon_url: null }))}
-                                className="absolute -top-2 -right-2 w-5 h-5 bg-red-500 hover:bg-red-600 text-white rounded-full flex items-center justify-center"
-                            >
-                                <X className="w-3 h-3" />
-                            </button>
+                    {/* Logo */}
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1.5">Logo Aplikasi</label>
+                        <div className="flex items-start gap-3">
+                            {settings.logo_url && (
+                                <div className="relative">
+                                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                                    <img
+                                        src={settings.logo_url}
+                                        alt="Logo"
+                                        className="w-20 h-20 object-contain border border-gray-200 rounded-lg bg-white"
+                                    />
+                                    <button
+                                        onClick={() => setSettings(prev => ({ ...prev, logo_url: null }))}
+                                        className="absolute -top-2 -right-2 w-5 h-5 bg-red-500 hover:bg-red-600 text-white rounded-full flex items-center justify-center"
+                                    >
+                                        <X className="w-3 h-3" />
+                                    </button>
+                                </div>
+                            )}
+                            <div className="flex-1">
+                                <input
+                                    ref={logoInputRef}
+                                    type="file"
+                                    accept="image/*"
+                                    onChange={handleLogoUpload}
+                                    className="hidden"
+                                />
+                                <button
+                                    onClick={() => logoInputRef.current?.click()}
+                                    disabled={uploadingLogo}
+                                    className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded-lg transition-colors disabled:opacity-50"
+                                >
+                                    {uploadingLogo ? (
+                                        <>
+                                            <Loader2 className="w-4 h-4 animate-spin" />
+                                            <span>Uploading...</span>
+                                        </>
+                                    ) : (
+                                        <>
+                                            <Upload className="w-4 h-4" />
+                                            <span>Upload Logo</span>
+                                        </>
+                                    )}
+                                </button>
+                                <p className="text-xs text-gray-500 mt-1">PNG, JPG, atau SVG. Maksimal 5MB.</p>
+                            </div>
                         </div>
-                    )}
-                    <div className="flex-1">
-                        <input
-                            ref={faviconInputRef}
-                            type="file"
-                            accept="image/*"
-                            onChange={handleFaviconUpload}
-                            className="hidden"
-                        />
-                        <button
-                            onClick={() => faviconInputRef.current?.click()}
-                            disabled={uploadingFavicon}
-                            className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded-lg transition-colors disabled:opacity-50"
-                        >
-                            {uploadingFavicon ? (
-                                <>
-                                    <Loader2 className="w-4 h-4 animate-spin" />
-                                    <span>Uploading...</span>
-                                </>
-                            ) : (
-                                <>
-                                    <Upload className="w-4 h-4" />
-                                    <span>Upload Favicon</span>
-                                </>
-                            )}
-                        </button>
-                        <p className="text-xs text-gray-500 mt-1">ICO, PNG 32x32 atau 16x16. Maksimal 2MB.</p>
                     </div>
-                </div>
-            </div>
 
-            {/* Report Period Mode */}
-            <div>
-                <label htmlFor="report_period_mode" className="block text-sm font-medium text-gray-700 mb-1.5">
-                    Mode Periode Laporan
-                </label>
-                <p className="text-sm text-gray-500 mb-2">Pilih bagaimana sistem menghitung periode laporan harian.</p>
-                <select
-                    id="report_period_mode"
-                    value={settings.report_period_mode}
-                    onChange={(e) => setSettings(prev => ({ ...prev, report_period_mode: e.target.value }))}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none bg-white"
-                >
-                    <option value="calendar_day">00:00 - 23:59</option>
-                    <option value="hotel_day">12:00 - 11:59 hari berikutnya</option>
-                </select>
-                <p className="text-xs text-gray-500 mt-1">Mengubah mode akan memengaruhi rentang tanggal pada laporan harian.</p>
-            </div>
+                    {/* Favicon */}
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1.5">Favicon</label>
+                        <div className="flex items-start gap-3">
+                            {settings.favicon_url && (
+                                <div className="relative">
+                                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                                    <img
+                                        src={settings.favicon_url}
+                                        alt="Favicon"
+                                        className="w-12 h-12 object-contain border border-gray-200 rounded-lg bg-white"
+                                    />
+                                    <button
+                                        onClick={() => setSettings(prev => ({ ...prev, favicon_url: null }))}
+                                        className="absolute -top-2 -right-2 w-5 h-5 bg-red-500 hover:bg-red-600 text-white rounded-full flex items-center justify-center"
+                                    >
+                                        <X className="w-3 h-3" />
+                                    </button>
+                                </div>
+                            )}
+                            <div className="flex-1">
+                                <input
+                                    ref={faviconInputRef}
+                                    type="file"
+                                    accept="image/*"
+                                    onChange={handleFaviconUpload}
+                                    className="hidden"
+                                />
+                                <button
+                                    onClick={() => faviconInputRef.current?.click()}
+                                    disabled={uploadingFavicon}
+                                    className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded-lg transition-colors disabled:opacity-50"
+                                >
+                                    {uploadingFavicon ? (
+                                        <>
+                                            <Loader2 className="w-4 h-4 animate-spin" />
+                                            <span>Uploading...</span>
+                                        </>
+                                    ) : (
+                                        <>
+                                            <Upload className="w-4 h-4" />
+                                            <span>Upload Favicon</span>
+                                        </>
+                                    )}
+                                </button>
+                                <p className="text-xs text-gray-500 mt-1">ICO, PNG 32x32 atau 16x16. Maksimal 2MB.</p>
+                            </div>
+                        </div>
+                    </div>
 
-            {/* Primary Color */}
-            <div>
-                <label htmlFor="primary_color" className="block text-sm font-medium text-gray-700 mb-1.5">
-                    Warna Tema Utama
-                </label>
-                <div className="flex items-center gap-3">
-                    <input
-                        id="primary_color"
-                        type="color"
-                        value={settings.primary_color}
-                        onChange={(e) => setSettings(prev => ({ ...prev, primary_color: e.target.value }))}
-                        className="w-16 h-10 border border-gray-300 rounded-lg cursor-pointer"
-                    />
-                    <input
-                        type="text"
-                        value={settings.primary_color}
-                        onChange={(e) => setSettings(prev => ({ ...prev, primary_color: e.target.value }))}
-                        placeholder="#2563eb"
-                        className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none font-mono text-sm"
-                    />
-                </div>
-                <p className="text-xs text-gray-500 mt-1">Warna ini akan digunakan untuk tombol, link, dan elemen UI utama</p>
-            </div>
+                    {/* Report Period Mode */}
+                    <div>
+                        <label htmlFor="report_period_mode" className="block text-sm font-medium text-gray-700 mb-1.5">
+                            Mode Periode Laporan
+                        </label>
+                        <p className="text-sm text-gray-500 mb-2">Pilih bagaimana sistem menghitung periode laporan harian.</p>
+                        <select
+                            id="report_period_mode"
+                            value={settings.report_period_mode}
+                            onChange={(e) => setSettings(prev => ({ ...prev, report_period_mode: e.target.value }))}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none bg-white"
+                        >
+                            <option value="calendar_day">00:00 - 23:59</option>
+                            <option value="hotel_day">12:00 - 11:59 hari berikutnya</option>
+                        </select>
+                        <p className="text-xs text-gray-500 mt-1">Mengubah mode akan memengaruhi rentang tanggal pada laporan harian.</p>
+                    </div>
+
+                    {/* Timezone */}
+                    <div>
+                        <label htmlFor="timezone" className="block text-sm font-medium text-gray-700 mb-1.5">
+                            Zona Waktu
+                        </label>
+                        <select
+                            id="timezone"
+                            value={settings.timezone}
+                            onChange={(e) => setSettings(prev => ({ ...prev, timezone: e.target.value }))}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none bg-white"
+                        >
+                            <option value="Asia/Jakarta">Asia/Jakarta (WIB, UTC+7)</option>
+                            <option value="Asia/Makassar">Asia/Makassar (WITA, UTC+8)</option>
+                            <option value="Asia/Jayapura">Asia/Jayapura (WIT, UTC+9)</option>
+                            <option value="Asia/Singapore">Asia/Singapore (UTC+8)</option>
+                            <option value="Asia/Bangkok">Asia/Bangkok (UTC+7)</option>
+                            <option value="UTC">UTC</option>
+                        </select>
+                        <p className="text-xs text-gray-500 mt-1">Zona waktu untuk laporan dan tampilan data.</p>
+                    </div>
+                </>
+            )}
+
+            {/* ── Mode: Tampilan ── */}
+            {mode === 'tampilan' && (
+                <>
+                    {/* Primary Color */}
+                    <div>
+                        <label htmlFor="primary_color" className="block text-sm font-medium text-gray-700 mb-1.5">
+                            Warna Tema Utama
+                        </label>
+                        <div className="flex items-center gap-3">
+                            <input
+                                id="primary_color"
+                                type="color"
+                                value={settings.primary_color}
+                                onChange={(e) => setSettings(prev => ({ ...prev, primary_color: e.target.value }))}
+                                className="w-16 h-10 border border-gray-300 rounded-lg cursor-pointer"
+                            />
+                            <input
+                                type="text"
+                                value={settings.primary_color}
+                                onChange={(e) => setSettings(prev => ({ ...prev, primary_color: e.target.value }))}
+                                placeholder="#2563eb"
+                                className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none font-mono text-sm"
+                            />
+                        </div>
+                        <p className="text-xs text-gray-500 mt-1">Warna ini akan digunakan untuk tombol, link, dan elemen UI utama</p>
+                    </div>
+
+                    {/* Sidebar Behavior */}
+                    <div>
+                        <label htmlFor="sidebar_behavior" className="block text-sm font-medium text-gray-700 mb-1.5">
+                            Perilaku Sidebar
+                        </label>
+                        <select
+                            id="sidebar_behavior"
+                            value={settings.sidebar_behavior}
+                            onChange={(e) => setSettings(prev => ({ ...prev, sidebar_behavior: e.target.value }))}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none bg-white"
+                        >
+                            <option value="default">Default (selalu tampil)</option>
+                            <option value="collapse">Collapse (ikon saja saat diciutkan)</option>
+                            <option value="hidden">Sembunyikan (toggle manual)</option>
+                        </select>
+                        <p className="text-xs text-gray-500 mt-1">Mengontrol bagaimana sidebar navigasi ditampilkan.</p>
+                    </div>
+
+                    {/* Compact Display */}
+                    <div className="flex items-center justify-between py-2">
+                        <div>
+                            <label className="text-sm font-medium text-gray-700">Tampilan Kompak</label>
+                            <p className="text-xs text-gray-500">Kurangi jarak dan ukuran elemen di dashboard</p>
+                        </div>
+                        <button
+                            onClick={() => setSettings(prev => ({ ...prev, compact_display: prev.compact_display === 'true' ? 'false' : 'true' }))}
+                            className={`relative w-11 h-6 rounded-full transition-colors ${settings.compact_display === 'true' ? 'bg-blue-600' : 'bg-gray-300'}`}
+                        >
+                            <span className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${settings.compact_display === 'true' ? 'translate-x-5' : ''}`} />
+                        </button>
+                    </div>
+                </>
+            )}
 
             {/* Save Button */}
             <div className="pt-4 border-t border-gray-200">

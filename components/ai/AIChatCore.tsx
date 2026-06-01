@@ -569,9 +569,24 @@ export default function AIChatCore({
     };
 
     const handleKeyDown = (e: React.KeyboardEvent) => {
-        if (e.key === 'Enter' && !e.shiftKey) {
+        // Enter alone → send
+        if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
             e.preventDefault();
             handleSend();
+            return;
+        }
+        // Ctrl+Enter / Cmd+Enter → insert newline in textarea
+        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && isFull) {
+            e.preventDefault();
+            const textarea = e.currentTarget as HTMLTextAreaElement;
+            const start = textarea.selectionStart;
+            const end = textarea.selectionEnd;
+            const newValue = input.substring(0, start) + '\n' + input.substring(end);
+            setInput(newValue);
+            // Restore cursor position after value change
+            requestAnimationFrame(() => {
+                textarea.selectionStart = textarea.selectionEnd = start + 1;
+            });
         }
     };
 

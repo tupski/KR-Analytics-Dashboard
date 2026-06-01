@@ -1294,6 +1294,164 @@ async function fetchWeekdayWeekendAnalysis(
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// GUEST STAY HISTORY (2026-06-01)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * fetchGuestStayHistory — cari riwayat menginap tamu berdasarkan nama.
+ * Query langsung ke analytics PostgreSQL via queryAnalytics.
+ * SELECT-only, parameterized query.
+ */
+async function fetchGuestStayHistory(
+    guestName: string,
+    startDate?: string,
+    endDate?: string,
+    location?: string,
+    roomNumber?: string,
+    fuzzyMatch: boolean = true,
+    limit: number = 20,
+): Promise<any> {
+    if (!guestName || !guestName.trim()) {
+        return { error: 'Nama tamu wajib diisi.' };
+    }
+
+    const safeLimit = Math.min(Math.max(1, limit), 100);
+    const normalizedName = guestName.trim().replace(/\s+/g, ' ');
+
+    // Step 1: Find matching customer names (case-insensitive ILIKE)
+    let nameQuery = `SELECT DISTINCT customer_name, COUNT(*)::INT as stay_count
+FROM transactions
+WHERE customer_name ILIKE $1`;
+    const nameParams: any[] = [`%${normalizedName}%`];
+    let paramIdx = 2;
+
+    if (startDate) {
+        nameQuery += ` AND (created_at AT TIME ZONE 'Asia/Jakarta')::DATE >= $${paramIdx}::date`;
+        nameParams.push(startDate);
+        paramIdx++;
+    }
+    if (endDate) {
+        nameQuery += ` AND (created_at AT TIME ZONE 'Asia/Jakarta')::DATE <= $${paramIdx}::date`;
+        nameParams.push(endDate);
+        paramIdx++;
+    }
+    if (location) {
+        nameQuery += ` AND apartment_location = $${paramIdx}`;
+        nameParams.push(location);
+        paramIdx++;
+    }
+    if (roomNumber) {
+        nameQuery += ` AND room_number ILIKE $${paramIdx}`;
+        nameParams.push(`%${roomNumber}%`);
+        paramIdx++;
+    }
+
+    nameQuery += ` GROUP BY customer_name ORDER BY stay_count DESC LIMIT 20`;
+
+    const nameRows = await queryAnalytics<any>(nameQuery, nameParams);
+
+    if (!nameRows || nameRows.length === 0) {
+        return {
+            guestName: normalizedName,
+            totalStays: 0,
+            stays: [],
+            matches: [],
+        };
+    }
+
+    // If multiple matches, return matches array for clarification
+    if (nameRows.length > 1) {
+        return {
+            guestName: normalizedName,
+            totalStays: 0,
+            stays: [],
+            matches: nameRows.map((r: any) => ({
+                guestName: r.customer_name,
+                matchScore: Math.round(
+                    (normalizedName.toLowerCase().split(' ').filter((w: string) =>
+                        r.customer_name.toLowerCase().includes(w)
+                    ).length / Math.max(normalizedName.split(' ').length, 1)) * 100
+                ),
+            })),
+            message: `Ditemukan ${nameRows.length} nama mirip. Mohon klarifikasi nama tamu yang dimaksud.`,
+        };
+    }
+
+    // Single clear match — fetch full stay history
+    const matchedName = nameRows[0].customer_name;
+
+    let staysQuery = `SELECT
+    (created_at AT TIME ZONE 'Asia/Jakarta')::DATE as check_in_date,
+    (checkout_at AT TIME ZONE 'Asia/Jakarta')::DATE as check_out_date,
+    apartment_location as location_name,
+    room_number,
+    rental_duration,
+    CASE
+        WHEN rental_duration = 0 THEN 'Transit'
+        WHEN rental_duration = 1 THEN 'Fullday'
+        WHEN rental_duration = 2 THEN 'Promo 2 Malam'
+        ELSE rental_duration::TEXT || ' Malam'
+    END as duration_label,
+    marketing_name as booking_source,
+    COALESCE(cash_amount, 0) + COALESCE(transfer_amount, 0) as amount,
+    status,
+    is_deleted
+FROM transactions
+WHERE customer_name = $1`;
+    const stayParams: any[] = [matchedName];
+    let stayIdx = 2;
+
+    if (startDate) {
+        staysQuery += ` AND (created_at AT TIME ZONE 'Asia/Jakarta')::DATE >= $${stayIdx}::date`;
+        stayParams.push(startDate);
+        stayIdx++;
+    }
+    if (endDate) {
+        staysQuery += ` AND (created_at AT TIME ZONE 'Asia/Jakarta')::DATE <= $${stayIdx}::date`;
+        stayParams.push(endDate);
+        stayIdx++;
+    }
+    if (location) {
+        staysQuery += ` AND apartment_location = $${stayIdx}`;
+        stayParams.push(location);
+        stayIdx++;
+    }
+    if (roomNumber) {
+        staysQuery += ` AND room_number ILIKE $${stayIdx}`;
+        stayParams.push(`%${roomNumber}%`);
+        stayIdx++;
+    }
+
+    staysQuery += ` ORDER BY (created_at AT TIME ZONE 'Asia/Jakarta')::DATE DESC LIMIT ${safeLimit}`;
+
+    const stays = await queryAnalytics<any>(staysQuery, stayParams);
+
+    // Calculate total revenue
+    const totalRevenue = (stays || []).reduce(
+        (sum: number, s: any) => sum + (parseFloat(s.amount) || 0),
+        0,
+    );
+
+    return {
+        guestName: matchedName,
+        totalStays: stays?.length || 0,
+        totalRevenue: Math.round(totalRevenue * 100) / 100,
+        stays: (stays || [])
+            .filter((s: any) => !s.is_deleted)
+            .map((s: any) => ({
+                checkInDate: s.check_in_date,
+                checkOutDate: s.check_out_date || null,
+                locationName: s.location_name,
+                roomNumber: s.room_number,
+                durationLabel: s.duration_label,
+                bookingSource: s.booking_source || '(langsung)',
+                amount: Math.round(parseFloat(s.amount) * 100) / 100,
+                status: s.status || 'completed',
+            })),
+    };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // COMPOSITE PANEL FETCHERS — reduce tool calls by bundling related data
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -2093,6 +2251,30 @@ export const OPENAI_TOOLS = [
             },
         },
     },
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // GUEST STAY HISTORY (2026-06-01)
+    // ═══════════════════════════════════════════════════════════════════════════
+    {
+        type: 'function',
+        function: {
+            name: 'get_guest_stay_history',
+            description: 'RIWAYAT MENGINAP TAMU — cari riwayat menginap tamu berdasarkan nama. Gunakan ILIKE case-insensitive, dukung partial name. Jika ada beberapa nama mirip, return daftar matches untuk klarifikasi. Jika satu kecocokan jelas, return semua riwayat menginap detail. Output: guestName, totalStays, totalRevenue, stays[] (checkInDate, checkOutDate, locationName, roomNumber, durationLabel, bookingSource, amount, status). JANGAN tebak data dari memori — selalu pakai tool ini untuk pertanyaan nama tamu.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    guestName: { type: 'string', description: 'Nama tamu yang dicari (partial name OK, case-insensitive)' },
+                    startDate: { type: 'string', description: 'Filter tanggal mulai YYYY-MM-DD (opsional)' },
+                    endDate: { type: 'string', description: 'Filter tanggal akhir YYYY-MM-DD (opsional)' },
+                    location: { type: 'string', description: 'Filter lokasi apartemen (opsional)' },
+                    roomNumber: { type: 'string', description: 'Filter nomor kamar (opsional)' },
+                    fuzzyMatch: { type: 'boolean', description: 'Gunakan fuzzy matching (default: true)' },
+                    limit: { type: 'number', description: 'Jumlah hasil maksimum, default 20, max 100' },
+                },
+                required: ['guestName'],
+            },
+        },
+    },
 ];
 
 /** Anthropic Messages tool schema (compatible). */
@@ -2410,6 +2592,17 @@ export async function executeTool(call: ToolCall): Promise<any> {
                     call.arguments.comparisonStartDate,
                     call.arguments.comparisonEndDate,
                     call.arguments.reportPeriodMode,
+                );
+
+            case 'get_guest_stay_history':
+                return await fetchGuestStayHistory(
+                    call.arguments.guestName,
+                    call.arguments.startDate,
+                    call.arguments.endDate,
+                    call.arguments.location,
+                    call.arguments.roomNumber,
+                    call.arguments.fuzzyMatch !== false,
+                    call.arguments.limit || 20,
                 );
 
             default:

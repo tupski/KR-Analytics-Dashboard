@@ -9,6 +9,9 @@ export interface AppSettings {
     favicon_url: string | null;
     primary_color: string;
     report_period_mode: string;
+    timezone: string;
+    sidebar_behavior: string;
+    compact_display: string;
     // AI Insight settings
     ai_insight_enabled?: string;
     ai_insight_mode?: string;
@@ -37,6 +40,9 @@ export async function fetchAppSettings(): Promise<AppSettings> {
             favicon_url: null,
             primary_color: '#2563eb',
             report_period_mode: 'calendar_day',
+            timezone: 'Asia/Jakarta',
+            sidebar_behavior: 'default',
+            compact_display: 'false',
         };
     }
 
@@ -48,6 +54,9 @@ export async function fetchAppSettings(): Promise<AppSettings> {
         favicon_url: map.favicon_url || null,
         primary_color: map.primary_color || '#2563eb',
         report_period_mode: map.report_period_mode || 'calendar_day',
+        timezone: map.timezone || 'Asia/Jakarta',
+        sidebar_behavior: map.sidebar_behavior || 'default',
+        compact_display: map.compact_display || 'false',
         ai_insight_enabled: map.ai_insight_enabled || 'false',
         ai_insight_mode: map.ai_insight_mode || 'ai-with-fallback',
         ai_insight_provider: map.ai_insight_provider || '',
@@ -82,6 +91,15 @@ export async function updateAppSettings(settings: Partial<AppSettings>): Promise
         }
         if (settings.report_period_mode !== undefined) {
             entries.push({ key: 'report_period_mode', value: settings.report_period_mode });
+        }
+        if (settings.timezone !== undefined) {
+            entries.push({ key: 'timezone', value: settings.timezone });
+        }
+        if (settings.sidebar_behavior !== undefined) {
+            entries.push({ key: 'sidebar_behavior', value: settings.sidebar_behavior });
+        }
+        if (settings.compact_display !== undefined) {
+            entries.push({ key: 'compact_display', value: settings.compact_display });
         }
         // AI Insight settings
         if (settings.ai_insight_enabled !== undefined) {

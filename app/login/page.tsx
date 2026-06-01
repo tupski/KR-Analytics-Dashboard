@@ -4,6 +4,50 @@ import { useState, FormEvent, Suspense, useEffect } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Building, Mail, Lock, AlertCircle, Loader2 } from 'lucide-react';
 
+function LogoBlock() {
+    const [logoUrl, setLogoUrl] = useState<string | null>(null);
+    const [appName, setAppName] = useState('Kakarama Room');
+    const [imgError, setImgError] = useState(false);
+
+    useEffect(() => {
+        fetch('/api/app-settings')
+            .then(r => r.ok ? r.json() : null)
+            .then(data => {
+                if (data) {
+                    setLogoUrl(data.logo_url || null);
+                    if (data.app_name) setAppName(data.app_name);
+                }
+            })
+            .catch(() => { /* keep defaults */ });
+    }, []);
+
+    if (logoUrl && !imgError) {
+        return (
+            <div className="text-center mb-8">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                    src={logoUrl}
+                    alt={appName}
+                    className="h-16 w-auto mx-auto mb-4 object-contain"
+                    onError={() => setImgError(true)}
+                />
+                <h1 className="text-2xl font-bold text-gray-900 mb-1">{appName}</h1>
+                <p className="text-sm text-gray-600">Analytics Dashboard</p>
+            </div>
+        );
+    }
+
+    return (
+        <div className="text-center mb-8">
+            <div className="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-br from-blue-600 to-blue-400 rounded-2xl mb-4 shadow-lg">
+                <Building className="w-8 h-8 text-white" />
+            </div>
+            <h1 className="text-2xl font-bold text-gray-900 mb-1">{appName}</h1>
+            <p className="text-sm text-gray-600">Analytics Dashboard</p>
+        </div>
+    );
+}
+
 function LoginForm() {
     const router = useRouter();
     const searchParams = useSearchParams();
@@ -58,14 +102,8 @@ function LoginForm() {
 
     return (
         <>
-            {/* Logo & Title */}
-            <div className="text-center mb-8">
-                <div className="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-br from-blue-600 to-blue-400 rounded-2xl mb-4 shadow-lg">
-                    <Building className="w-8 h-8 text-white" />
-                </div>
-                <h1 className="text-2xl font-bold text-gray-900 mb-1">Kakarama Room</h1>
-                <p className="text-sm text-gray-600">Analytics Dashboard</p>
-            </div>
+            {/* Logo & Title - uses app_settings config */}
+            <LogoBlock />
 
             {/* Login Card */}
             <div className="bg-white rounded-2xl shadow-xl border border-gray-100 p-8">

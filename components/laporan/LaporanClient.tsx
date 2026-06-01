@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import {
     Wallet,
     TrendingUp,
@@ -28,9 +28,40 @@ export default function LaporanClient({ data, highOccupancy }: LaporanClientProp
     const [roomExpenses, setRoomExpenses] = useState<ExpenseDetail[]>([]);
     const [loadingDetails, setLoadingDetails] = useState(false);
     const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
+    const [activeLocation, setActiveLocation] = useState<string | null>(null);
     const locationRefs = useRef<Record<string, HTMLDivElement | null>>({});
+    const locationKeys = useRef<string[]>(data.locations.map(l => l.name));
+
+    // IntersectionObserver to highlight active location chip on scroll
+    useEffect(() => {
+        const entries = new Map<string, number>();
+        const obs = new IntersectionObserver((intersections) => {
+            intersections.forEach(entry => {
+                const loc = (entry.target as HTMLElement).dataset.location;
+                if (loc) entries.set(loc, entry.intersectionRatio);
+            });
+            let best: string | null = null;
+            let bestRatio = 0;
+            for (const [loc, ratio] of entries) {
+                if (ratio > bestRatio) {
+                    bestRatio = ratio;
+                    best = loc;
+                }
+            }
+            if (best) setActiveLocation(best);
+        }, { rootMargin: '-64px 0px -40% 0px' });
+
+        const refs = locationRefs.current;
+        locationKeys.current.forEach(k => {
+            const el = refs[k];
+            if (el) obs.observe(el);
+        });
+
+        return () => obs.disconnect();
+    }, []);
 
     const scrollToLocation = (name: string) => {
+        setActiveLocation(name);
         locationRefs.current[name]?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     };
 
@@ -174,13 +205,16 @@ export default function LaporanClient({ data, highOccupancy }: LaporanClientProp
             <div>
                 <h2 className="text-base sm:text-lg font-semibold text-gray-900 mb-3">Laporan Per Lokasi</h2>
                 {/* Location filter pills — sticky on scroll */}
-                <div className="sticky top-[110px] sm:top-[104px] z-20 bg-gradient-to-b from-slate-50/95 to-slate-50/80 backdrop-blur-sm py-2 -mx-4 sm:-mx-6 lg:-mx-8 px-4 sm:px-6 lg:px-8 mb-2 border-b border-gray-200">
-                    <div className="flex flex-wrap gap-1.5 sm:gap-2">
+                <div className="sticky top-12 sm:top-[100px] z-20 bg-white/95 backdrop-blur-sm shadow-sm py-2.5 -mx-4 sm:-mx-6 lg:-mx-8 px-4 sm:px-6 lg:px-8 mb-3 border-b border-gray-200">
+                    <div className="flex overflow-x-auto flex-nowrap sm:flex-wrap gap-1.5 sm:gap-2 pb-1 sm:pb-0 -mb-1 sm:mb-0 scrollbar-thin">
                         {data.locations.map(loc => (
                             <button
                                 key={loc.name}
                                 onClick={() => scrollToLocation(loc.name)}
-                                className="px-2.5 sm:px-3 py-1 sm:py-1.5 text-xs font-medium bg-blue-50 text-blue-700 rounded-full border border-blue-200 hover:bg-blue-100 transition-colors"
+                                className={`shrink-0 px-3 py-1.5 text-xs font-medium rounded-full border transition-colors ${activeLocation === loc.name
+                                    ? 'bg-blue-600 text-white border-blue-600 shadow-sm'
+                                    : 'bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100'
+                                    }`}
                             >
                                 {loc.name}
                             </button>
@@ -193,6 +227,7 @@ export default function LaporanClient({ data, highOccupancy }: LaporanClientProp
                     {data.locations.map(loc => (
                         <div
                             key={loc.name}
+                            data-location={loc.name}
                             ref={el => { locationRefs.current[loc.name] = el; }}
                             className="bg-white rounded-xl border border-blue-100 p-4 sm:p-5 shadow-sm"
                         >

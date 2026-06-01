@@ -196,7 +196,7 @@ export default function Sidebar({ isMobileOpen = false, onClose, userEmail }: Si
                     </div>
                     <button
                         onClick={toggleCollapsed}
-                        title="Ciutkan sidebar"
+                        aria-label="Ciutkan sidebar"
                         className="flex items-center justify-center gap-1 w-full rounded-lg px-2 py-1.5 text-xs text-gray-500 hover:bg-gray-100 hover:text-gray-700 transition-colors"
                     >
                         <ChevronLeft className="w-4 h-4" />

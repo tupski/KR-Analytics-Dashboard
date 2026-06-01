@@ -2,6 +2,10 @@
 
 import { useState, useEffect } from 'react';
 import { Brain, Key, Server, Check, AlertCircle, ExternalLink, Eye, Lightbulb, Wrench, Zap, DollarSign, Trash2, Clock, Plus, Copy, Cloud, CloudOff, Download, Upload, Pencil, Sparkles } from 'lucide-react';
+import dynamic from 'next/dynamic';
+
+const AIToolsTable = dynamic(() => import('@/components/ai/AIToolsTable'), { ssr: false });
+import TOOL_REGISTRY from '@/lib/ai/toolRegistry';
 import { PROVIDERS, priceTier, allModelsSorted, type ProviderId, type ModelInfo } from '@/lib/ai/models';
 import {
     loadConfigFromDb,
@@ -73,7 +77,11 @@ function CapabilityBadges({ caps, size = 'sm' }: { caps: ModelInfo['capabilities
     );
 }
 
-export default function AISettingsPage() {
+interface AISettingsPageProps {
+    section?: 'ai' | 'insight' | 'sistem';
+}
+
+export default function AISettingsPage({ section = 'ai' }: AISettingsPageProps) {
     const [config, setConfig] = useState<MultiAIConfig | null>(null);
     const [activeProviderId, setActiveProviderId] = useState<ProviderId>('deepseek');
 
@@ -505,716 +513,779 @@ export default function AISettingsPage() {
 
     return (
         <div className="max-w-5xl space-y-5">
-            {/* Active provider banner */}
-            <div className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-xl border border-blue-200 p-4">
-                <div className="flex items-start justify-between gap-3 flex-wrap">
-                    <div>
-                        <p className="text-xs text-blue-700 uppercase font-semibold tracking-wide mb-1">Provider Aktif</p>
-                        <p className="text-base font-bold text-gray-900">
-                            {config.activeProvider === 'auto'
-                                ? 'Auto (pilih otomatis)'
-                                : PROVIDERS.find(p => p.id === config.activeProvider)?.name || config.activeProvider}
-                            {config.activeModel !== 'auto' && (
-                                <span className="text-sm text-gray-500 font-normal"> · {config.activeModel}</span>
-                            )}
-                        </p>
-                        <p className="text-xs text-gray-500 mt-1">
-                            Provider terkonfigurasi: {config.providers.filter(p => p.apiKeySet).length} dari {PROVIDERS.length}
-                        </p>
-                    </div>
-                </div>
-            </div>
-
-            {/* Provider tabs */}
-            <div className="bg-white rounded-xl border border-gray-200 overflow-hidden shadow-sm">
-                <div className="border-b border-gray-200 overflow-x-auto">
-                    <div className="flex gap-1 px-2 py-2 min-w-max">
-                        {PROVIDERS.map(p => {
-                            const configured = !!config.providers.find(c => c.providerId === p.id)?.apiKeySet;
-                            const active = activeProviderId === p.id;
-                            return (
-                                <button
-                                    key={p.id}
-                                    onClick={() => handleProviderTab(p.id)}
-                                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors flex-shrink-0 ${active
-                                        ? 'bg-blue-600 text-white'
-                                        : configured
-                                            ? 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
-                                            : 'bg-gray-50 text-gray-600 hover:bg-gray-100'
-                                        }`}
-                                >
-                                    {configured && !active && <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />}
-                                    {p.name}
-                                </button>
-                            );
-                        })}
-                    </div>
-                </div>
-
-                <div className="p-5 space-y-4">
-                    {/* Provider info */}
-                    <div className="flex items-start justify-between gap-3 flex-wrap">
-                        <div>
-                            <h3 className="text-base font-semibold text-gray-900">{provider.name}</h3>
-                            <p className="text-xs text-gray-500 mt-0.5">{provider.description}</p>
-                        </div>
-                        {provider.signupUrl && (
-                            <a
-                                href={provider.signupUrl}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="inline-flex items-center gap-1 text-xs text-blue-600 hover:underline"
-                            >
-                                Dapatkan API key
-                                <ExternalLink className="w-3 h-3" />
-                            </a>
-                        )}
-                    </div>
-
-                    {/* ── PART 4 & 9: API Key UX ─────────────────────────────────── */}
-                    <div>
-                        <label className="block text-xs font-medium text-gray-700 mb-1">API Key</label>
-
-                        {apiKeySet && !isEditingApiKey ? (
-                            /* Key exists + not editing → show preview + Edit/Delete */
-                            <div className="flex items-center gap-2">
-                                <code className="px-3 py-2 border rounded-lg text-sm bg-gray-50 font-mono select-all">
-                                    {apiKeyPreview}
-                                </code>
-
-                                <button
-                                    onClick={() => {
-                                        setIsEditingApiKey(true);
-                                        setDraftApiKey('');
-                                        setSaveError(null);
-                                    }}
-                                    className="inline-flex items-center gap-1 px-3 py-2 text-blue-600 hover:bg-blue-50 rounded-lg text-sm font-medium transition-colors"
-                                >
-                                    <Pencil className="w-3.5 h-3.5" />
-                                    Edit API Key
-                                </button>
-
-                                <button
-                                    onClick={handleDelete}
-                                    className="inline-flex items-center gap-1 px-3 py-2 text-red-600 hover:bg-red-50 rounded-lg text-sm font-medium transition-colors"
-                                >
-                                    <Trash2 className="w-3.5 h-3.5" />
-                                    Delete API Key
-                                </button>
+            {/* ── Section: AI (Provider Config) ── */}
+            {section === 'ai' && (
+                <>
+                    {/* Active provider banner */}
+                    <div className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-xl border border-blue-200 p-4">
+                        <div className="flex items-start justify-between gap-3 flex-wrap">
+                            <div>
+                                <p className="text-xs text-blue-700 uppercase font-semibold tracking-wide mb-1">Provider Aktif</p>
+                                <p className="text-base font-bold text-gray-900">
+                                    {config.activeProvider === 'auto'
+                                        ? 'Auto (pilih otomatis)'
+                                        : PROVIDERS.find(p => p.id === config.activeProvider)?.name || config.activeProvider}
+                                    {config.activeModel !== 'auto' && (
+                                        <span className="text-sm text-gray-500 font-normal"> · {config.activeModel}</span>
+                                    )}
+                                </p>
+                                <p className="text-xs text-gray-500 mt-1">
+                                    Provider terkonfigurasi: {config.providers.filter(p => p.apiKeySet).length} dari {PROVIDERS.length}
+                                </p>
                             </div>
-                        ) : (
-                            /* No key OR editing → show empty password input */
-                            <input
-                                type="password"
-                                value={draftApiKey}
-                                onChange={e => setDraftApiKey(e.target.value)}
-                                placeholder={isEditingApiKey ? "Masukkan API key baru" : provider.placeholder}
-                                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
-                            />
-                        )}
-
-                        {isEditingApiKey && apiKeySet && (
-                            <p className="text-[10px] text-gray-400 mt-1">
-                                Kosongkan input jika tidak ingin mengganti API key yang tersimpan.
-                            </p>
-                        )}
+                        </div>
                     </div>
 
-                    {/* Base URL — only for providers with hasBaseUrl */}
-                    {provider.hasBaseUrl && (
-                        <div>
-                            <label className="block text-xs font-medium text-gray-700 mb-1">
-                                <Server className="w-3 h-3 inline mr-1" />
-                                Base URL
-                            </label>
-                            <input
-                                type="text"
-                                value={draftBaseUrl}
-                                onChange={e => setDraftBaseUrl(e.target.value)}
-                                placeholder="https://..."
-                                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
-                            />
-                        </div>
-                    )}
-
-                    {/* ── Model Fetch & Select (new) ─────────────────────────── */}
-                    <div className="pt-2 border-t border-gray-100">
-                        <label className="block text-xs font-medium text-gray-700 mb-1.5">
-                            Model <span className="text-gray-400 font-normal">(pilih atau ketik manual)</span>
-                        </label>
-
-                        {/* Fetch button + Status row */}
-                        <div className="flex items-center gap-3 mb-2 flex-wrap">
-                            <ModelFetchButton
-                                providerId={activeProviderId}
-                                size="sm"
-                                onSuccess={(models) => {
-                                    setFetchedModels(models);
-                                    setFetchedModelsLastFetched(new Date().toISOString());
-                                }}
-                            />
-                            {fetchedModelsLastFetched && (
-                                <span className="text-[10px] text-gray-400">
-                                    Terakhir diambil: {formatRelativeTime(fetchedModelsLastFetched)}
-                                </span>
-                            )}
-                        </div>
-
-                        {/* Searchable Dropdown */}
-                        <ModelDropdown
-                            providerId={activeProviderId}
-                            value={draftModel}
-                            onChange={(modelId) => setDraftModel(modelId)}
-                            placeholder="Pilih model atau ketik manual..."
-                            disabled={loadingFetchedModels}
-                        />
-
-                        {/* Model count info */}
-                        {fetchedModels.length > 0 && (
-                            <p className="text-[10px] text-gray-400 mt-1">
-                                {fetchedModels.length} model tersedia dari provider
-                            </p>
-                        )}
-                    </div>
-
-                    {/* Model picker — compact cards like 9router (hardcoded models) */}
-                    {provider.models.length > 0 && (
-                        <div className="pt-2 border-t border-gray-100">
-                            <details className="group">
-                                <summary className="cursor-pointer text-xs font-medium text-gray-500 hover:text-gray-700 mb-1.5 list-none flex items-center gap-1">
-                                    <span className="transition-transform group-open:rotate-90">▶</span>
-                                    Lihat model hardcoded ({provider.models.length})
-                                </summary>
-                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-2">
-                                    {provider.models.map(m => {
-                                        const isSelected = draftModel === m.id;
-                                        return (
-                                            <button
-                                                key={m.id}
-                                                onClick={() => setDraftModel(m.id)}
-                                                className={`relative text-left px-3 py-2 rounded-lg border transition-all group ${isSelected
-                                                    ? 'border-blue-500 bg-blue-50/50 ring-1 ring-blue-500'
-                                                    : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
-                                                    }`}
-                                            >
-                                                <div className="flex items-start justify-between gap-2 mb-1">
-                                                    <span className="font-medium text-gray-900 text-xs leading-tight">{m.label}</span>
-                                                    <button
-                                                        onClick={(e) => {
-                                                            e.stopPropagation();
-                                                            navigator.clipboard.writeText(m.id);
-                                                        }}
-                                                        className="opacity-0 group-hover:opacity-100 p-0.5 hover:bg-gray-200 rounded transition-opacity"
-                                                        title="Copy model ID"
-                                                    >
-                                                        <Copy className="w-3 h-3 text-gray-500" />
-                                                    </button>
-                                                </div>
-                                                <div className="flex items-center gap-1.5 flex-wrap mb-1">
-                                                    <CapabilityBadges caps={m.capabilities} size="xs" />
-                                                </div>
-                                                <div className="text-[9px] text-gray-400 font-mono">
-                                                    {fmtPrice(m.inputPrice)} in · {fmtPrice(m.outputPrice)} out
-                                                </div>
-                                            </button>
-                                        );
-                                    })}
-                                </div>
-                            </details>
-                        </div>
-                    )}
-
-                    {/* Removed duplicate "Nama Model" block — ModelDropdown above handles selection */}
-
-                    {/* Model picker — compact cards like 9router (kept for backward compat, hidden by default) */}
-                    {false && allModels.length > 0 && (
-                        <div>
-                            <label className="block text-xs font-medium text-gray-700 mb-1.5">
-                                Model <span className="text-gray-400 font-normal">(termurah → termahal)</span>
-                            </label>
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                                {allModels.map(m => {
-                                    const isSelected = draftModel === m.id;
+                    {/* Provider tabs */}
+                    <div className="bg-white rounded-xl border border-gray-200 overflow-hidden shadow-sm">
+                        <div className="border-b border-gray-200 overflow-x-auto">
+                            <div className="flex gap-1 px-2 py-2 min-w-max">
+                                {PROVIDERS.map(p => {
+                                    const configured = !!config.providers.find(c => c.providerId === p.id)?.apiKeySet;
+                                    const active = activeProviderId === p.id;
                                     return (
                                         <button
-                                            key={m.id}
-                                            onClick={() => setDraftModel(m.id)}
-                                            className={`relative text-left px-3 py-2 rounded-lg border transition-all group ${isSelected
-                                                ? 'border-blue-500 bg-blue-50/50 ring-1 ring-blue-500'
-                                                : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
+                                            key={p.id}
+                                            onClick={() => handleProviderTab(p.id)}
+                                            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors flex-shrink-0 ${active
+                                                ? 'bg-blue-600 text-white'
+                                                : configured
+                                                    ? 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
+                                                    : 'bg-gray-50 text-gray-600 hover:bg-gray-100'
                                                 }`}
                                         >
-                                            <div className="flex items-start justify-between gap-2 mb-1">
-                                                <span className="font-medium text-gray-900 text-xs leading-tight">{m.label}</span>
-                                                <button
-                                                    onClick={(e) => {
-                                                        e.stopPropagation();
-                                                        navigator.clipboard.writeText(m.id);
-                                                    }}
-                                                    className="opacity-0 group-hover:opacity-100 p-0.5 hover:bg-gray-200 rounded transition-opacity"
-                                                    title="Copy model ID"
-                                                >
-                                                    <Copy className="w-3 h-3 text-gray-500" />
-                                                </button>
-                                            </div>
-                                            <div className="flex items-center gap-1.5 flex-wrap mb-1">
-                                                <CapabilityBadges caps={m.capabilities} size="xs" />
-                                            </div>
-                                            <div className="text-[9px] text-gray-400 font-mono">
-                                                {fmtPrice(m.inputPrice)} in · {fmtPrice(m.outputPrice)} out
-                                            </div>
+                                            {configured && !active && <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />}
+                                            {p.name}
                                         </button>
                                     );
                                 })}
                             </div>
                         </div>
-                    )}
 
-                    {/* Removed duplicate "Nama Model" block — ModelDropdown above handles custom input */}
+                        <div className="p-5 space-y-4">
+                            {/* Provider info */}
+                            <div className="flex items-start justify-between gap-3 flex-wrap">
+                                <div>
+                                    <h3 className="text-base font-semibold text-gray-900">{provider.name}</h3>
+                                    <p className="text-xs text-gray-500 mt-0.5">{provider.description}</p>
+                                </div>
+                                {provider.signupUrl && (
+                                    <a
+                                        href={provider.signupUrl}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="inline-flex items-center gap-1 text-xs text-blue-600 hover:underline"
+                                    >
+                                        Dapatkan API key
+                                        <ExternalLink className="w-3 h-3" />
+                                    </a>
+                                )}
+                            </div>
 
-                    {/* Add custom model — for providers with models */}
-                    {allModels.length > 0 && (
-                        <div className="pt-2 border-t border-gray-100">
-                            <label className="block text-xs font-medium text-gray-700 mb-1.5">
-                                <Plus className="w-3 h-3 inline mr-1" />
-                                Tambah Model Custom
-                            </label>
-                            <div className="flex gap-2">
-                                <input
-                                    type="text"
-                                    value={customModelName}
-                                    onChange={e => setCustomModelName(e.target.value)}
-                                    placeholder="Nama model (contoh: kr/claude-haiku-4.5)"
-                                    className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
-                                    onKeyDown={e => { if (e.key === 'Enter') handleTestCustomModel(); }}
+                            {/* ── PART 4 & 9: API Key UX ─────────────────────────────────── */}
+                            <div>
+                                <label className="block text-xs font-medium text-gray-700 mb-1">API Key</label>
+
+                                {apiKeySet && !isEditingApiKey ? (
+                                    /* Key exists + not editing → show preview + Edit/Delete */
+                                    <div className="flex items-center gap-2">
+                                        <code className="px-3 py-2 border rounded-lg text-sm bg-gray-50 font-mono select-all">
+                                            {apiKeyPreview}
+                                        </code>
+
+                                        <button
+                                            onClick={() => {
+                                                setIsEditingApiKey(true);
+                                                setDraftApiKey('');
+                                                setSaveError(null);
+                                            }}
+                                            className="inline-flex items-center gap-1 px-3 py-2 text-blue-600 hover:bg-blue-50 rounded-lg text-sm font-medium transition-colors"
+                                        >
+                                            <Pencil className="w-3.5 h-3.5" />
+                                            Edit API Key
+                                        </button>
+
+                                        <button
+                                            onClick={handleDelete}
+                                            className="inline-flex items-center gap-1 px-3 py-2 text-red-600 hover:bg-red-50 rounded-lg text-sm font-medium transition-colors"
+                                        >
+                                            <Trash2 className="w-3.5 h-3.5" />
+                                            Delete API Key
+                                        </button>
+                                    </div>
+                                ) : (
+                                    /* No key OR editing → show empty password input */
+                                    <input
+                                        type="password"
+                                        value={draftApiKey}
+                                        onChange={e => setDraftApiKey(e.target.value)}
+                                        placeholder={isEditingApiKey ? "Masukkan API key baru" : provider.placeholder}
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                                    />
+                                )}
+
+                                {isEditingApiKey && apiKeySet && (
+                                    <p className="text-[10px] text-gray-400 mt-1">
+                                        Kosongkan input jika tidak ingin mengganti API key yang tersimpan.
+                                    </p>
+                                )}
+                            </div>
+
+                            {/* Base URL — only for providers with hasBaseUrl */}
+                            {provider.hasBaseUrl && (
+                                <div>
+                                    <label className="block text-xs font-medium text-gray-700 mb-1">
+                                        <Server className="w-3 h-3 inline mr-1" />
+                                        Base URL
+                                    </label>
+                                    <input
+                                        type="text"
+                                        value={draftBaseUrl}
+                                        onChange={e => setDraftBaseUrl(e.target.value)}
+                                        placeholder="https://..."
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                                    />
+                                </div>
+                            )}
+
+                            {/* ── Model Fetch & Select (new) ─────────────────────────── */}
+                            <div className="pt-2 border-t border-gray-100">
+                                <label className="block text-xs font-medium text-gray-700 mb-1.5">
+                                    Model <span className="text-gray-400 font-normal">(pilih atau ketik manual)</span>
+                                </label>
+
+                                {/* Fetch button + Status row */}
+                                <div className="flex items-center gap-3 mb-2 flex-wrap">
+                                    <ModelFetchButton
+                                        providerId={activeProviderId}
+                                        size="sm"
+                                        onSuccess={(models) => {
+                                            setFetchedModels(models);
+                                            setFetchedModelsLastFetched(new Date().toISOString());
+                                        }}
+                                    />
+                                    {fetchedModelsLastFetched && (
+                                        <span className="text-[10px] text-gray-400">
+                                            Terakhir diambil: {formatRelativeTime(fetchedModelsLastFetched)}
+                                        </span>
+                                    )}
+                                </div>
+
+                                {/* Searchable Dropdown */}
+                                <ModelDropdown
+                                    providerId={activeProviderId}
+                                    value={draftModel}
+                                    onChange={(modelId) => setDraftModel(modelId)}
+                                    placeholder="Pilih model atau ketik manual..."
+                                    disabled={loadingFetchedModels}
                                 />
+
+                                {/* Model count info */}
+                                {fetchedModels.length > 0 && (
+                                    <p className="text-[10px] text-gray-400 mt-1">
+                                        {fetchedModels.length} model tersedia dari provider
+                                    </p>
+                                )}
+                            </div>
+
+                            {/* Model picker — compact cards like 9router (hardcoded models) */}
+                            {provider.models.length > 0 && (
+                                <div className="pt-2 border-t border-gray-100">
+                                    <details className="group">
+                                        <summary className="cursor-pointer text-xs font-medium text-gray-500 hover:text-gray-700 mb-1.5 list-none flex items-center gap-1">
+                                            <span className="transition-transform group-open:rotate-90">▶</span>
+                                            Lihat model hardcoded ({provider.models.length})
+                                        </summary>
+                                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-2">
+                                            {provider.models.map(m => {
+                                                const isSelected = draftModel === m.id;
+                                                return (
+                                                    <button
+                                                        key={m.id}
+                                                        onClick={() => setDraftModel(m.id)}
+                                                        className={`relative text-left px-3 py-2 rounded-lg border transition-all group ${isSelected
+                                                            ? 'border-blue-500 bg-blue-50/50 ring-1 ring-blue-500'
+                                                            : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
+                                                            }`}
+                                                    >
+                                                        <div className="flex items-start justify-between gap-2 mb-1">
+                                                            <span className="font-medium text-gray-900 text-xs leading-tight">{m.label}</span>
+                                                            <button
+                                                                onClick={(e) => {
+                                                                    e.stopPropagation();
+                                                                    navigator.clipboard.writeText(m.id);
+                                                                }}
+                                                                className="opacity-0 group-hover:opacity-100 p-0.5 hover:bg-gray-200 rounded transition-opacity"
+                                                                title="Copy model ID"
+                                                            >
+                                                                <Copy className="w-3 h-3 text-gray-500" />
+                                                            </button>
+                                                        </div>
+                                                        <div className="flex items-center gap-1.5 flex-wrap mb-1">
+                                                            <CapabilityBadges caps={m.capabilities} size="xs" />
+                                                        </div>
+                                                        <div className="text-[9px] text-gray-400 font-mono">
+                                                            {fmtPrice(m.inputPrice)} in · {fmtPrice(m.outputPrice)} out
+                                                        </div>
+                                                    </button>
+                                                );
+                                            })}
+                                        </div>
+                                    </details>
+                                </div>
+                            )}
+
+                            {/* Removed duplicate "Nama Model" block */}
+
+                            {/* Model picker — compact cards (hidden) */}
+                            {false && allModels.length > 0 && (
+                                <div>
+                                    <label className="block text-xs font-medium text-gray-700 mb-1.5">
+                                        Model <span className="text-gray-400 font-normal">(termurah → termahal)</span>
+                                    </label>
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                        {allModels.map(m => {
+                                            const isSelected = draftModel === m.id;
+                                            return (
+                                                <button
+                                                    key={m.id}
+                                                    onClick={() => setDraftModel(m.id)}
+                                                    className={`relative text-left px-3 py-2 rounded-lg border transition-all group ${isSelected
+                                                        ? 'border-blue-500 bg-blue-50/50 ring-1 ring-blue-500'
+                                                        : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
+                                                        }`}
+                                                >
+                                                    <div className="flex items-start justify-between gap-2 mb-1">
+                                                        <span className="font-medium text-gray-900 text-xs leading-tight">{m.label}</span>
+                                                        <button
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                navigator.clipboard.writeText(m.id);
+                                                            }}
+                                                            className="opacity-0 group-hover:opacity-100 p-0.5 hover:bg-gray-200 rounded transition-opacity"
+                                                            title="Copy model ID"
+                                                        >
+                                                            <Copy className="w-3 h-3 text-gray-500" />
+                                                        </button>
+                                                    </div>
+                                                    <div className="flex items-center gap-1.5 flex-wrap mb-1">
+                                                        <CapabilityBadges caps={m.capabilities} size="xs" />
+                                                    </div>
+                                                    <div className="text-[9px] text-gray-400 font-mono">
+                                                        {fmtPrice(m.inputPrice)} in · {fmtPrice(m.outputPrice)} out
+                                                    </div>
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Add custom model — for providers with models */}
+                            {allModels.length > 0 && (
+                                <div className="pt-2 border-t border-gray-100">
+                                    <label className="block text-xs font-medium text-gray-700 mb-1.5">
+                                        <Plus className="w-3 h-3 inline mr-1" />
+                                        Tambah Model Custom
+                                    </label>
+                                    <div className="flex gap-2">
+                                        <input
+                                            type="text"
+                                            value={customModelName}
+                                            onChange={e => setCustomModelName(e.target.value)}
+                                            placeholder="Nama model (contoh: kr/claude-haiku-4.5)"
+                                            className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                                            onKeyDown={e => { if (e.key === 'Enter') handleTestCustomModel(); }}
+                                        />
+                                        <button
+                                            onClick={handleTestCustomModel}
+                                            disabled={!customModelName.trim() || testingCustom}
+                                            className="px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700 transition-colors disabled:opacity-50 flex-shrink-0"
+                                        >
+                                            {testingCustom ? (
+                                                <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                                            ) : (
+                                                'Test & Tambah'
+                                            )}
+                                        </button>
+                                    </div>
+                                    <p className="text-[10px] text-gray-500 mt-1">
+                                        Masukkan nama model, lalu klik Test & Tambah. Jika valid, model akan otomatis muncul di pilihan.
+                                    </p>
+                                </div>
+                            )}
+
+                            {/* Save error */}
+                            {saveError && (
+                                <div className="p-3 rounded-lg bg-red-50 border border-red-200">
+                                    <div className="flex items-start gap-2">
+                                        <AlertCircle className="w-4 h-4 text-red-600 flex-shrink-0 mt-0.5" />
+                                        <p className="text-xs text-red-800 font-medium">{saveError}</p>
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Actions */}
+                            <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-gray-100">
                                 <button
-                                    onClick={handleTestCustomModel}
-                                    disabled={!customModelName.trim() || testingCustom}
-                                    className="px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700 transition-colors disabled:opacity-50 flex-shrink-0"
+                                    onClick={handleSave}
+                                    disabled={!apiKeySet && !draftApiKey.trim()}
+                                    className="inline-flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors disabled:opacity-50"
                                 >
-                                    {testingCustom ? (
+                                    {saved === activeProviderId ? <Check className="w-4 h-4" /> : <Key className="w-4 h-4" />}
+                                    {saved === activeProviderId ? 'Tersimpan' : 'Simpan'}
+                                </button>
+                                <button
+                                    onClick={handleSetActive}
+                                    disabled={!apiKeySet}
+                                    className="inline-flex items-center gap-1.5 px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 transition-colors disabled:opacity-50"
+                                >
+                                    <Brain className="w-4 h-4" />
+                                    Set Aktif
+                                </button>
+                                <button
+                                    onClick={handleTest}
+                                    disabled={(!apiKeySet && !draftApiKey.trim()) || testing}
+                                    className="inline-flex items-center gap-1.5 px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700 transition-colors disabled:opacity-50"
+                                >
+                                    {testing ? (
                                         <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
                                     ) : (
-                                        'Test & Tambah'
+                                        <Brain className="w-4 h-4" />
                                     )}
+                                    {testing ? 'Testing...' : 'Test Koneksi'}
                                 </button>
+                                {apiKeySet && !isEditingApiKey && (
+                                    <button
+                                        onClick={handleDelete}
+                                        className="inline-flex items-center gap-1.5 px-3 py-2 text-red-600 hover:bg-red-50 rounded-lg text-sm font-medium transition-colors ml-auto"
+                                    >
+                                        <Trash2 className="w-3.5 h-3.5" />
+                                        Hapus
+                                    </button>
+                                )}
                             </div>
-                            <p className="text-[10px] text-gray-500 mt-1">
-                                Masukkan nama model, lalu klik Test & Tambah. Jika valid, model akan otomatis muncul di pilihan.
-                            </p>
-                        </div>
-                    )}
 
-                    {/* Save error */}
-                    {saveError && (
-                        <div className="p-3 rounded-lg bg-red-50 border border-red-200">
-                            <div className="flex items-start gap-2">
-                                <AlertCircle className="w-4 h-4 text-red-600 flex-shrink-0 mt-0.5" />
-                                <p className="text-xs text-red-800 font-medium">{saveError}</p>
-                            </div>
-                        </div>
-                    )}
-
-                    {/* Actions */}
-                    <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-gray-100">
-                        <button
-                            onClick={handleSave}
-                            disabled={!apiKeySet && !draftApiKey.trim()}
-                            className="inline-flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors disabled:opacity-50"
-                        >
-                            {saved === activeProviderId ? <Check className="w-4 h-4" /> : <Key className="w-4 h-4" />}
-                            {saved === activeProviderId ? 'Tersimpan' : 'Simpan'}
-                        </button>
-                        <button
-                            onClick={handleSetActive}
-                            disabled={!apiKeySet}
-                            className="inline-flex items-center gap-1.5 px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 transition-colors disabled:opacity-50"
-                        >
-                            <Brain className="w-4 h-4" />
-                            Set Aktif
-                        </button>
-                        <button
-                            onClick={handleTest}
-                            disabled={(!apiKeySet && !draftApiKey.trim()) || testing}
-                            className="inline-flex items-center gap-1.5 px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700 transition-colors disabled:opacity-50"
-                        >
-                            {testing ? (
-                                <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                            ) : (
-                                <Brain className="w-4 h-4" />
-                            )}
-                            {testing ? 'Testing...' : 'Test Koneksi'}
-                        </button>
-                        {apiKeySet && !isEditingApiKey && (
-                            <button
-                                onClick={handleDelete}
-                                className="inline-flex items-center gap-1.5 px-3 py-2 text-red-600 hover:bg-red-50 rounded-lg text-sm font-medium transition-colors ml-auto"
-                            >
-                                <Trash2 className="w-3.5 h-3.5" />
-                                Hapus
-                            </button>
-                        )}
-                    </div>
-
-                    {testResult && (
-                        <div className={`p-3 rounded-lg ${testResult.success ? 'bg-emerald-50 border border-emerald-200' : 'bg-red-50 border border-red-200'}`}>
-                            <div className="flex items-start gap-2">
-                                {testResult.success
-                                    ? <Check className="w-4 h-4 text-emerald-600 flex-shrink-0 mt-0.5" />
-                                    : <AlertCircle className="w-4 h-4 text-red-600 flex-shrink-0 mt-0.5" />}
-                                <div className="text-xs">
-                                    <p className={`font-semibold ${testResult.success ? 'text-emerald-800' : 'text-red-800'}`}>
-                                        {testResult.success ? 'Berhasil terhubung' : 'Gagal'}
-                                    </p>
-                                    <p className={`mt-0.5 ${testResult.success ? 'text-emerald-700' : 'text-red-700'}`}>
-                                        {testResult.message}
-                                    </p>
+                            {testResult && (
+                                <div className={`p-3 rounded-lg ${testResult.success ? 'bg-emerald-50 border border-emerald-200' : 'bg-red-50 border border-red-200'}`}>
+                                    <div className="flex items-start gap-2">
+                                        {testResult.success
+                                            ? <Check className="w-4 h-4 text-emerald-600 flex-shrink-0 mt-0.5" />
+                                            : <AlertCircle className="w-4 h-4 text-red-600 flex-shrink-0 mt-0.5" />}
+                                        <div className="text-xs">
+                                            <p className={`font-semibold ${testResult.success ? 'text-emerald-800' : 'text-red-800'}`}>
+                                                {testResult.success ? 'Berhasil terhubung' : 'Gagal'}
+                                            </p>
+                                            <p className={`mt-0.5 ${testResult.success ? 'text-emerald-700' : 'text-red-700'}`}>
+                                                {testResult.message}
+                                            </p>
+                                        </div>
+                                    </div>
                                 </div>
-                            </div>
-                        </div>
-                    )}
+                            )}
 
-                    {selectedModel && apiKeySet && (
-                        <div className="text-xs text-gray-500 pt-2 border-t border-gray-100">
-                            <span className="font-semibold">{selectedModel.label}</span> · perkiraan ~{fmtPrice(selectedModel.inputPrice + selectedModel.outputPrice)} per 1M token campuran
-                        </div>
-                    )}
-                </div>
-            </div>
-
-            {/* Pricing reference */}
-            <details className="bg-white rounded-xl border border-gray-200 shadow-sm">
-                <summary className="cursor-pointer px-5 py-3 text-sm font-semibold text-gray-900 hover:bg-gray-50 flex items-center gap-2">
-                    <DollarSign className="w-4 h-4 text-blue-600" />
-                    Tabel Harga Lengkap (cheap → expensive)
-                </summary>
-                <div className="px-5 pb-4 overflow-x-auto">
-                    <table className="w-full text-xs">
-                        <thead className="bg-gray-50">
-                            <tr>
-                                <th className="px-2 py-2 text-left font-semibold text-gray-700">Provider</th>
-                                <th className="px-2 py-2 text-left font-semibold text-gray-700">Model</th>
-                                <th className="px-2 py-2 text-left font-semibold text-gray-700">Kemampuan</th>
-                                <th className="px-2 py-2 text-right font-semibold text-gray-700">Input/1M</th>
-                                <th className="px-2 py-2 text-right font-semibold text-gray-700">Output/1M</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {allModelsSorted().map(m => (
-                                <tr key={`${m.providerId}-${m.id}`} className="border-t border-gray-100">
-                                    <td className="px-2 py-2 text-gray-600">{m.providerName}</td>
-                                    <td className="px-2 py-2 text-gray-900">{m.label}</td>
-                                    <td className="px-2 py-2"><CapabilityBadges caps={m.capabilities} size="xs" /></td>
-                                    <td className="px-2 py-2 text-right">{fmtPrice(m.inputPrice)}</td>
-                                    <td className="px-2 py-2 text-right">{fmtPrice(m.outputPrice)}</td>
-                                </tr>
-                            ))}
-                        </tbody>
-                    </table>
-                </div>
-            </details>
-
-            {/* Info */}
-            <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 text-xs text-blue-800 space-y-1.5">
-                <p className="font-semibold">💡 Tips</p>
-                <ul className="list-disc list-inside space-y-0.5 ml-1">
-                    <li>API key disimpan aman di database dengan enkripsi AES-256-GCM. Tidak dikirim ke browser dalam bentuk lengkap.</li>
-                    <li>Konfigurasi beberapa provider sekaligus, lalu pilih mode <strong>Auto</strong> di chat untuk pemilihan otomatis berdasarkan kebutuhan.</li>
-                    <li>Mode <strong>Thinking</strong> akan otomatis pakai model dengan kemampuan reasoning (jika tersedia).</li>
-                    <li>Mode <strong>Instant</strong> akan pakai model paling cepat & murah.</li>
-                </ul>
-            </div>
-
-            {/* ── Pengaturan KR·AI: Chat History ── */}
-            <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 space-y-4">
-                <h2 className="text-base font-semibold text-gray-900 flex items-center gap-2">
-                    <Clock className="w-4 h-4 text-blue-600" />
-                    Riwayat Chat KR·AI
-                </h2>
-                <p className="text-xs text-gray-500">
-                    Riwayat percakapan disimpan ke database Supabase. Percakapan yang lebih lama dari batas yang ditentukan akan otomatis dihapus.
-                </p>
-
-                <div className="flex items-center gap-4">
-                    <div className="flex-1">
-                        <label className="block text-xs font-medium text-gray-700 mb-1">
-                            Simpan riwayat selama
-                        </label>
-                        <div className="flex items-center gap-3">
-                            <input
-                                type="range"
-                                min={1}
-                                max={365}
-                                value={retentionDays}
-                                onChange={e => setRetentionDays(Number(e.target.value))}
-                                className="flex-1 accent-blue-600"
-                                aria-label="Durasi penyimpanan riwayat chat dalam hari"
-                                title="Geser untuk mengatur berapa lama riwayat chat disimpan"
-                            />
-                            <span className="text-sm font-semibold text-gray-900 w-20 text-right">
-                                {retentionDays} hari
-                            </span>
-                        </div>
-                        <div className="flex justify-between text-[10px] text-gray-400 mt-0.5">
-                            <span>1 hari</span>
-                            <span>1 tahun</span>
+                            {selectedModel && apiKeySet && (
+                                <div className="text-xs text-gray-500 pt-2 border-t border-gray-100">
+                                    <span className="font-semibold">{selectedModel.label}</span> · perkiraan ~{fmtPrice(selectedModel.inputPrice + selectedModel.outputPrice)} per 1M token campuran
+                                </div>
+                            )}
                         </div>
                     </div>
-                </div>
 
-                <div className="flex flex-wrap items-center gap-2">
-                    <button
-                        onClick={handleSaveRetention}
-                        className="inline-flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors"
-                    >
-                        {retentionSaved ? <Check className="w-4 h-4" /> : <Clock className="w-4 h-4" />}
-                        {retentionSaved ? 'Tersimpan' : 'Simpan Pengaturan'}
-                    </button>
-                    <button
-                        onClick={handlePruneNow}
-                        disabled={pruning}
-                        className="inline-flex items-center gap-1.5 px-4 py-2 border border-red-200 text-red-600 rounded-lg text-sm font-medium hover:bg-red-50 transition-colors disabled:opacity-50"
-                    >
-                        <Trash2 className="w-4 h-4" />
-                        {pruning ? 'Membersihkan...' : 'Bersihkan Sekarang'}
-                    </button>
-                </div>
+                    {/* Pricing reference */}
+                    <details className="bg-white rounded-xl border border-gray-200 shadow-sm">
+                        <summary className="cursor-pointer px-5 py-3 text-sm font-semibold text-gray-900 hover:bg-gray-50 flex items-center gap-2">
+                            <DollarSign className="w-4 h-4 text-blue-600" />
+                            Tabel Harga Lengkap (cheap → expensive)
+                        </summary>
+                        <div className="px-5 pb-4 overflow-x-auto">
+                            <table className="w-full text-xs">
+                                <thead className="bg-gray-50">
+                                    <tr>
+                                        <th className="px-2 py-2 text-left font-semibold text-gray-700">Provider</th>
+                                        <th className="px-2 py-2 text-left font-semibold text-gray-700">Model</th>
+                                        <th className="px-2 py-2 text-left font-semibold text-gray-700">Kemampuan</th>
+                                        <th className="px-2 py-2 text-right font-semibold text-gray-700">Input/1M</th>
+                                        <th className="px-2 py-2 text-right font-semibold text-gray-700">Output/1M</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {allModelsSorted().map(m => (
+                                        <tr key={`${m.providerId}-${m.id}`} className="border-t border-gray-100">
+                                            <td className="px-2 py-2 text-gray-600">{m.providerName}</td>
+                                            <td className="px-2 py-2 text-gray-900">{m.label}</td>
+                                            <td className="px-2 py-2"><CapabilityBadges caps={m.capabilities} size="xs" /></td>
+                                            <td className="px-2 py-2 text-right">{fmtPrice(m.inputPrice)}</td>
+                                            <td className="px-2 py-2 text-right">{fmtPrice(m.outputPrice)}</td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    </details>
 
-                {pruneResult && (
-                    <p className="text-xs text-gray-600 bg-gray-50 rounded px-3 py-2">{pruneResult}</p>
-                )}
-            </div>
+                    {/* ── Section: Tools Table ── */}
+                    <details className="bg-white rounded-xl border border-gray-200 shadow-sm group">
+                        <summary className="cursor-pointer px-5 py-3 text-sm font-semibold text-gray-900 hover:bg-gray-50 flex items-center gap-2 list-none">
+                            <Wrench className="w-4 h-4 text-blue-600" />
+                            <span className="transition-transform group-open:rotate-90">▶</span>
+                            Daftar Tools KR·AI ({TOOL_REGISTRY.length} tools)
+                        </summary>
+                        <div className="px-5 pb-4">
+                            <AIToolsTable />
+                        </div>
+                    </details>
 
-            {/* ── Pengaturan AI Insight ── */}
-            <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 space-y-4">
-                <h2 className="text-base font-semibold text-gray-900 flex items-center gap-2">
-                    <Sparkles className="w-4 h-4 text-purple-600" />
-                    Pengaturan AI Insight
-                </h2>
-                <p className="text-xs text-gray-500">
-                    Atur bagaimana insight otomatis dihasilkan untuk kartu insight di dashboard dan halaman lainnya.
-                    Pengaturan ini disimpan di database dan digunakan oleh server-side AI Insight engine.
-                </p>
+                    {/* Info */}
+                    <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 text-xs text-blue-800 space-y-1.5">
+                        <p className="font-semibold">💡 Tips</p>
+                        <ul className="list-disc list-inside space-y-0.5 ml-1">
+                            <li>API key disimpan aman di database dengan enkripsi AES-256-GCM. Tidak dikirim ke browser dalam bentuk lengkap.</li>
+                            <li>Konfigurasi beberapa provider sekaligus, lalu pilih mode <strong>Auto</strong> di chat untuk pemilihan otomatis berdasarkan kebutuhan.</li>
+                            <li>Mode <strong>Thinking</strong> akan otomatis pakai model dengan kemampuan reasoning (jika tersedia).</li>
+                            <li>Mode <strong>Instant</strong> akan pakai model paling cepat & murah.</li>
+                        </ul>
+                    </div>
+                </>
+            )}
 
-                {/* 1. Enable AI Insight */}
-                <div className="flex items-center justify-between py-2">
+            {/* ── Section: AI Insight ── */}
+            {section === 'insight' && (
+                <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 space-y-4">
+                    <h2 className="text-base font-semibold text-gray-900 flex items-center gap-2">
+                        <Sparkles className="w-4 h-4 text-purple-600" />
+                        Pengaturan AI Insight
+                    </h2>
+                    <p className="text-xs text-gray-500">
+                        Atur bagaimana insight otomatis dihasilkan untuk kartu insight di dashboard dan halaman lainnya.
+                    </p>
+
+                    {/* 1. Enable AI Insight */}
+                    <div className="flex items-center justify-between py-2">
+                        <div>
+                            <label className="text-sm font-medium text-gray-700">Aktifkan AI Insight</label>
+                            <p className="text-xs text-gray-500">Generate insight otomatis menggunakan AI</p>
+                        </div>
+                        <button
+                            onClick={async () => {
+                                const next = insightSettings.enabled ? 'false' : 'true';
+                                await saveInsightSetting('ai_insight_enabled', next);
+                                setInsightSettings(prev => ({ ...prev, enabled: !prev.enabled }));
+                                setInsightSaved('Aktifkan AI Insight');
+                                setTimeout(() => setInsightSaved(null), 2000);
+                            }}
+                            className={`relative w-11 h-6 rounded-full transition-colors ${insightSettings.enabled ? 'bg-purple-600' : 'bg-gray-300'}`}
+                        >
+                            <span className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${insightSettings.enabled ? 'translate-x-5' : ''}`} />
+                        </button>
+                    </div>
+
+                    {/* 2. Insight Mode */}
                     <div>
-                        <label className="text-sm font-medium text-gray-700">Aktifkan AI Insight</label>
-                        <p className="text-xs text-gray-500">Generate insight otomatis menggunakan AI</p>
+                        <label className="block text-sm font-medium text-gray-700 mb-1.5">Mode Insight</label>
+                        <div className="flex flex-col gap-2">
+                            {[
+                                { value: 'rule-based', label: 'Hanya Rule-based', desc: 'Insight berdasarkan aturan statis, tanpa AI' },
+                                { value: 'ai-generated', label: 'AI Generated saja', desc: 'Hanya insight dari AI, tanpa fallback' },
+                                { value: 'ai-with-fallback', label: 'AI + Rule Fallback', desc: 'AI dulu, fallback ke rule-based jika gagal' },
+                            ].map(opt => (
+                                <label key={opt.value} className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${insightSettings.mode === opt.value ? 'border-purple-500 bg-purple-50' : 'border-gray-200 hover:bg-gray-50'}`}>
+                                    <input
+                                        type="radio"
+                                        name="insight_mode"
+                                        value={opt.value}
+                                        checked={insightSettings.mode === opt.value}
+                                        onChange={async () => {
+                                            await saveInsightSetting('ai_insight_mode', opt.value);
+                                            setInsightSettings(prev => ({ ...prev, mode: opt.value as any }));
+                                            setInsightSaved('Mode Insight');
+                                            setTimeout(() => setInsightSaved(null), 2000);
+                                        }}
+                                        className="mt-0.5"
+                                    />
+                                    <div>
+                                        <span className="text-sm font-medium text-gray-900">{opt.label}</span>
+                                        <p className="text-xs text-gray-500">{opt.desc}</p>
+                                    </div>
+                                </label>
+                            ))}
+                        </div>
                     </div>
-                    <button
-                        onClick={async () => {
-                            const next = insightSettings.enabled ? 'false' : 'true';
-                            await saveInsightSetting('ai_insight_enabled', next);
-                            setInsightSettings(prev => ({ ...prev, enabled: !prev.enabled }));
-                            setInsightSaved('Aktifkan AI Insight');
-                            setTimeout(() => setInsightSaved(null), 2000);
-                        }}
-                        className={`relative w-11 h-6 rounded-full transition-colors ${insightSettings.enabled ? 'bg-purple-600' : 'bg-gray-300'}`}
-                    >
-                        <span className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${insightSettings.enabled ? 'translate-x-5' : ''}`} />
-                    </button>
-                </div>
 
-                {/* 2. Insight Mode */}
-                <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1.5">Mode Insight</label>
-                    <div className="flex flex-col gap-2">
-                        {[
-                            { value: 'rule-based', label: 'Hanya Rule-based', desc: 'Insight berdasarkan aturan statis, tanpa AI' },
-                            { value: 'ai-generated', label: 'AI Generated saja', desc: 'Hanya insight dari AI, tanpa fallback' },
-                            { value: 'ai-with-fallback', label: 'AI + Rule Fallback', desc: 'AI dulu, fallback ke rule-based jika gagal' },
-                        ].map(opt => (
-                            <label key={opt.value} className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${insightSettings.mode === opt.value ? 'border-purple-500 bg-purple-50' : 'border-gray-200 hover:bg-gray-50'}`}>
-                                <input
-                                    type="radio"
-                                    name="insight_mode"
-                                    value={opt.value}
-                                    checked={insightSettings.mode === opt.value}
-                                    onChange={async () => {
-                                        await saveInsightSetting('ai_insight_mode', opt.value);
-                                        setInsightSettings(prev => ({ ...prev, mode: opt.value as any }));
-                                        setInsightSaved('Mode Insight');
+                    {/* 3. Provider */}
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1.5">Provider AI untuk Insight</label>
+                        <select
+                            value={insightSettings.provider}
+                            onChange={async (e) => {
+                                const val = e.target.value;
+                                await saveInsightSetting('ai_insight_provider', val);
+                                setInsightSettings(prev => ({ ...prev, provider: val }));
+                                setInsightSaved('Provider Insight');
+                                setTimeout(() => setInsightSaved(null), 2000);
+                            }}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-purple-500 outline-none bg-white"
+                        >
+                            <option value="">Auto (pakai provider aktif)</option>
+                            {config.providers.filter(p => p.apiKeySet).map(p => (
+                                <option key={p.providerId} value={p.providerId}>
+                                    {PROVIDERS.find(pr => pr.id === p.providerId)?.name || p.providerId}
+                                </option>
+                            ))}
+                        </select>
+                        <p className="text-xs text-gray-500 mt-1">Kosongkan untuk menggunakan provider AI Chat yang aktif.</p>
+                    </div>
+
+                    {/* 4. Model */}
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1.5">Model AI untuk Insight</label>
+                        <ModelDropdown
+                            providerId={insightSettings.provider as any || activeProviderId}
+                            value={insightSettings.model}
+                            onChange={async (modelId) => {
+                                await saveInsightSetting('ai_insight_model', modelId);
+                                setInsightSettings(prev => ({ ...prev, model: modelId }));
+                                setInsightSaved('Model Insight');
+                                setTimeout(() => setInsightSaved(null), 2000);
+                            }}
+                            placeholder="Kosongkan untuk pakai default provider"
+                        />
+                        <p className="text-xs text-gray-500 mt-1">Kosongkan untuk menggunakan model default dari provider.</p>
+                    </div>
+
+                    {/* 5. Cache duration */}
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1.5">Durasi Cache Insight</label>
+                        <p className="text-xs text-gray-500 mb-2">Insight yang sama akan disajikan dari cache selama durasi ini.</p>
+                        <div className="flex flex-wrap gap-2">
+                            {[
+                                { value: 15, label: '15 menit' },
+                                { value: 30, label: '30 menit' },
+                                { value: 60, label: '1 jam' },
+                                { value: 360, label: '6 jam' },
+                                { value: 1440, label: '24 jam' },
+                            ].map(opt => (
+                                <button
+                                    key={opt.value}
+                                    onClick={async () => {
+                                        await saveInsightSetting('ai_insight_cache_ttl_minutes', String(opt.value));
+                                        setInsightSettings(prev => ({ ...prev, cacheTtlMinutes: opt.value }));
+                                        setInsightSaved('Cache');
                                         setTimeout(() => setInsightSaved(null), 2000);
                                     }}
-                                    className="mt-0.5"
-                                />
-                                <div>
-                                    <span className="text-sm font-medium text-gray-900">{opt.label}</span>
-                                    <p className="text-xs text-gray-500">{opt.desc}</p>
-                                </div>
-                            </label>
-                        ))}
+                                    className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${insightSettings.cacheTtlMinutes === opt.value
+                                        ? 'bg-purple-600 text-white border-purple-600'
+                                        : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50'
+                                        }`}
+                                >
+                                    {opt.label}
+                                </button>
+                            ))}
+                        </div>
                     </div>
-                </div>
 
-                {/* 3. Provider */}
-                <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1.5">
-                        Provider AI untuk Insight
-                    </label>
-                    <select
-                        value={insightSettings.provider}
-                        onChange={async (e) => {
-                            const val = e.target.value;
-                            await saveInsightSetting('ai_insight_provider', val);
-                            setInsightSettings(prev => ({ ...prev, provider: val }));
-                            setInsightSaved('Provider Insight');
-                            setTimeout(() => setInsightSaved(null), 2000);
-                        }}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-purple-500 outline-none bg-white"
-                    >
-                        <option value="">Auto (pakai provider aktif)</option>
-                        {config.providers.filter(p => p.apiKeySet).map(p => (
-                            <option key={p.providerId} value={p.providerId}>
-                                {PROVIDERS.find(pr => pr.id === p.providerId)?.name || p.providerId}
-                            </option>
-                        ))}
-                    </select>
-                    <p className="text-xs text-gray-500 mt-1">Kosongkan untuk menggunakan provider AI Chat yang aktif.</p>
-                </div>
-
-                {/* 4. Model */}
-                <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1.5">
-                        Model AI untuk Insight
-                    </label>
-                    <ModelDropdown
-                        providerId={insightSettings.provider as any || activeProviderId}
-                        value={insightSettings.model}
-                        onChange={async (modelId) => {
-                            await saveInsightSetting('ai_insight_model', modelId);
-                            setInsightSettings(prev => ({ ...prev, model: modelId }));
-                            setInsightSaved('Model Insight');
-                            setTimeout(() => setInsightSaved(null), 2000);
-                        }}
-                        placeholder="Kosongkan untuk pakai default provider"
-                    />
-                    <p className="text-xs text-gray-500 mt-1">Kosongkan untuk menggunakan model default dari provider.</p>
-                </div>
-
-                {/* 5. Cache duration */}
-                <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1.5">
-                        Durasi Cache Insight
-                    </label>
-                    <p className="text-xs text-gray-500 mb-2">Insight yang sama akan disajikan dari cache selama durasi ini. &ldquo;Generate ulang&rdquo; akan melewati cache.</p>
-                    <div className="flex flex-wrap gap-2">
-                        {[
-                            { value: 15, label: '15 menit' },
-                            { value: 30, label: '30 menit' },
-                            { value: 60, label: '1 jam' },
-                            { value: 360, label: '6 jam' },
-                            { value: 1440, label: '24 jam' },
-                        ].map(opt => (
-                            <button
-                                key={opt.value}
-                                onClick={async () => {
-                                    await saveInsightSetting('ai_insight_cache_ttl_minutes', String(opt.value));
-                                    setInsightSettings(prev => ({ ...prev, cacheTtlMinutes: opt.value }));
-                                    setInsightSaved('Cache');
-                                    setTimeout(() => setInsightSaved(null), 2000);
-                                }}
-                                className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${insightSettings.cacheTtlMinutes === opt.value
-                                    ? 'bg-purple-600 text-white border-purple-600'
-                                    : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50'
-                                    }`}
-                            >
-                                {opt.label}
-                            </button>
-                        ))}
+                    {/* 6. Auto refresh */}
+                    <div className="flex items-center justify-between py-2">
+                        <div>
+                            <label className="text-sm font-medium text-gray-700">Auto Refresh Insight</label>
+                            <p className="text-xs text-gray-500">Generate ulang insight secara berkala saat halaman terbuka</p>
+                        </div>
+                        <button
+                            onClick={async () => {
+                                const next = insightSettings.autoRefresh ? 'false' : 'true';
+                                await saveInsightSetting('ai_insight_auto_refresh', next);
+                                setInsightSettings(prev => ({ ...prev, autoRefresh: !prev.autoRefresh }));
+                                setInsightSaved('Auto Refresh');
+                                setTimeout(() => setInsightSaved(null), 2000);
+                            }}
+                            className={`relative w-11 h-6 rounded-full transition-colors ${insightSettings.autoRefresh ? 'bg-purple-600' : 'bg-gray-300'}`}
+                        >
+                            <span className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${insightSettings.autoRefresh ? 'translate-x-5' : ''}`} />
+                        </button>
                     </div>
-                </div>
 
-                {/* 6. Auto refresh */}
-                <div className="flex items-center justify-between py-2">
-                    <div>
-                        <label className="text-sm font-medium text-gray-700">Auto Refresh Insight</label>
-                        <p className="text-xs text-gray-500">Generate ulang insight secara berkala saat halaman terbuka</p>
-                    </div>
-                    <button
-                        onClick={async () => {
-                            const next = insightSettings.autoRefresh ? 'false' : 'true';
-                            await saveInsightSetting('ai_insight_auto_refresh', next);
-                            setInsightSettings(prev => ({ ...prev, autoRefresh: !prev.autoRefresh }));
-                            setInsightSaved('Auto Refresh');
-                            setTimeout(() => setInsightSaved(null), 2000);
-                        }}
-                        className={`relative w-11 h-6 rounded-full transition-colors ${insightSettings.autoRefresh ? 'bg-purple-600' : 'bg-gray-300'}`}
-                    >
-                        <span className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${insightSettings.autoRefresh ? 'translate-x-5' : ''}`} />
-                    </button>
-                </div>
+                    {/* Save indicator */}
+                    {insightSaved && (
+                        <div className="flex items-center gap-2 text-xs text-emerald-700 bg-emerald-50 px-3 py-2 rounded-lg border border-emerald-200">
+                            <Check className="w-3.5 h-3.5" />
+                            <span>Pengaturan &ldquo;{insightSaved}&rdquo; tersimpan</span>
+                        </div>
+                    )}
 
-                {/* Save indicator */}
-                {insightSaved && (
-                    <div className="flex items-center gap-2 text-xs text-emerald-700 bg-emerald-50 px-3 py-2 rounded-lg border border-emerald-200">
-                        <Check className="w-3.5 h-3.5" />
-                        <span>Pengaturan &ldquo;{insightSaved}&rdquo; tersimpan</span>
-                    </div>
-                )}
-
-                {/* Test Generate Insight button */}
-                <div className="pt-2 border-t border-gray-100">
-                    <button
-                        onClick={async () => {
-                            setTestingInsight(true);
-                            setInsightTestResult(null);
-                            try {
-                                const res = await fetch('/api/ai/insight', {
-                                    method: 'POST',
-                                    headers: { 'Content-Type': 'application/json' },
-                                    body: JSON.stringify({
-                                        page: 'settings-test',
-                                        prompt: 'Analisis singkat performa bisnis hari ini: booking, pendapatan, dan okupansi. Berikan dalam 2-3 paragraf.',
-                                        title: 'Test Insight',
-                                        forceRefresh: true,
-                                    }),
-                                });
-                                const data = await res.json();
-                                if (data.error && data.fallback) {
-                                    setInsightTestResult({ success: false, message: 'AI Insight tidak aktif atau gagal. Cek pengaturan provider dan API key.' });
-                                } else if (data.response?.message) {
-                                    setInsightTestResult({ success: true, message: data.response.message.substring(0, 300) });
-                                } else {
-                                    setInsightTestResult({ success: false, message: 'Respons tidak valid dari server.' });
+                    {/* Test Generate Insight */}
+                    <div className="pt-2 border-t border-gray-100">
+                        <button
+                            onClick={async () => {
+                                setTestingInsight(true);
+                                setInsightTestResult(null);
+                                try {
+                                    const res = await fetch('/api/ai/insight', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ page: 'settings-test', prompt: 'Analisis singkat performa bisnis hari ini: booking, pendapatan, dan okupansi. Berikan dalam 2-3 paragraf.', title: 'Test Insight', forceRefresh: true }) });
+                                    const data = await res.json();
+                                    if (data.error && data.fallback) {
+                                        setInsightTestResult({ success: false, message: 'AI Insight tidak aktif atau gagal. Cek pengaturan provider dan API key.' });
+                                    } else if (data.response?.message) {
+                                        setInsightTestResult({ success: true, message: data.response.message.substring(0, 300) });
+                                    } else {
+                                        setInsightTestResult({ success: false, message: 'Respons tidak valid dari server.' });
+                                    }
+                                } catch (err: any) {
+                                    setInsightTestResult({ success: false, message: err.message || 'Gagal menghubungi server' });
+                                } finally {
+                                    setTestingInsight(false);
                                 }
-                            } catch (err: any) {
-                                setInsightTestResult({ success: false, message: err.message || 'Gagal menghubungi server' });
-                            } finally {
-                                setTestingInsight(false);
-                            }
-                        }}
-                        disabled={testingInsight}
-                        className="inline-flex items-center gap-1.5 px-4 py-2 bg-purple-600 text-white rounded-lg text-sm font-medium hover:bg-purple-700 transition-colors disabled:opacity-50"
-                    >
-                        {testingInsight ? (
-                            <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                        ) : (
-                            <Sparkles className="w-4 h-4" />
+                            }}
+                            disabled={testingInsight}
+                            className="inline-flex items-center gap-1.5 px-4 py-2 bg-purple-600 text-white rounded-lg text-sm font-medium hover:bg-purple-700 transition-colors disabled:opacity-50"
+                        >
+                            {testingInsight ? (
+                                <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                            ) : (
+                                <Sparkles className="w-4 h-4" />
+                            )}
+                            {testingInsight ? 'Mengenerate...' : 'Test Generate Insight'}
+                        </button>
+                        {insightTestResult && (
+                            <div className={`mt-3 p-3 rounded-lg border ${insightTestResult.success ? 'bg-emerald-50 border-emerald-200' : 'bg-red-50 border-red-200'}`}>
+                                <div className="flex items-start gap-2">
+                                    {insightTestResult.success ? <Check className="w-4 h-4 text-emerald-600 flex-shrink-0 mt-0.5" /> : <AlertCircle className="w-4 h-4 text-red-600 flex-shrink-0 mt-0.5" />}
+                                    <div className="text-xs">
+                                        <p className={`font-semibold ${insightTestResult.success ? 'text-emerald-800' : 'text-red-800'}`}>{insightTestResult.success ? 'Insight berhasil digenerate' : 'Gagal'}</p>
+                                        <p className={`mt-0.5 ${insightTestResult.success ? 'text-emerald-700' : 'text-red-700'}`}>{insightTestResult.message}</p>
+                                    </div>
+                                </div>
+                            </div>
                         )}
-                        {testingInsight ? 'Mengenerate...' : 'Test Generate Insight'}
-                    </button>
-                    {insightTestResult && (
-                        <div className={`mt-3 p-3 rounded-lg border ${insightTestResult.success ? 'bg-emerald-50 border-emerald-200' : 'bg-red-50 border-red-200'}`}>
-                            <div className="flex items-start gap-2">
-                                {insightTestResult.success
-                                    ? <Check className="w-4 h-4 text-emerald-600 flex-shrink-0 mt-0.5" />
-                                    : <AlertCircle className="w-4 h-4 text-red-600 flex-shrink-0 mt-0.5" />}
-                                <div className="text-xs">
-                                    <p className={`font-semibold ${insightTestResult.success ? 'text-emerald-800' : 'text-red-800'}`}>
-                                        {insightTestResult.success ? 'Insight berhasil digenerate' : 'Gagal'}
-                                    </p>
-                                    <p className={`mt-0.5 ${insightTestResult.success ? 'text-emerald-700' : 'text-red-700'}`}>
-                                        {insightTestResult.message}
-                                    </p>
+                    </div>
+                </div>
+            )}
+
+            {/* ── Section: Sistem ── */}
+            {section === 'sistem' && (
+                <>
+                    {/* Chat History */}
+                    <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 space-y-4">
+                        <h2 className="text-base font-semibold text-gray-900 flex items-center gap-2">
+                            <Clock className="w-4 h-4 text-blue-600" />
+                            Riwayat Chat KR·AI
+                        </h2>
+                        <p className="text-xs text-gray-500">
+                            Riwayat percakapan disimpan ke database Supabase. Percakapan yang lebih lama dari batas yang ditentukan akan otomatis dihapus.
+                        </p>
+
+                        <div className="flex items-center gap-4">
+                            <div className="flex-1">
+                                <label className="block text-xs font-medium text-gray-700 mb-1">Simpan riwayat selama</label>
+                                <div className="flex items-center gap-3">
+                                    <input type="range" min={1} max={365} value={retentionDays} onChange={e => setRetentionDays(Number(e.target.value))} className="flex-1 accent-blue-600" aria-label="Durasi penyimpanan riwayat chat dalam hari" title="Geser untuk mengatur berapa lama riwayat chat disimpan" />
+                                    <span className="text-sm font-semibold text-gray-900 w-20 text-right">{retentionDays} hari</span>
+                                </div>
+                                <div className="flex justify-between text-[10px] text-gray-400 mt-0.5">
+                                    <span>1 hari</span>
+                                    <span>1 tahun</span>
                                 </div>
                             </div>
                         </div>
-                    )}
-                </div>
-            </div>
+
+                        <div className="flex flex-wrap items-center gap-2">
+                            <button onClick={handleSaveRetention} className="inline-flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors">
+                                {retentionSaved ? <Check className="w-4 h-4" /> : <Clock className="w-4 h-4" />}
+                                {retentionSaved ? 'Tersimpan' : 'Simpan Pengaturan'}
+                            </button>
+                            <button onClick={handlePruneNow} disabled={pruning} className="inline-flex items-center gap-1.5 px-4 py-2 border border-red-200 text-red-600 rounded-lg text-sm font-medium hover:bg-red-50 transition-colors disabled:opacity-50">
+                                <Trash2 className="w-4 h-4" />
+                                {pruning ? 'Membersihkan...' : 'Bersihkan Sekarang'}
+                            </button>
+                        </div>
+
+                        {pruneResult && <p className="text-xs text-gray-600 bg-gray-50 rounded px-3 py-2">{pruneResult}</p>}
+                    </div>
+
+                    {/* AI Insight Settings (also shown in Sistem for convenience) */}
+                    <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 space-y-4">
+                        <h2 className="text-base font-semibold text-gray-900 flex items-center gap-2">
+                            <Sparkles className="w-4 h-4 text-purple-600" />
+                            Pengaturan AI Insight
+                        </h2>
+                        <p className="text-xs text-gray-500">Atur bagaimana insight otomatis dihasilkan.</p>
+
+                        <div className="flex items-center justify-between py-2">
+                            <div>
+                                <label className="text-sm font-medium text-gray-700">Aktifkan AI Insight</label>
+                                <p className="text-xs text-gray-500">Generate insight otomatis menggunakan AI</p>
+                            </div>
+                            <button
+                                onClick={async () => {
+                                    const next = insightSettings.enabled ? 'false' : 'true';
+                                    await saveInsightSetting('ai_insight_enabled', next);
+                                    setInsightSettings(prev => ({ ...prev, enabled: !prev.enabled }));
+                                    setInsightSaved('Aktifkan AI Insight');
+                                    setTimeout(() => setInsightSaved(null), 2000);
+                                }}
+                                className={`relative w-11 h-6 rounded-full transition-colors ${insightSettings.enabled ? 'bg-purple-600' : 'bg-gray-300'}`}
+                            >
+                                <span className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${insightSettings.enabled ? 'translate-x-5' : ''}`} />
+                            </button>
+                        </div>
+
+                        <div className="flex items-center justify-between py-2">
+                            <div>
+                                <label className="text-sm font-medium text-gray-700">Auto Refresh Insight</label>
+                                <p className="text-xs text-gray-500">Generate ulang insight secara berkala saat halaman terbuka</p>
+                            </div>
+                            <button
+                                onClick={async () => {
+                                    const next = insightSettings.autoRefresh ? 'false' : 'true';
+                                    await saveInsightSetting('ai_insight_auto_refresh', next);
+                                    setInsightSettings(prev => ({ ...prev, autoRefresh: !prev.autoRefresh }));
+                                    setInsightSaved('Auto Refresh');
+                                    setTimeout(() => setInsightSaved(null), 2000);
+                                }}
+                                className={`relative w-11 h-6 rounded-full transition-colors ${insightSettings.autoRefresh ? 'bg-purple-600' : 'bg-gray-300'}`}
+                            >
+                                <span className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${insightSettings.autoRefresh ? 'translate-x-5' : ''}`} />
+                            </button>
+                        </div>
+
+                        {/* Cache duration */}
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1.5">Durasi Cache Insight</label>
+                            <div className="flex flex-wrap gap-2">
+                                {[15, 30, 60, 360, 1440].map(v => (
+                                    <button
+                                        key={v}
+                                        onClick={async () => {
+                                            await saveInsightSetting('ai_insight_cache_ttl_minutes', String(v));
+                                            setInsightSettings(prev => ({ ...prev, cacheTtlMinutes: v }));
+                                            setInsightSaved('Cache');
+                                            setTimeout(() => setInsightSaved(null), 2000);
+                                        }}
+                                        className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${insightSettings.cacheTtlMinutes === v ? 'bg-purple-600 text-white border-purple-600' : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50'}`}
+                                    >
+                                        {v < 60 ? `${v} menit` : v < 1440 ? `${v / 60} jam` : `${v / 1440} hari`}
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+
+                        {insightSaved && (
+                            <div className="flex items-center gap-2 text-xs text-emerald-700 bg-emerald-50 px-3 py-2 rounded-lg border border-emerald-200">
+                                <Check className="w-3.5 h-3.5" />
+                                <span>Pengaturan &ldquo;{insightSaved}&rdquo; tersimpan</span>
+                            </div>
+                        )}
+                    </div>
+
+                    {/* Info / Health */}
+                    <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 text-xs text-blue-800 space-y-1.5">
+                        <p className="font-semibold">🔧 Informasi Sistem</p>
+                        <ul className="list-disc list-inside space-y-0.5 ml-1">
+                            <li>API key disimpan aman di database dengan enkripsi AES-256-GCM.</li>
+                            <li>Riwayat chat disimpan di database Supabase dengan retensi otomatis.</li>
+                            <li>Cache insight dibersihkan otomatis berdasarkan durasi yang ditentukan.</li>
+                        </ul>
+                    </div>
+                </>
+            )}
         </div>
     );
 }

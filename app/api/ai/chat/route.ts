@@ -656,6 +656,7 @@ Gunakan tool individual hanya jika pertanyaan spesifik:
 - Analisis: get_underperforming_units, get_weekend_vs_weekday_analysis
 - Estimasi: estimate_month_end_revenue
 - Tagihan: get_unpaid_bills_detail, get_outstanding_bills
+- Riwayat Tamu: **get_guest_stay_history** (cari riwayat menginap tamu berdasarkan nama — gunakan ILIKE case-insensitive, partial name OK. Jangan tebak dari memori. Jika ada beberapa nama mirip, tanyakan ke owner untuk klarifikasi.)
 
 ### CRITICAL RULES
 1. **MAX 1-3 TOOLS per answer.** If question requires >3 tools, stop and tell user to narrow the question.
