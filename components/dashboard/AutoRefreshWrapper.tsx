@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { RefreshCw } from 'lucide-react';
 import RealTimeClock from './RealTimeClock';
@@ -24,7 +24,11 @@ interface AutoRefreshWrapperProps {
  * - Show loading indicator during refresh
  * - Handle refresh failures with retry logic
  * - Manual refresh button
+ * - Form-safe guards: prevents auto-refresh during user interaction
+ *   (detects active form inputs, open modals, and data-form-dirty attributes)
  * 
+ * Usage: Add data-form-dirty="true" to any form element while editing
+ * Example: <form data-form-dirty={isDirty ? "true" : undefined}>
  */
 export default function AutoRefreshWrapper({
     children,
@@ -32,15 +36,37 @@ export default function AutoRefreshWrapper({
 }: AutoRefreshWrapperProps) {
     const router = useRouter();
     const [lastRefresh, setLastRefresh] = useState<Date>(() => new Date());
-    const [isRefreshing, setIsRefreshing] = useState(false);
+    const isRefreshing = useRef(false);
     const [retryCount, setRetryCount] = useState(0);
     const [error, setError] = useState<string | null>(null);
+    const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+    /**
+     * Form-safe guard — prevents auto-refresh when user is interacting with forms.
+     * Manual refresh button bypasses this guard.
+     */
+    const shouldSkipRefresh = useCallback((): boolean => {
+        // Don't refresh if page is hidden
+        if (document.visibilityState !== 'visible') return true;
+
+        // Don't refresh if there's an active form being edited
+        if (document.querySelector('[data-form-dirty="true"]')) return true;
+
+        // Don't refresh if user is typing in an input or textarea
+        const activeTag = document.activeElement?.tagName;
+        if (activeTag === 'INPUT' || activeTag === 'TEXTAREA' || activeTag === 'SELECT') return true;
+
+        // Don't refresh if a modal/dialog is open
+        if (document.querySelector('[role="dialog"]') || document.querySelector('[role="modal"]')) return true;
+
+        return false;
+    }, []);
 
     const handleRefresh = useCallback(async () => {
         // Don't refresh if already refreshing
-        if (isRefreshing) return;
+        if (isRefreshing.current) return;
 
-        setIsRefreshing(true);
+        isRefreshing.current = true;
         setError(null);
 
         try {
@@ -53,39 +79,40 @@ export default function AutoRefreshWrapper({
             setError('Gagal memperbarui data');
             setRetryCount((prev) => prev + 1);
         } finally {
-            setIsRefreshing(false);
+            isRefreshing.current = false;
         }
-    }, [router, isRefreshing]);
+    }, [router]);
 
-    // Set up auto-refresh interval
+    // Guarded auto-refresh interval — skips when user is interacting with forms
     useEffect(() => {
-        // Handle visibility change
-        const handleVisibilityChange = () => {
-            if (document.visibilityState === 'visible') {
-                // Tab became visible, refresh immediately
-                handleRefresh();
-            }
-        };
-
-        // Add visibility change listener
-        document.addEventListener('visibilitychange', handleVisibilityChange);
-
-        // Set up refresh interval
         const interval = setInterval(() => {
-            // Only refresh if tab is visible
-            if (document.visibilityState === 'visible') {
-                handleRefresh();
+            if (!shouldSkipRefresh()) {
+                router.refresh();
             }
         }, refreshInterval);
+        return () => clearInterval(interval);
+    }, [router, shouldSkipRefresh, refreshInterval]);
 
-        // Cleanup
-        return () => {
-            document.removeEventListener('visibilitychange', handleVisibilityChange);
-            clearInterval(interval);
+    // Guarded visibility change — debounced to avoid immediate refresh on tab switch
+    useEffect(() => {
+        const handleVisibility = () => {
+            if (document.visibilityState === 'visible' && !shouldSkipRefresh()) {
+                // Debounce — don't refresh immediately on tab switch
+                refreshTimer.current = setTimeout(() => {
+                    if (!shouldSkipRefresh()) {
+                        router.refresh();
+                    }
+                }, 500);
+            }
         };
-    }, [refreshInterval, handleRefresh]);
+        document.addEventListener('visibilitychange', handleVisibility);
+        return () => {
+            document.removeEventListener('visibilitychange', handleVisibility);
+            if (refreshTimer.current) clearTimeout(refreshTimer.current);
+        };
+    }, [router, shouldSkipRefresh]);
 
-    // Retry logic for failed refreshes
+    // Retry logic for failed manual refreshes
     useEffect(() => {
         if (retryCount > 0 && retryCount < 3) {
             // Retry after 10 seconds for up to 3 attempts
@@ -123,17 +150,17 @@ export default function AutoRefreshWrapper({
                 <div className="flex items-center gap-2 min-w-0 flex-1">
                     <button
                         onClick={handleRefresh}
-                        disabled={isRefreshing}
+                        disabled={isRefreshing.current}
                         className="flex items-center gap-1 px-2 py-1 text-gray-600 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors disabled:opacity-50 flex-shrink-0"
                         title="Refresh manual"
                         aria-label="Refresh data"
                     >
-                        <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
+                        <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing.current ? 'animate-spin' : ''}`} />
                         <span className="hidden sm:inline text-xs">Refresh</span>
                     </button>
 
                     <span className="text-gray-400 truncate">
-                        {isRefreshing ? 'Memperbarui...' : `Diperbarui ${formatLastRefresh()}`}
+                        {isRefreshing.current ? 'Memperbarui...' : `Diperbarui ${formatLastRefresh()}`}
                     </span>
 
                     {error && retryCount > 0 && (
@@ -145,7 +172,7 @@ export default function AutoRefreshWrapper({
             </div>
 
             {/* Main content */}
-            <div className={isRefreshing ? 'opacity-90 transition-opacity' : ''}>
+            <div className={isRefreshing.current ? 'opacity-90 transition-opacity' : ''}>
                 {children}
             </div>
         </div>
