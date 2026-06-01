@@ -28,6 +28,27 @@ export default async function LaporanPage({
         fetchHighOccupancyLocations(30),
     ]);
 
+    // Build data summary for contextual AI insights
+    const laporanDataSummary = {
+        totalRevenue: data.totalRevenue,
+        totalExpenses: data.totalExpenses,
+        totalTransactions: data.totalTransactions,
+        netProfit: data.totalRevenue - data.totalExpenses,
+        expenseCategories: data.expenses.map(e => ({
+            category: e.category,
+            total: e.total,
+            count: e.count,
+        })),
+        topExpenseCategories: data.expenses.slice(0, 5).map(e => ({
+            cat: e.category,
+            total_expense: e.total,
+        })),
+        prevRevenue: data.comparison?.prevRevenue,
+        prevExpenses: data.comparison?.prevExpenses,
+        comparisonLabel: data.comparison?.prevLabel,
+        periodLabel: data.filterLabel,
+    };
+
     return (
         <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50/30">
             <div className="bg-white border-b border-gray-200 px-4 sm:px-6 lg:px-8 py-3 sm:py-5">
@@ -46,6 +67,7 @@ export default async function LaporanPage({
                     title="Insight Laporan"
                     subtitle="Analisis laporan keuangan dan pengeluaran"
                     defaultCollapsed={true}
+                    dataSummary={laporanDataSummary}
                 />
 
                 {/* Filter Bar + Export */}

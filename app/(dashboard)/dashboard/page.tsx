@@ -72,6 +72,33 @@ export default async function DashboardPage({
         fetchMarketingPerformanceData(),
     ]);
 
+    // Compute data summary for contextual AI insights
+    const dashboardDataSummary = {
+        revenue: kpiData.revenueToday,
+        revenueChange: kpiData.change?.revenueChangePct,
+        revenuePrev: kpiData.prev?.revenue,
+        bookingCount: kpiData.bookingToday,
+        bookingChange: kpiData.change?.bookingChangePct,
+        bookingPrev: kpiData.prev?.booking,
+        occupancyRate: kpiData.avgOccupancy,
+        occupancyPrev: kpiData.prev?.avgOccupancy,
+        availableUnits: kpiData.availableUnits,
+        checkinCount: checkinsData.length,
+        checkoutCount: checkoutsData.length,
+        locationHealth: locationHealthData.map(l => ({
+            location: l.location,
+            occupancyRate: l.occupancyRate,
+            revenue: l.revenue,
+            totalUnits: l.totalUnits,
+            occupiedUnits: l.occupiedUnits,
+        })),
+        topLocations: locationHealthData
+            .sort((a, b) => b.revenue - a.revenue)
+            .slice(0, 5)
+            .map(l => ({ name: l.location, revenue: l.revenue, occupancyRate: l.occupancyRate })),
+        periodLabel: compareMode || rangePreset || 'Hari Ini',
+    };
+
     // Generate deterministic insights from fetched data
     const insights = generateInsights({
         kpiData,
@@ -94,6 +121,7 @@ export default async function DashboardPage({
                             title="Ringkasan Dashboard"
                             subtitle="Analisis singkat performa bisnis hari ini"
                             defaultCollapsed={true}
+                            dataSummary={dashboardDataSummary}
                         />
                     </div>
 

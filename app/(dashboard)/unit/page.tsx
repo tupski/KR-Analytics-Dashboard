@@ -41,6 +41,29 @@ export default async function UnitPage({
         ? Math.round((unitData.occupiedToday / unitData.totalUnits) * 10000) / 100
         : 0;
 
+    // Build data summary for contextual AI insights
+    const unitDataSummary = {
+        totalUnits: unitData.totalUnits,
+        occupiedToday: unitData.occupiedToday,
+        availableToday: unitData.availableToday,
+        occupancyRate,
+        locationSummaries: unitData.locationSummaries.map(l => ({
+            name: l.name,
+            totalRooms: l.totalRooms,
+            occupiedToday: l.occupiedToday,
+            availableToday: l.availableToday,
+            occupancyRate: l.occupancyRate,
+        })),
+        topOccupied: unitData.locationSummaries
+            .filter(l => l.occupancyRate > 0)
+            .sort((a, b) => b.occupancyRate - a.occupancyRate)
+            .slice(0, 3),
+        idleLocations: unitData.locationSummaries
+            .filter(l => l.occupancyRate < 40)
+            .map(l => l.name),
+        periodLabel: dateFilter || rangePreset || 'Hari Ini',
+    };
+
     return (
         <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50/30">
             <div className="bg-white border-b border-gray-200 px-4 sm:px-6 lg:px-8 py-3 sm:py-5">
@@ -61,6 +84,7 @@ export default async function UnitPage({
                     title="Insight Okupansi"
                     subtitle="Analisis performa unit dan okupansi"
                     defaultCollapsed={true}
+                    dataSummary={unitDataSummary}
                 />
 
                 {/* Metric Cards — replacing UnitOverview */}

@@ -24,6 +24,7 @@ export interface KraiInsightCardProps {
     title: string;
     subtitle?: string;
     filters?: FilterState;
+    /** Structured page data for contextual AI insights */
     dataSummary?: Record<string, any>;
     defaultCollapsed?: boolean;
     badgeLabel?: string;
@@ -113,13 +114,13 @@ export function generateFollowUpQuestions(
 
 const CLIENT_CACHE_TTL = 5 * 60 * 1000; // 5 min
 
-function getCacheKey(pageContext: string): string {
-    return `kr-insight-${pageContext}`;
+function getCacheKey(pageContext: string, dataHash?: string): string {
+    return `kr-insight-${pageContext}${dataHash ? '-' + dataHash : ''}`;
 }
 
-function getCached(pageContext: string): string | null {
+function getCached(pageContext: string, dataHash?: string): string | null {
     try {
-        const raw = sessionStorage.getItem(getCacheKey(pageContext));
+        const raw = sessionStorage.getItem(getCacheKey(pageContext, dataHash));
         if (raw) {
             const { text, timestamp } = JSON.parse(raw);
             if (Date.now() - timestamp < CLIENT_CACHE_TTL) return text;
@@ -128,13 +129,31 @@ function getCached(pageContext: string): string | null {
     return null;
 }
 
-function setCache(pageContext: string, text: string) {
+function setCache(pageContext: string, text: string, dataHash?: string) {
     try {
         sessionStorage.setItem(
-            getCacheKey(pageContext),
+            getCacheKey(pageContext, dataHash),
             JSON.stringify({ text, timestamp: Date.now() }),
         );
     } catch { }
+}
+
+// ─── Simple data hash for cache invalidation ────────────────────
+
+function hashData(data?: Record<string, any>): string {
+    if (!data) return '';
+    try {
+        const str = JSON.stringify(data);
+        let hash = 0;
+        for (let i = 0; i < str.length; i++) {
+            const chr = str.charCodeAt(i);
+            hash = ((hash << 5) - hash) + chr;
+            hash |= 0;
+        }
+        return Math.abs(hash).toString(36);
+    } catch {
+        return '';
+    }
 }
 
 // ─── Component ───────────────────────────────────────────────────
@@ -154,6 +173,9 @@ export default function KraiInsightCard({
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [followUps, setFollowUps] = useState<string[]>([]);
+    const [isSegarkanLoading, setIsSegarkanLoading] = useState(false);
+
+    const dataHash = hashData(dataSummary);
 
     // Build prompt from page context + optional data summary
     const buildPrompt = useCallback((): string => {
@@ -177,18 +199,14 @@ export default function KraiInsightCard({
                 break;
         }
 
-        if (dataSummary) {
-            parts.push('Data: ' + JSON.stringify(dataSummary));
-        }
-
         parts.push('Beri 1 rekomendasi actionable. Bahasa Indonesia.');
         return parts.join(' ');
-    }, [pageContext, dataSummary]);
+    }, [pageContext]);
 
     const fetchInsight = useCallback(async (forceRefresh = false) => {
-        // Check cache
+        // Check cache (skip when forceRefresh)
         if (!forceRefresh) {
-            const cached = getCached(pageContext);
+            const cached = getCached(pageContext, dataHash);
             if (cached) {
                 setInsight(cached);
                 setFollowUps(generateFollowUpQuestions(pageContext, cached));
@@ -198,6 +216,7 @@ export default function KraiInsightCard({
 
         setLoading(true);
         setError(null);
+        if (forceRefresh) setIsSegarkanLoading(true);
 
         try {
             const res = await fetch('/api/ai/insight', {
@@ -215,13 +234,14 @@ export default function KraiInsightCard({
                     reportPeriodMode: filters?.reportPeriodMode,
                     title,
                     forceRefresh,
-                    pageContext: dataSummary ? { summary: JSON.stringify(dataSummary) } : undefined,
+                    dataSummary,
                 }),
             });
 
             if (!res.ok) {
                 setError('Gagal mendapatkan insight');
                 setLoading(false);
+                setIsSegarkanLoading(false);
                 return;
             }
 
@@ -230,19 +250,22 @@ export default function KraiInsightCard({
             if (data.disabled) {
                 setError('Insight tidak tersedia');
                 setLoading(false);
+                setIsSegarkanLoading(false);
                 return;
             }
 
             if (data.error && !data.fallback) {
                 setError(data.message || 'Gagal mendapatkan insight');
                 setLoading(false);
+                setIsSegarkanLoading(false);
                 return;
             }
 
+            // Extract message from response — supports both new (message) and old (text) formats
             const msg = data.response?.message || data.response?.text || '';
-            if (msg) {
+            if (msg && msg.length > 5) {
                 setInsight(msg);
-                setCache(pageContext, msg);
+                setCache(pageContext, msg, dataHash);
                 setFollowUps(generateFollowUpQuestions(pageContext, msg));
             } else {
                 setError('Insight kosong');
@@ -251,8 +274,9 @@ export default function KraiInsightCard({
             setError(err.message || 'Gagal menghubungi server');
         } finally {
             setLoading(false);
+            setIsSegarkanLoading(false);
         }
-    }, [pageContext, buildPrompt, filters, title, dataSummary]);
+    }, [pageContext, buildPrompt, filters, title, dataSummary, dataHash]);
 
     // Fetch on mount
     useEffect(() => {
@@ -263,6 +287,11 @@ export default function KraiInsightCard({
         if (onFollowUpClick) {
             onFollowUpClick(q);
         }
+    };
+
+    const handleRefresh = (e: React.MouseEvent) => {
+        e.stopPropagation();
+        fetchInsight(true);
     };
 
     return (
@@ -281,14 +310,15 @@ export default function KraiInsightCard({
                     <h3 className="text-sm font-semibold text-gray-900 truncate">{title}</h3>
                 </div>
                 <div className="flex items-center gap-1 shrink-0">
-                    {/* Refresh button */}
-                    {!collapsed && !loading && insight && (
+                    {/* Refresh button — always visible when expanded */}
+                    {!collapsed && (
                         <button
-                            onClick={(e) => { e.stopPropagation(); fetchInsight(true); }}
-                            className="p-1 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors"
-                            title="Generate ulang"
+                            onClick={handleRefresh}
+                            disabled={loading}
+                            className="p-1 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors disabled:opacity-50"
+                            title="Segarkan insight"
                         >
-                            <RefreshCw className="w-3.5 h-3.5" />
+                            <RefreshCw className={`w-3.5 h-3.5 ${isSegarkanLoading ? 'animate-spin' : ''}`} />
                         </button>
                     )}
                     {collapsed ? (
@@ -325,7 +355,7 @@ export default function KraiInsightCard({
                             <div className="flex items-center gap-2 flex-1 min-w-0">
                                 <p className="text-xs text-amber-700">{error}</p>
                                 <button
-                                    onClick={() => fetchInsight(true)}
+                                    onClick={handleRefresh}
                                     className="ml-auto shrink-0 text-xs font-medium text-amber-700 underline whitespace-nowrap"
                                 >
                                     Coba lagi
@@ -334,10 +364,22 @@ export default function KraiInsightCard({
                         </div>
                     )}
 
-                    {/* Insight content */}
+                    {/* Insight content — rendered as Markdown for natural language text */}
                     {insight && !loading && (
                         <>
-                            <MarkdownRenderer content={insight} className="text-sm text-gray-800" />
+                            <MarkdownRenderer content={insight} className="text-sm text-gray-800 leading-relaxed" />
+
+                            {/* Segarkan button at bottom */}
+                            <div className="mt-3 flex justify-end">
+                                <button
+                                    onClick={handleRefresh}
+                                    disabled={loading}
+                                    className="inline-flex items-center gap-1 text-xs text-blue-600 hover:text-blue-700 font-medium transition-colors disabled:opacity-50"
+                                >
+                                    <RefreshCw className={`w-3 h-3 ${isSegarkanLoading ? 'animate-spin' : ''}`} />
+                                    Segarkan
+                                </button>
+                            </div>
 
                             {/* Follow-up questions */}
                             {followUps.length > 0 && (

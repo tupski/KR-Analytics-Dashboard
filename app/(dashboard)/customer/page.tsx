@@ -57,11 +57,22 @@ export default async function CustomerPage({
         }
     };
 
+    const uniqueCustomers = new Set(customers.map((c: any) => c.customerName)).size;
+
     const totalPages = Math.max(1, Math.ceil(count / pageSize));
     const startIdx = count === 0 ? 0 : (page - 1) * pageSize + 1;
     const endIdx = Math.min(page * pageSize, count);
 
     const baseLink = { search, pageSize, rangePreset, startDate, endDate };
+
+    // Build data summary for contextual AI insights
+    const customerDataSummary = {
+        totalCustomers: count,
+        uniqueCustomers,
+        repeatCustomers: count - uniqueCustomers,
+        repeatRatio: count > 0 ? ((count - uniqueCustomers) / count * 100) : 0,
+        periodLabel: rangePreset || 'Periode ini',
+    };
 
     return (
         <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50/30">
@@ -77,6 +88,7 @@ export default async function CustomerPage({
                     title="Insight Customer"
                     subtitle="Analisis pola booking pelanggan"
                     defaultCollapsed={true}
+                    dataSummary={customerDataSummary}
                 />
 
                 {/* Stats cards */}
@@ -92,7 +104,7 @@ export default async function CustomerPage({
                     <MetricCardHorizontal
                         icon={<UserCheck className="w-5 h-5" />}
                         title="Unique Tamu"
-                        value={new Set(customers.map((c: any) => c.customerName)).size}
+                        value={uniqueCustomers}
                         subtitle="Nama unik dalam periode ini"
                         isComparisonActive={false}
                         semanticType="neutral"

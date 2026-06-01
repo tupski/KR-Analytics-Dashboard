@@ -10,6 +10,7 @@ import { createServerClient } from '@/lib/supabase/server';
 import { loadAllProviderConfigs } from '@/lib/ai/configServer';
 import { format, subDays } from 'date-fns';
 import { toZonedTime } from 'date-fns-tz';
+import { generateFallbackInsight } from '@/lib/analytics/insights';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -33,9 +34,9 @@ interface InsightRequestBody {
         topLocations?: Array<{ name: string; value: number }>;
         alerts?: string[];
     };
+    /** Structured data summary passed by each page for contextual insights */
+    dataSummary?: Record<string, any>;
 }
-
-const MAX_TOOL_ITERATIONS = 4;
 
 /**
  * POST /api/ai/insight
@@ -46,8 +47,8 @@ const MAX_TOOL_ITERATIONS = 4;
  * 1. Compute cache_key from params
  * 2. Check ai_insight_cache for unexpired entry (skip if forceRefresh)
  * 3. If cached → return { cached: true, response, ... }
- * 4. If miss → load AI config, call provider, store in cache, return
- * 5. On AI error → return { error: true, fallback: true } so client uses rule-based
+ * 4. If miss → load AI config, call provider (NO tool calling), store in cache, return
+ * 5. On AI error → try rule-based fallback → generic message
  */
 export async function POST(request: NextRequest) {
     try {
@@ -65,6 +66,7 @@ export async function POST(request: NextRequest) {
             forceRefresh = false,
             withCompare = false,
             pageContext,
+            dataSummary,
         } = body;
 
         if (!page || !prompt) {
@@ -77,15 +79,38 @@ export async function POST(request: NextRequest) {
         // ── 0. Load settings ──────────────────────────────────────
         const settings = await getInsightSettings();
 
-        // If insight is disabled, client should use rule-based
+        // If insight is disabled, return fallback immediately
         if (!settings.enabled) {
-            return NextResponse.json({ disabled: true, fallback: true });
+            const fallbackText = generateFallbackInsight(page, dataSummary);
+            return NextResponse.json({
+                cached: false,
+                response: {
+                    message: fallbackText,
+                    model: '',
+                    provider: '',
+                    fallback: true,
+                },
+                generated_at: new Date().toISOString(),
+                expires_at: new Date(Date.now() + 3600000).toISOString(),
+            });
         }
 
         // ── 1. Resolve provider + model ───────────────────────────
         const aiConfig = await getAIConfigForInsight();
         if (!aiConfig) {
-            return NextResponse.json({ error: true, fallback: true });
+            // No AI configured — use rule-based fallback
+            const fallbackText = generateFallbackInsight(page, dataSummary);
+            return NextResponse.json({
+                cached: false,
+                response: {
+                    message: fallbackText,
+                    model: '',
+                    provider: '',
+                    fallback: true,
+                },
+                generated_at: new Date().toISOString(),
+                expires_at: new Date(Date.now() + 3600000).toISOString(),
+            });
         }
 
         // ── 2. Compute cache key ───────────────────────────────────
@@ -117,72 +142,40 @@ export async function POST(request: NextRequest) {
 
         // ── 4. Generate insight via AI ─────────────────────────────
         try {
-            // Build a quick system context snippet
-            const quickContext = await getQuickContext();
-            const compareSuffix = withCompare
-                ? `\n\nPERMINTAAN TAMBAHAN: Lakukan analisis komparatif dengan periode sebelumnya yang relevan (kemarin, minggu lalu, bulan lalu, atau tahun lalu). Gunakan tools compare_periods untuk mendapat delta otomatis. Dalam jawaban: - Sertakan severity label (🚨/⚠️/✅/📈/🏆) berdasarkan besarnya perubahan - Jelaskan makna bisnis dari perubahan tersebut, bukan hanya angka - Identifikasi penyebab potensial dari tren yang terdeteksi - Beri 1-2 rekomendasi actionable spesifik berdasarkan temuan perbandingan ini`
-                : '';
+            const systemContent = buildInsightSystemPrompt(page, dataSummary, prompt, withCompare);
 
-            // Per-page context for more relevant insights
-            let pageContextStr = '';
-            if (pageContext) {
-                const parts: string[] = [];
-                if (pageContext.summary) parts.push(`Ringkasan Halaman: ${pageContext.summary}`);
-                if (pageContext.kpis) {
-                    const kpiStr = Object.entries(pageContext.kpis)
-                        .map(([k, v]) => `  - ${k}: ${v}`).join('\n');
-                    parts.push(`KPI Halaman:\n${kpiStr}`);
-                }
-                if (pageContext.topLocations && pageContext.topLocations.length > 0) {
-                    const locStr = pageContext.topLocations
-                        .map(l => `  - ${l.name}: ${l.value}`).join('\n');
-                    parts.push(`Lokasi Teratas:\n${locStr}`);
-                }
-                if (pageContext.alerts && pageContext.alerts.length > 0) {
-                    const alertStr = pageContext.alerts.map(a => `  - ⚠️ ${a}`).join('\n');
-                    parts.push(`Alert Halaman:\n${alertStr}`);
-                }
-                pageContextStr = `\n\n## Konteks Halaman Saat Ini\n${parts.join('\n')}`;
-            }
-
-            const systemContent = `# KRAI - AI Business Copilot Kakarama Room
-
-Kamu adalah KRAI, AI Business Copilot untuk Kakarama Room (bisnis penyewaan apartemen & kamar harian di Indonesia).
-
-Kamu berperan sebagai Business Intelligence Analyst yang membantu owner memahami kondisi bisnis.
-
-## Gaya Jawaban
-- Bahasa Indonesia formal namun ramah
-- Gunakan **bold** untuk angka penting
-- Sertakan emoji severity label yang relevan
-- Berikan analisis singkat dan actionable (2-4 paragraf)
-- Jangan hanya menyebut angka — jelaskan makna bisnisnya
-- Akhiri dengan 1-2 rekomendasi spesifik
-
-## Tool Preference & Routing Strategy
-- **Panel tools FIRST**: get_dashboard_kpi_panel (KPI umum), get_marketing_panel (marketing), get_operations_panel (operasional), get_financial_panel (keuangan)
-- **MAX 1-3 tools per answer**. Jika butuh lebih, minta user narrow question.
-- **Date parsing**: Parse date/range dulu, lalu panggil tool dengan exact startDate/endDate.
-- Individual tools: get_occupancy_by_location, get_expense_breakdown, get_billing_breakdown_by_category, get_stay_duration_analysis, get_weekday_weekend_analysis, get_checkin_busy_hours
-
-${quickContext}${pageContextStr}`;
-
-            const userMessage = prompt + compareSuffix;
-
-            // We call the existing /api/ai/chat logic but as a direct function call
-            // Instead of calling our own endpoint (which would be an HTTP loop),
-            // we directly invoke provider calling logic similar to chat/route.ts
             const result = await callProviderForInsight(
                 aiConfig,
                 systemContent,
-                userMessage,
             );
 
+            // Validate we got natural language text, not JSON
+            const message = result.message || '';
+            const looksLikeJson = message.trim().startsWith('{') || message.trim().startsWith('[');
+
+            let finalMessage = message;
+            if (looksLikeJson) {
+                // Try to extract useful content from JSON
+                try {
+                    const parsed = JSON.parse(message);
+                    finalMessage = parsed.message || parsed.content || parsed.text || parsed.response || message;
+                } catch {
+                    // Not valid JSON either — use as-is
+                    finalMessage = message;
+                }
+            }
+
+            // If AI returned empty or unusable, fallback
+            if (!finalMessage || finalMessage.length < 10) {
+                throw new Error('AI returned empty response');
+            }
+
             const responseData = {
-                message: result.message,
+                message: finalMessage,
                 model: aiConfig.modelId,
                 provider: aiConfig.providerSlug,
                 usage: result.usage,
+                fallback: false,
             };
 
             // ── 5. Save to cache ────────────────────────────────────
@@ -211,12 +204,53 @@ ${quickContext}${pageContextStr}`;
         } catch (aiError: any) {
             console.error('[ai/insight] AI generation failed:', aiError.message);
 
-            // If mode is 'ai-with-fallback', tell client to use rule-based
-            if (settings.mode === 'ai-with-fallback') {
-                return NextResponse.json({ error: true, fallback: true });
+            // Try rule-based fallback
+            const fallbackText = generateFallbackInsight(page, dataSummary);
+            if (fallbackText) {
+                const responseData = {
+                    message: fallbackText,
+                    model: '',
+                    provider: '',
+                    fallback: true,
+                };
+                // Cache fallback too so we don't retry AI every time
+                await setCachedInsight({
+                    cacheKey,
+                    page,
+                    response: responseData,
+                    ttlMinutes: settings.cacheTtlMinutes || 30,
+                    providerSlug: aiConfig.providerSlug,
+                    modelId: aiConfig.modelId,
+                    reportPeriodMode: reportPeriodMode,
+                    rangeStart: startDate,
+                    rangeEnd: endDate,
+                    comparisonStart: comparisonStartDate,
+                    comparisonEnd: comparisonEndDate,
+                }).catch(() => { });
+
+                return NextResponse.json({
+                    cached: false,
+                    response: responseData,
+                    generated_at: new Date().toISOString(),
+                    expires_at: new Date(
+                        Date.now() + (settings.cacheTtlMinutes || 30) * 60 * 1000,
+                    ).toISOString(),
+                });
             }
 
-            // If mode is 'ai-generated' only, return the error
+            // Last resort: generic message
+            if (settings.mode === 'ai-with-fallback') {
+                return NextResponse.json({
+                    cached: false,
+                    response: {
+                        message: generateGenericFallback(page),
+                        model: '',
+                        provider: '',
+                        fallback: true,
+                    },
+                });
+            }
+
             return NextResponse.json(
                 {
                     error: true,
@@ -235,161 +269,161 @@ ${quickContext}${pageContextStr}`;
     }
 }
 
-// ── Provider calling logic (simplified, no tool loops for insight) ─────────
+// ── System Prompt Builder ────────────────────────────────────────────────────
 
-async function getQuickContext(): Promise<string> {
-    const supabase = createServerClient();
-    const timezone = 'Asia/Jakarta';
-    const todayDate = toZonedTime(new Date(), timezone);
-    const today = format(todayDate, 'yyyy-MM-dd');
-    const yesterday = format(subDays(todayDate, 1), 'yyyy-MM-dd');
-    const lastWeek = format(subDays(todayDate, 7), 'yyyy-MM-dd');
-    const lastMonth = format(subDays(todayDate, 30), 'yyyy-MM-dd');
+function buildInsightSystemPrompt(
+    page: string,
+    dataSummary?: Record<string, any>,
+    userPrompt?: string,
+    withCompare?: boolean,
+): string {
+    const pageLabels: Record<string, string> = {
+        dashboard: 'Dashboard — Ringkasan Bisnis',
+        booking: 'Booking — Data Pemesanan',
+        unit: 'Unit — Performa Kamar & Okupansi',
+        customer: 'Customer — Data Tamu & Pelanggan',
+        laporan: 'Laporan — Keuangan & Pengeluaran',
+    };
 
-    let locationDescriptors = '';
-    let totalRooms = 0;
-    try {
-        const { data: locations } = await supabase
-            .from('lokasi_apartemen')
-            .select('name, total_rooms');
-        locationDescriptors = (locations || [])
-            .map((l: any) => `${l.name} (${l.total_rooms || '?'} kamar)`)
-            .join(', ');
-        const { count } = await supabase
-            .from('nomor_kamar')
-            .select('id', { count: 'exact', head: true });
-        totalRooms = count || 0;
-    } catch { /* swallow */ }
+    const pageLabel = pageLabels[page] || page;
 
-    return `KONTEKS SISTEM:
-- Hari ini: ${today} (Asia/Jakarta)
-- Kemarin: ${yesterday}
-- 7 hari lalu (hari sama): ${lastWeek}
-- 30 hari lalu (hari sama): ${lastMonth}
-- Total unit: ${totalRooms} kamar
-- Lokasi: ${locationDescriptors}
+    // Serialize dataSummary for context
+    let dataContext = '';
+    if (dataSummary && Object.keys(dataSummary).length > 0) {
+        try {
+            const lines: string[] = [];
+            for (const [key, val] of Object.entries(dataSummary)) {
+                if (val === null || val === undefined) continue;
+                if (Array.isArray(val)) {
+                    if (val.length > 0) {
+                        lines.push(`${key}: ${JSON.stringify(val.slice(0, 10))}${val.length > 10 ? ` (${val.length} items)` : ''}`);
+                    }
+                } else if (typeof val === 'object') {
+                    lines.push(`${key}: ${JSON.stringify(val)}`);
+                } else {
+                    lines.push(`${key}: ${val}`);
+                }
+            }
+            if (lines.length > 0) {
+                dataContext = '\n\n## DATA HALAMAN SAAT INI\n' + lines.join('\n');
+            }
+        } catch { /* swallow serialization errors */ }
+    }
 
-PREFERENSI TOOLS:
-- **Panel tools** (get_dashboard_kpi_panel, get_marketing_panel, get_operations_panel, get_financial_panel) adalah prioritas — 1 call dapat banyak data.
-- Panel get_dashboard_kpi_panel untuk KPI dashboard umum.
-- Panel get_marketing_panel untuk marketing/customer analysis.
-- Panel get_operations_panel untuk operasional/okupansi.
-- Panel get_financial_panel untuk keuangan/profit/YoY.
-- Hanya pakai tool individual jika butuh data spesifik 1-2 metrik.
-- Gunakan tools untuk semua data - jangan mengarang angka.
-- Untuk perbandingan periode, pakai compare_periods.
-- Tanggal SELALU format YYYY-MM-DD.
-- Jika tools error, sebutkan data tidak tersedia.`;
+    const compareSuffix = withCompare
+        ? '\n\nLakukan analisis komparatif dengan periode sebelumnya. Jelaskan perubahan (naik/turun) dalam konteks bisnis.'
+        : '';
+
+    return `# KRAI - AI Business Copilot Kakarama Room
+
+Kamu adalah KRAI, AI Business Copilot untuk Kakarama Room (bisnis penyewaan apartemen & kamar harian di Indonesia). Kamu adalah seorang Business Intelligence Analyst.
+
+## Halaman Saat Ini: ${pageLabel}${dataContext}
+
+## ATURAN WAJIB — BACA DENGAN SEKSAMA
+
+1. ANDA HARUS menjawab dalam BAHASA INDONESIA natural language.
+2. JANGAN output JSON, tool calls, kode, atau structured data APAPUN.
+3. JANGAN menggunakan fungsi/tools — langsung analisis berdasarkan data yang diberikan.
+4. Tulis dalam format paragraf seperti analis bisnis profesional.
+5. Gunakan **bold** untuk angka penting jika perlu.
+6. Struktur jawaban: Mulai dengan ringkasan, lalu analisis, lalu rekomendasi.
+7. gunakan sub-heading sederhana: **Ringkasan:**, **Analisis:**, **Rekomendasi:**
+8. Jangan hanya sebut angka — jelaskan makna bisnisnya.
+9. Akhiri dengan 1-2 rekomendasi actionable spesifik.
+10. Gunakan emoji yang relevan jika membantu (📈 💰 ⚠️ ✅ 🚨).
+
+## PANDUAN KONTEN PER HALAMAN
+
+**Dashboard**: Analisis KPI utama (pendapatan, booking, okupansi). Tren vs periode sebelumnya. Performa lokasi. Aktivitas operasional hari ini.
+
+**Booking**: Volume booking dan tren. Perbandingan periode. Sumber/channel booking. Pola hari. Analisis durasi menginap.
+
+**Unit**: Okupansi per lokasi. Unit dengan performa rendah/idle. Unit terisi vs tersedia. Rekomendasi alokasi.
+
+**Customer**: Jumlah tamu unik. Rasio tamu baru vs kembali. Pola durasi menginap. Sumber kedatangan tamu.
+
+**Laporan**: Ringkasan pendapatan vs pengeluaran. Kategori biaya terbesar. Laba/rugi. Analisis perbandingan periode.${compareSuffix}
+
+INGAT: HANYA natural language text. TIDAK ADA JSON. TIDAK ADA tool calls.`;
 }
 
-/**
- * Simplified provider call for insight generation.
- * Uses OpenAI-compatible endpoint with tool access for data.
- */
+// ── Provider calling logic (NO tools — direct text completion) ────────────────
+
 async function callProviderForInsight(
     cfg: { providerSlug: string; apiKey: string; modelId: string; baseUrl?: string },
     systemContent: string,
-    userPrompt: string,
 ): Promise<{ message: string; usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number } }> {
-    // Build endpoint URL based on provider
     const { getEndpoint, getHeaders } = resolveProviderEndpoint(cfg);
-
-    const { OPENAI_TOOLS, executeTool } = await import('@/lib/ai/tools');
     const { parseAIResponse } = await import('@/lib/ai/responseParser');
 
-    const conversation: any[] = [
+    const conversation = [
         { role: 'system', content: systemContent },
-        { role: 'user', content: userPrompt },
     ];
 
-    let totalUsage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
+    const body = {
+        model: cfg.modelId,
+        messages: conversation,
+        // NO tools — we want natural language text, not function calls
+        temperature: 0.7,
+        max_tokens: 1024,
+    };
 
-    for (let iter = 0; iter < MAX_TOOL_ITERATIONS; iter++) {
-        const body = {
-            model: cfg.modelId,
-            messages: conversation,
-            tools: OPENAI_TOOLS,
-            tool_choice: 'auto' as const,
-            temperature: 0.7,
-            max_tokens: 2048,
-        };
+    const res = await fetch(getEndpoint, {
+        method: 'POST',
+        headers: getHeaders,
+        body: JSON.stringify(body),
+    });
 
-        const res = await fetch(getEndpoint, {
-            method: 'POST',
-            headers: getHeaders,
-            body: JSON.stringify(body),
-        });
-
-        if (!res.ok) {
-            const errorText = await res.text();
-            throw new Error(`AI API error: ${res.status} - ${errorText.substring(0, 300)}`);
-        }
-
-        const rawText = await res.text();
-        let data: any;
-        try {
-            data = parseAIResponse(rawText);
-        } catch {
-            data = JSON.parse(rawText);
-        }
-
-        const choice = data?.choices?.[0];
-        const message = choice?.message;
-
-        if (!message) {
-            // Try alternate response shapes
-            if (data?.output_text) {
-                return { message: data.output_text, usage: totalUsage };
-            }
-            if (data?.content) {
-                return { message: typeof data.content === 'string' ? data.content : JSON.stringify(data.content), usage: totalUsage };
-            }
-            throw new Error('Respons AI kosong.');
-        }
-
-        if (data.usage) {
-            totalUsage.prompt_tokens += data.usage.prompt_tokens || 0;
-            totalUsage.completion_tokens += data.usage.completion_tokens || 0;
-            totalUsage.total_tokens += data.usage.total_tokens || 0;
-        }
-
-        const toolCalls = message.tool_calls;
-        if (!toolCalls || toolCalls.length === 0) {
-            return { message: message.content || 'Tidak ada respons.', usage: totalUsage };
-        }
-
-        // Execute tool calls
-        conversation.push({
-            role: 'assistant',
-            content: message.content || '',
-            tool_calls: toolCalls,
-        });
-
-        for (const tc of toolCalls) {
-            let parsedArgs: Record<string, any> = {};
-            try {
-                parsedArgs = JSON.parse(tc.function?.arguments || '{}');
-            } catch {
-                parsedArgs = {};
-            }
-            const result = await executeTool({
-                name: tc.function?.name || '',
-                arguments: parsedArgs,
-            });
-            conversation.push({
-                role: 'tool',
-                tool_call_id: tc.id,
-                name: tc.function?.name || '',
-                content: JSON.stringify(result).slice(0, 12000),
-            });
-        }
+    if (!res.ok) {
+        const errorText = await res.text();
+        throw new Error(`AI API error: ${res.status} - ${errorText.substring(0, 300)}`);
     }
 
-    return {
-        message: 'Maaf, proses analisis terlalu kompleks. Coba persempit pertanyaan.',
-        usage: totalUsage,
+    const rawText = await res.text();
+    let data: any;
+    try {
+        data = parseAIResponse(rawText);
+    } catch {
+        data = JSON.parse(rawText);
+    }
+
+    const choice = data?.choices?.[0];
+    const message = choice?.message;
+
+    if (!message) {
+        if (data?.output_text) {
+            return { message: data.output_text };
+        }
+        if (data?.content) {
+            return { message: typeof data.content === 'string' ? data.content : JSON.stringify(data.content) };
+        }
+        throw new Error('Respons AI kosong.');
+    }
+
+    const usage = {
+        prompt_tokens: data.usage?.prompt_tokens || 0,
+        completion_tokens: data.usage?.completion_tokens || 0,
+        total_tokens: data.usage?.total_tokens || 0,
     };
+
+    return { message: message.content || 'Tidak ada respons.', usage };
 }
+
+// ── Generic Fallback ─────────────────────────────────────────────────────────
+
+function generateGenericFallback(page: string): string {
+    const msgs: Record<string, string> = {
+        dashboard: '**Ringkasan:** Data sedang dimuat. Silakan coba lagi dalam beberapa saat.\n\n**Rekomendasi:** Periksa koneksi database atau refresh halaman.',
+        booking: '**Ringkasan:** Data booking belum tersedia.\n\n**Rekomendasi:** Silakan refresh halaman atau coba filter lain.',
+        unit: '**Ringkasan:** Data unit belum tersedia.\n\n**Rekomendasi:** Periksa kembali filter yang dipilih.',
+        customer: '**Ringkasan:** Data customer belum tersedia.\n\n**Rekomendasi:** Silakan coba kembali dalam beberapa saat.',
+        laporan: '**Ringkasan:** Data laporan belum tersedia.\n\n**Rekomendasi:** Pastikan data transaksi dan pengeluaran sudah masuk.',
+    };
+    return msgs[page] || '**Ringkasan:** Data belum tersedia. Silakan coba lagi.';
+}
+
+// ── Provider endpoint resolution ─────────────────────────────────────────────
 
 function resolveProviderEndpoint(cfg: { providerSlug: string; baseUrl?: string; apiKey: string; modelId: string }): {
     getEndpoint: string;
@@ -432,7 +466,6 @@ function resolveProviderEndpoint(cfg: { providerSlug: string; baseUrl?: string; 
         throw new Error('Anthropic provider not supported for insight generation directly.');
     }
 
-    // OpenAI-compatible: default to chat completions path
     if (cfg.providerSlug === 'openai-compatible' || cfg.providerSlug === 'openai') {
         if (baseUrl.endsWith('/v1')) baseUrl = `${baseUrl}/chat/completions`;
     }

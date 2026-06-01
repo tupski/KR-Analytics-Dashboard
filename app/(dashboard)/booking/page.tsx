@@ -51,6 +51,18 @@ export default async function BookingPage({
 
     const isComparisonActive = !!stats.comparison;
 
+    // Build data summary for contextual AI insights
+    const bookingDataSummary = {
+        bookingCount: stats.bookingCount,
+        totalRevenue: stats.totalRevenue,
+        totalTransactions: stats.totalTransactions,
+        avgPerDay: stats.avgPerDay,
+        comparisonLabel: stats.comparison?.prevLabel,
+        prevBookingCount: stats.comparison?.prevBookingCount,
+        prevRevenue: stats.comparison?.prevRevenue,
+        periodLabel: stats.rangeLabel,
+    };
+
     return (
         <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50/30">
             {/* Header */}
@@ -72,6 +84,7 @@ export default async function BookingPage({
                     title="Insight Booking"
                     subtitle="Analisis tren booking dan pola pemesanan"
                     defaultCollapsed={true}
+                    dataSummary={bookingDataSummary}
                 />
 
                 {/* Stats Cards — MetricCardHorizontal */}
