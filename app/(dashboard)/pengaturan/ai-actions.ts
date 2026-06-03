@@ -2,36 +2,40 @@
 
 import { createServerClient } from '@/lib/supabase/server';
 import { encryptApiKey, decryptApiKey } from '@/lib/ai/configServer';
+import { AIConfigSchema, type AIConfigInput } from '@/lib/validation';
 
-interface AIConfig {
-    provider: string;
-    apiKey: string;
-    model: string;
-    baseUrl?: string;
-    thinkingMode?: 'auto' | 'instant' | 'thinking';
-}
+export type { AIConfigInput as AIConfig };
 
-export async function saveAIConfig(config: AIConfig) {
+export async function saveAIConfig(config: unknown) {
+    // Validate input using Zod schema (imported from lib/validation.ts)
+    const result = AIConfigSchema.safeParse(config);
+    if (!result.success) {
+        const error = result.error.issues[0]?.message || 'Input tidak valid';
+        console.error('[saveAIConfig] Validation error:', error);
+        return { error };
+    }
+
     try {
         const supabase = createServerClient();
+        const validatedConfig = result.data;
 
         // FIX 8: Use canonical encryptApiKey from configServer.ts (returns { enc, iv })
         // The returned `enc` has authTag prepended to ciphertext (new canonical format)
-        const { enc, iv } = encryptApiKey(config.apiKey);
+        const { enc, iv } = encryptApiKey(validatedConfig.apiKey);
 
         // Upsert config
         const { error } = await supabase
             .from('ai_provider_configs')
             .upsert({
                 scope: 'global',
-                provider_id: config.provider,
+                provider_id: validatedConfig.provider,
                 api_key_enc: enc,
                 api_key_iv: iv,
-                model: config.model,
-                base_url: config.baseUrl || null,
+                model: validatedConfig.model,
+                base_url: validatedConfig.baseUrl || null,
                 is_active: true,
-                active_model: config.model,
-                thinking_mode: config.thinkingMode || 'auto',
+                active_model: validatedConfig.model,
+                thinking_mode: validatedConfig.thinkingMode || 'auto',
             }, {
                 onConflict: 'scope,provider_id',
             });
@@ -45,7 +49,7 @@ export async function saveAIConfig(config: AIConfig) {
     }
 }
 
-export async function loadAIConfig(): Promise<AIConfig | null> {
+export async function loadAIConfig(): Promise<AIConfigInput | null> {
     try {
         const supabase = createServerClient();
 

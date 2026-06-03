@@ -2,7 +2,12 @@
 
 import { createServerClient } from '@/lib/supabase/server';
 import { revalidatePath } from 'next/cache';
-import { DEFAULTS, VALIDATION } from '@/lib/config/constants';
+import { DEFAULTS } from '@/lib/config/constants';
+import { AppSettingsSchema, validateInput } from '@/lib/validation';
+
+// ═══════════════════════════════════════════════════════════════════
+// Types
+// ═══════════════════════════════════════════════════════════════════
 
 export interface AppSettings {
     app_name: string;
@@ -68,9 +73,27 @@ export async function fetchAppSettings(): Promise<AppSettings> {
 }
 
 /**
- * Update app settings
+ * Update app settings with Zod validation
  */
-export async function updateAppSettings(settings: Partial<AppSettings>): Promise<{ success: boolean; error?: string }> {
+export async function updateAppSettings(settings: unknown): Promise<{
+    success: boolean;
+    error?: string;
+    fieldErrors?: Record<string, string>;
+}> {
+    // Validate input using Zod schema (imported from lib/validation.ts)
+    const validation = validateInput(AppSettingsSchema, settings);
+    if (!validation.success) {
+        console.error('[updateAppSettings] Validation error:', validation.error, validation.fieldErrors);
+        return {
+            success: false,
+            error: validation.error,
+            fieldErrors: validation.fieldErrors,
+        };
+    }
+
+    // Type-safe validated settings
+    const validatedSettings = validation.data as Partial<AppSettings>;
+
     try {
         const supabase = createServerClient();
 
@@ -78,48 +101,48 @@ export async function updateAppSettings(settings: Partial<AppSettings>): Promise
         // Upsert each setting individually
         const entries: { key: string; value: string }[] = [];
 
-        if (settings.app_name !== undefined) {
-            entries.push({ key: 'app_name', value: settings.app_name });
+        if (validatedSettings.app_name !== undefined) {
+            entries.push({ key: 'app_name', value: validatedSettings.app_name });
         }
-        if (settings.logo_url !== undefined) {
-            entries.push({ key: 'logo_url', value: settings.logo_url || '' });
+        if (validatedSettings.logo_url !== undefined) {
+            entries.push({ key: 'logo_url', value: validatedSettings.logo_url || '' });
         }
-        if (settings.favicon_url !== undefined) {
-            entries.push({ key: 'favicon_url', value: settings.favicon_url || '' });
+        if (validatedSettings.favicon_url !== undefined) {
+            entries.push({ key: 'favicon_url', value: validatedSettings.favicon_url || '' });
         }
-        if (settings.primary_color !== undefined) {
-            entries.push({ key: 'primary_color', value: settings.primary_color });
+        if (validatedSettings.primary_color !== undefined) {
+            entries.push({ key: 'primary_color', value: validatedSettings.primary_color });
         }
-        if (settings.report_period_mode !== undefined) {
-            entries.push({ key: 'report_period_mode', value: settings.report_period_mode });
+        if (validatedSettings.report_period_mode !== undefined) {
+            entries.push({ key: 'report_period_mode', value: validatedSettings.report_period_mode });
         }
-        if (settings.timezone !== undefined) {
-            entries.push({ key: 'timezone', value: settings.timezone });
+        if (validatedSettings.timezone !== undefined) {
+            entries.push({ key: 'timezone', value: validatedSettings.timezone });
         }
-        if (settings.sidebar_behavior !== undefined) {
-            entries.push({ key: 'sidebar_behavior', value: settings.sidebar_behavior });
+        if (validatedSettings.sidebar_behavior !== undefined) {
+            entries.push({ key: 'sidebar_behavior', value: validatedSettings.sidebar_behavior });
         }
-        if (settings.compact_display !== undefined) {
-            entries.push({ key: 'compact_display', value: settings.compact_display });
+        if (validatedSettings.compact_display !== undefined) {
+            entries.push({ key: 'compact_display', value: validatedSettings.compact_display });
         }
         // AI Insight settings
-        if (settings.ai_insight_enabled !== undefined) {
-            entries.push({ key: 'ai_insight_enabled', value: settings.ai_insight_enabled });
+        if (validatedSettings.ai_insight_enabled !== undefined) {
+            entries.push({ key: 'ai_insight_enabled', value: validatedSettings.ai_insight_enabled });
         }
-        if (settings.ai_insight_mode !== undefined) {
-            entries.push({ key: 'ai_insight_mode', value: settings.ai_insight_mode });
+        if (validatedSettings.ai_insight_mode !== undefined) {
+            entries.push({ key: 'ai_insight_mode', value: validatedSettings.ai_insight_mode });
         }
-        if (settings.ai_insight_provider !== undefined) {
-            entries.push({ key: 'ai_insight_provider', value: settings.ai_insight_provider });
+        if (validatedSettings.ai_insight_provider !== undefined) {
+            entries.push({ key: 'ai_insight_provider', value: validatedSettings.ai_insight_provider });
         }
-        if (settings.ai_insight_model !== undefined) {
-            entries.push({ key: 'ai_insight_model', value: settings.ai_insight_model });
+        if (validatedSettings.ai_insight_model !== undefined) {
+            entries.push({ key: 'ai_insight_model', value: validatedSettings.ai_insight_model });
         }
-        if (settings.ai_insight_cache_ttl_minutes !== undefined) {
-            entries.push({ key: 'ai_insight_cache_ttl_minutes', value: settings.ai_insight_cache_ttl_minutes });
+        if (validatedSettings.ai_insight_cache_ttl_minutes !== undefined) {
+            entries.push({ key: 'ai_insight_cache_ttl_minutes', value: validatedSettings.ai_insight_cache_ttl_minutes });
         }
-        if (settings.ai_insight_auto_refresh !== undefined) {
-            entries.push({ key: 'ai_insight_auto_refresh', value: settings.ai_insight_auto_refresh });
+        if (validatedSettings.ai_insight_auto_refresh !== undefined) {
+            entries.push({ key: 'ai_insight_auto_refresh', value: validatedSettings.ai_insight_auto_refresh });
         }
 
         for (const entry of entries) {
