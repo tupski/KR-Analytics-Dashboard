@@ -14,6 +14,7 @@ import {
 } from '@/lib/ai/providerAdapter';
 import { parseAIResponse } from '@/lib/ai/responseParser';
 import { buildInsightSystemPrompt } from '@/lib/ai/krai-system-prompt';
+import { normalizeAiText } from '@/lib/ai/normalizeAiText';
 
 /**
  * AI INSIGHT ROUTE — Lightweight, cacheable, no tool calling.
@@ -190,30 +191,9 @@ export async function POST(request: NextRequest) {
                 systemContent,
             );
 
-            // Validate we got natural language text, not JSON
+            // Normalize AI text — strips JSON wrapping, extracts content recursively
             const message = result.message || '';
-            const looksLikeJson = message.trim().startsWith('{') || message.trim().startsWith('[');
-
-            let finalMessage = message;
-            if (looksLikeJson) {
-                // Try to extract useful content from JSON
-                try {
-                    const parsed = JSON.parse(message);
-                    // Search common AI response fields recursively
-                    finalMessage = parsed.message
-                        || parsed.content
-                        || parsed.text
-                        || parsed.response
-                        || parsed.choices?.[0]?.message?.content
-                        || parsed.choices?.[0]?.text
-                        || parsed.candidates?.[0]?.content?.parts?.[0]?.text
-                        || (Array.isArray(parsed.content) ? parsed.content[0]?.text : null)
-                        || message;
-                } catch {
-                    // Not valid JSON either — use as-is
-                    finalMessage = message;
-                }
-            }
+            const finalMessage = normalizeAiText(message);
 
             // If AI returned empty or unusable, fallback
             if (!finalMessage || finalMessage.length < 10) {

@@ -16,6 +16,7 @@ import MarkdownRenderer from './MarkdownRenderer';
 import type { FilterState } from '@/components/shared/FilterState';
 import { generateFollowUpQuestions } from '@/lib/ai/followUpQuestions';
 import type { KraiPageContext } from '@/lib/ai/followUpQuestions';
+import { normalizeAiText } from '@/lib/ai/normalizeAiText';
 
 // ─── Types ───────────────────────────────────────────────────────
 
@@ -143,8 +144,12 @@ export default function KraiInsightCard({
         if (!forceRefresh) {
             const cached = getCached(pageContext, dataHash);
             if (cached) {
-                setInsight(cached);
-                updateFollowUps(cached);
+                // Normalize cache on read — handles old raw JSON cached entries
+                const normalized = normalizeAiText(cached);
+                setInsight(normalized);
+                // Overwrite cache with normalized version
+                setCache(pageContext, normalized, dataHash);
+                updateFollowUps(normalized);
                 return;
             }
         }
@@ -196,10 +201,12 @@ export default function KraiInsightCard({
                 return;
             }
 
-            // Extract message from response
-            const msg = data.response?.message || data.response?.text || '';
+            // Extract message from response — normalize to strip any JSON wrapping
+            const raw = data.response?.message || data.response?.text || '';
+            const msg = normalizeAiText(raw);
             if (msg && msg.length > 5) {
                 setInsight(msg);
+                // Only cache normalized text — never raw JSON
                 setCache(pageContext, msg, dataHash);
                 updateFollowUps(msg);
             } else {

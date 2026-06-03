@@ -284,7 +284,7 @@ const DEFAULT_BASE_URLS: Record<string, string> = {
 
 /**
  * Upsert provider config. If apiKey is empty/falsy, keep the existing
- * encrypted key unchanged (only update model/baseUrl/isActive).
+ * encrypted key unchanged (only update model/baseUrl/isActive/active_model).
  */
 export async function upsertProviderConfigSafe(conf: {
     providerId: ProviderId;
@@ -305,6 +305,14 @@ export async function upsertProviderConfigSafe(conf: {
 
     const hasNewKey = conf.apiKey && conf.apiKey.trim();
 
+    // Always sync active_model with model when model field changes
+    const updateFields: Record<string, any> = {
+        model: conf.model,
+        active_model: conf.model,
+        base_url: baseUrl,
+        is_active: conf.isActive ?? false,
+    };
+
     if (hasNewKey) {
         // Full upsert with new encrypted key
         const { enc, iv } = encryptApiKey(conf.apiKey.trim());
@@ -315,9 +323,7 @@ export async function upsertProviderConfigSafe(conf: {
                 provider_id: conf.providerId,
                 api_key_enc: enc,
                 api_key_iv: iv,
-                model: conf.model,
-                base_url: baseUrl,
-                is_active: conf.isActive ?? false,
+                ...updateFields,
             }, { onConflict: 'scope,provider_id' });
 
         if (error) throw new Error(`Failed to save AI config: ${error.message}`);
@@ -336,11 +342,7 @@ export async function upsertProviderConfigSafe(conf: {
 
         const { error } = await supabase
             .from('ai_provider_configs')
-            .update({
-                model: conf.model,
-                base_url: baseUrl,
-                is_active: conf.isActive ?? false,
-            })
+            .update(updateFields)
             .eq('scope', SCOPE)
             .eq('provider_id', conf.providerId);
 

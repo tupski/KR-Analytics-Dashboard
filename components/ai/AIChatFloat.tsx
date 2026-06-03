@@ -7,6 +7,7 @@ import Link from 'next/link';
 import AIChatCore, { type ChatMessage } from './AIChatCore';
 import { hasConfiguredProviders } from '@/lib/ai/configClient';
 import KraiLogo from '@/components/shared/KraiLogo';
+import { normalizeAiText } from '@/lib/ai/normalizeAiText';
 
 const GREETING_DISMISSED_KEY = 'kr_ai_greeting_dismissed';
 
@@ -189,22 +190,13 @@ function AIChatCoreFloat({
         return () => window.removeEventListener('ai-chat-float-send', handler);
     }, []);
 
-    // Sanitize incoming messages — extract content from any JSON-wrapped response
+    // Sanitize incoming messages — normalize any JSON-wrapped response
     const handleMessagesChange = useCallback((msgs: ChatMessage[]) => {
         const sanitized = msgs.map(m => {
-            if (m.role === 'assistant' && m.content && (m.content.startsWith('{') || m.content.startsWith('['))) {
-                try {
-                    const parsed = JSON.parse(m.content);
-                    // Recursively search for text content in common AI response formats
-                    const extracted = parsed.message?.content
-                        || parsed.content
-                        || parsed.text
-                        || parsed.choices?.[0]?.message?.content
-                        || parsed.candidates?.[0]?.content?.parts?.[0]?.text
-                        || (Array.isArray(parsed.content) ? parsed.content[0]?.text : null);
-                    if (extracted) return { ...m, content: extracted };
-                } catch {
-                    // Not parseable — use as-is
+            if (m.role === 'assistant' && m.content) {
+                const normalized = normalizeAiText(m.content);
+                if (normalized !== m.content) {
+                    return { ...m, content: normalized };
                 }
             }
             return m;

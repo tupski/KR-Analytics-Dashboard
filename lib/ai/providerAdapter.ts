@@ -30,6 +30,8 @@ export interface ProviderResponse {
     };
 }
 
+import { normalizeAiText } from './normalizeAiText';
+
 // ── Detect format ──────────────────────────────────────────────────────────────
 
 const GEMINI_PROVIDERS = new Set(['gemini', 'google']);
@@ -236,6 +238,9 @@ export function buildProviderBody(
 /**
  * Parse provider response into standard { message, usage? } format.
  * Throws on empty/unparseable response.
+ *
+ * All message outputs are passed through normalizeAiText() to strip
+ * any JSON wrapping that the provider may have returned.
  */
 export function parseProviderResponse(
     providerSlug: string,
@@ -259,7 +264,7 @@ export function parseProviderResponse(
         }
 
         return {
-            message: text,
+            message: normalizeAiText(text),
             usage: rawData?.usageMetadata
                 ? {
                     prompt_tokens: rawData.usageMetadata.promptTokenCount || 0,
@@ -281,7 +286,7 @@ export function parseProviderResponse(
         }
 
         return {
-            message: text,
+            message: normalizeAiText(text),
             usage: rawData?.usage
                 ? {
                     prompt_tokens: rawData.usage.input_tokens || 0,
@@ -298,7 +303,7 @@ export function parseProviderResponse(
 
     if (message?.content) {
         return {
-            message: message.content,
+            message: normalizeAiText(message.content),
             usage: rawData?.usage
                 ? {
                     prompt_tokens: rawData.usage.prompt_tokens || 0,
@@ -311,13 +316,11 @@ export function parseProviderResponse(
 
     // Fallback: check alternative fields
     if (rawData?.output_text) {
-        return { message: rawData.output_text };
+        return { message: normalizeAiText(rawData.output_text) };
     }
     if (rawData?.content) {
-        // If content is an object, recursively search for text/content fields,
-        // otherwise wrap in code block so it doesn't look like raw blob JSON
         if (typeof rawData.content === 'string') {
-            return { message: rawData.content };
+            return { message: normalizeAiText(rawData.content) };
         }
         const text = rawData.content?.text
             || rawData.content?.content
@@ -326,10 +329,14 @@ export function parseProviderResponse(
                 ? rawData.content.map((c: any) => typeof c === 'string' ? c : c.text || c.content || '').filter(Boolean).join('\n')
                 : null);
         if (text) {
-            return { message: text };
+            return { message: normalizeAiText(text) };
         }
-        // Last resort — wrap in code block with a label
-        return { message: '```json\n' + JSON.stringify(rawData.content, null, 2) + '\n```' };
+        // Last resort — return normalized form
+        const fallback = normalizeAiText(rawData.content);
+        if (fallback) {
+            return { message: fallback };
+        }
+        return { message: JSON.stringify(rawData.content) };
     }
 
     throw new Error('Respons AI kosong.');

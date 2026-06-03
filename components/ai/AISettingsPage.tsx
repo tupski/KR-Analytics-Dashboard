@@ -4,6 +4,8 @@ import { useState, useEffect, useCallback } from 'react';
 import { Brain, Key, Server, Check, AlertCircle, ExternalLink, Eye, Lightbulb, Wrench, Zap, DollarSign, Trash2, Clock, Plus, Copy, Cloud, CloudOff, Download, Upload, Pencil, Sparkles } from 'lucide-react';
 import dynamic from 'next/dynamic';
 
+import { normalizeAiText } from '@/lib/ai/normalizeAiText';
+
 const AIToolsTable = dynamic(() => import('@/components/ai/AIToolsTable'), { ssr: false });
 import TOOL_REGISTRY from '@/lib/ai/toolRegistry';
 import { PROVIDERS, priceTier, allModelsSorted, type ProviderId, type ModelInfo } from '@/lib/ai/models';
@@ -468,28 +470,11 @@ export default function AISettingsPage({ section = 'ai' }: AISettingsPageProps) 
             }
 
             if (res.ok) {
-                // If response is JSON-wrapped, extract content
-                let displayMsg = data.message || 'Koneksi berhasil!';
-                if (displayMsg && (displayMsg.startsWith('{') || displayMsg.startsWith('['))) {
-                    try {
-                        const parsed = JSON.parse(displayMsg);
-                        const extracted = parsed.message?.content
-                            || parsed.content
-                            || parsed.text
-                            || parsed.choices?.[0]?.message?.content
-                            || parsed.message;
-                        if (extracted) displayMsg = extracted;
-                    } catch { /* use as-is */ }
-                }
+                // Centralized normalization — strips any JSON wrapping
+                const displayMsg = normalizeAiText(data.message || 'Koneksi berhasil!');
                 setTestResult({ success: true, message: displayMsg });
             } else {
-                let errMsg = data.error || 'Gagal terhubung';
-                if (errMsg && (errMsg.startsWith('{') || errMsg.startsWith('['))) {
-                    try {
-                        const parsed = JSON.parse(errMsg);
-                        errMsg = parsed.error?.message || parsed.message || parsed.error || errMsg;
-                    } catch { /* use as-is */ }
-                }
+                const errMsg = normalizeAiText(data.error || 'Gagal terhubung');
                 setTestResult({ success: false, message: errMsg });
             }
         } catch (err: unknown) {
@@ -1239,7 +1224,7 @@ export default function AISettingsPage({ section = 'ai' }: AISettingsPageProps) 
                                     {insightTestResult.success ? <Check className="w-4 h-4 text-emerald-600 flex-shrink-0 mt-0.5" /> : <AlertCircle className="w-4 h-4 text-red-600 flex-shrink-0 mt-0.5" />}
                                     <div className="text-xs">
                                         <p className={`font-semibold ${insightTestResult.success ? 'text-emerald-800' : 'text-red-800'}`}>{insightTestResult.success ? 'Insight berhasil digenerate' : 'Gagal'}</p>
-                                        <p className={`mt-0.5 ${insightTestResult.success ? 'text-emerald-700' : 'text-red-700'}`}>{insightTestResult.message}</p>
+                                        <p className={`mt-0.5 ${insightTestResult.success ? 'text-emerald-700' : 'text-red-700'}`}>{normalizeAiText(insightTestResult.message)}</p>
                                     </div>
                                 </div>
                             </div>

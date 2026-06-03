@@ -6,6 +6,7 @@ import { OPENAI_TOOLS, ANTHROPIC_TOOLS, executeTool, type ToolCall } from '@/lib
 import { parseAIResponse } from '@/lib/ai/responseParser';
 import { getHeaderSafeTitle } from '@/lib/utils/headerSafe';
 import { buildKraiSystemPrompt } from '@/lib/ai/krai-system-prompt';
+import { normalizeAiText } from '@/lib/ai/normalizeAiText';
 
 /**
  * KRAI CHAT ROUTE — Conversational AI with tool calling.
@@ -196,12 +197,14 @@ async function runOpenAILoop(
         // Fallback: check for output_text or other content formats
         if (!message) {
             if (data?.output_text) {
-                conversation.push({ role: 'assistant', content: data.output_text });
-                return { message: data.output_text, usage: totalUsage };
+                const normalized = normalizeAiText(data.output_text);
+                conversation.push({ role: 'assistant', content: normalized });
+                return { message: normalized, usage: totalUsage };
             }
             if (data?.content) {
-                conversation.push({ role: 'assistant', content: data.content });
-                return { message: data.content, usage: totalUsage };
+                const normalized = normalizeAiText(data.content);
+                conversation.push({ role: 'assistant', content: normalized });
+                return { message: normalized, usage: totalUsage };
             }
             // Check for content array
             if (Array.isArray(data?.content)) {
@@ -210,8 +213,9 @@ async function runOpenAILoop(
                     .map((c: any) => c.text)
                     .join('\n');
                 if (textContent) {
-                    conversation.push({ role: 'assistant', content: textContent });
-                    return { message: textContent, usage: totalUsage };
+                    const normalized = normalizeAiText(textContent);
+                    conversation.push({ role: 'assistant', content: normalized });
+                    return { message: normalized, usage: totalUsage };
                 }
             }
             throw new Error('Respons AI kosong.');
@@ -226,7 +230,8 @@ async function runOpenAILoop(
 
         const toolCalls = message.tool_calls;
         if (!toolCalls || toolCalls.length === 0) {
-            return { message: message.content || 'Tidak ada respons.', usage: totalUsage };
+            const normalized = normalizeAiText(message.content || 'Tidak ada respons.');
+            return { message: normalized, usage: totalUsage };
         }
 
         // Append assistant message + tool results, then loop
@@ -319,7 +324,8 @@ async function runAnthropicLoop(
         const toolUseBlocks = blocks.filter((b: any) => b.type === 'tool_use');
 
         if (stopReason !== 'tool_use' || toolUseBlocks.length === 0) {
-            return { message: textBlocks.map((b: any) => b.text).join('\n').trim() || 'Tidak ada respons.', usage: totalUsage };
+            const raw = textBlocks.map((b: any) => b.text).join('\n').trim() || 'Tidak ada respons.';
+            return { message: normalizeAiText(raw), usage: totalUsage };
         }
 
         conversation.push({ role: 'assistant', content: blocks });
@@ -493,7 +499,7 @@ Owner ingin analisis mendalam. Ambil waktu untuk:
             try {
                 const result = await callProvider(cand, systemContent, messages);
                 return NextResponse.json({
-                    message: result.message,
+                    message: normalizeAiText(result.message),
                     model: cand.model,
                     provider: cand.provider,
                     usage: result.usage,

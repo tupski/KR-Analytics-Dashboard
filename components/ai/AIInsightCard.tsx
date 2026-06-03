@@ -5,6 +5,7 @@ import { RefreshCw, Sparkles, ChevronDown, ChevronUp, Lightbulb, GitCompareArrow
 import MarkdownRenderer from './MarkdownRenderer';
 import { generateFollowUpQuestions } from '@/lib/ai/followUpQuestions';
 import type { KraiPageContext } from '@/lib/ai/followUpQuestions';
+import { normalizeAiText } from '@/lib/ai/normalizeAiText';
 
 interface AIInsightCardProps {
     prompt: string;
@@ -119,9 +120,13 @@ export default function AIInsightCard({
         if (!forceRefresh) {
             const cached = getClientCached(p, cmp);
             if (cached) {
-                setInsight(cached);
+                // Normalize cache on read — handles old raw JSON cached entries
+                const normalized = normalizeAiText(cached);
+                setInsight(normalized);
+                // Overwrite cache with normalized version
+                setClientCache(p, cmp, normalized);
                 setAiEnabled(true);
-                generateDynamicSuggestions(p, cached);
+                generateDynamicSuggestions(p, normalized);
                 return;
             }
         }
@@ -182,10 +187,12 @@ export default function AIInsightCard({
                 return;
             }
 
-            // Success
-            const msg = data.response?.message || data.response?.text || '';
+            // Success — normalize to ensure no raw JSON passes through
+            const raw = data.response?.message || data.response?.text || '';
+            const msg = normalizeAiText(raw);
             if (msg) {
                 setInsight(msg);
+                // Only cache normalized text — never raw JSON
                 setClientCache(p, cmp, msg);
                 setAiEnabled(true);
                 generateDynamicSuggestions(p, msg);
