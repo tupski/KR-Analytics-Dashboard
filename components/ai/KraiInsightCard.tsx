@@ -17,6 +17,7 @@ import type { FilterState } from '@/components/shared/FilterState';
 import { generateFollowUpQuestions } from '@/lib/ai/followUpQuestions';
 import type { KraiPageContext } from '@/lib/ai/followUpQuestions';
 import { normalizeAiText } from '@/lib/ai/normalizeAiText';
+import { suggestionToUserPrompt } from '@/lib/ai/suggestionHelper';
 
 // ─── Types ───────────────────────────────────────────────────────
 
@@ -98,6 +99,7 @@ export default function KraiInsightCard({
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [followUps, setFollowUps] = useState<string[]>([]);
+    const [expandedSugg, setExpandedSugg] = useState<Record<string, boolean>>({});
     const [isSegarkanLoading, setIsSegarkanLoading] = useState(false);
 
     const dataHash = hashData(dataSummary);
@@ -225,10 +227,11 @@ export default function KraiInsightCard({
         fetchInsight();
     }, [fetchInsight]);
 
-    /** Send follow-up question to KRAI chat with context payload */
+    /** Send follow-up question to KRAI chat with context payload — uses transformed user prompt */
     const handleFollowUp = (q: string) => {
+        const userPrompt = suggestionToUserPrompt(q);
         if (onFollowUpClick) {
-            onFollowUpClick(q, {
+            onFollowUpClick(userPrompt, {
                 pageContext,
                 insightText: insight || '',
                 rangePreset: filters?.rangePreset,
@@ -242,7 +245,7 @@ export default function KraiInsightCard({
             });
         } else {
             // Fallback: dispatch event for chat components
-            window.dispatchEvent(new CustomEvent('ai-chat-prompt-send', { detail: q }));
+            window.dispatchEvent(new CustomEvent('ai-chat-prompt-send', { detail: userPrompt }));
         }
     };
 
@@ -346,17 +349,42 @@ export default function KraiInsightCard({
                                         <span className="text-xs text-blue-600 font-medium">Tanyakan ke KRAI</span>
                                     </div>
                                     <div className="flex flex-col gap-1.5 sm:flex-row sm:flex-wrap">
-                                        {followUps.slice(0, 3).map((q) => (
-                                            <button
-                                                key={q}
-                                                onClick={() => handleFollowUp(q)}
-                                                className="text-xs px-3 py-2 bg-white border border-blue-200 rounded-xl text-blue-700 hover:bg-blue-100 transition-colors text-left flex items-start gap-1.5 sm:max-w-xs cursor-pointer"
-                                                title={`Tanyakan ke KRAI: ${q}`}
-                                            >
-                                                <ChevronRight className="w-3 h-3 flex-shrink-0 mt-0.5" />
-                                                <span className="line-clamp-2">{q}</span>
-                                            </button>
-                                        ))}
+                                        {followUps.slice(0, 3).map((q) => {
+                                            const suggKey = q.slice(0, 20);
+                                            const isExpanded = !!expandedSugg[suggKey];
+                                            const isLong = q.length > 80;
+                                            return (
+                                                <div
+                                                    key={suggKey}
+                                                    className="text-xs bg-white border border-blue-200 rounded-xl text-blue-700 flex items-start gap-1.5 sm:max-w-xs"
+                                                >
+                                                    {/* Chevron — toggle expand */}
+                                                    {isLong && (
+                                                        <button
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                setExpandedSugg(prev => ({ ...prev, [suggKey]: !prev[suggKey] }));
+                                                            }}
+                                                            className="flex-shrink-0 mt-1 ml-2 cursor-pointer hover:bg-blue-100 rounded p-0.5 transition-colors"
+                                                            aria-label={isExpanded ? 'Ciutkan' : 'Perluas'}
+                                                        >
+                                                            <ChevronRight className={`w-3.5 h-3.5 transition-transform duration-200 ${isExpanded ? 'rotate-90' : ''}`} />
+                                                        </button>
+                                                    )}
+                                                    {!isLong && (
+                                                        <ChevronRight className="w-3.5 h-3.5 flex-shrink-0 mt-1 ml-2 text-blue-400" />
+                                                    )}
+                                                    {/* Suggestion body — click sends user intent */}
+                                                    <button
+                                                        onClick={() => handleFollowUp(q)}
+                                                        className="flex-1 py-2 pr-3 text-left cursor-pointer min-w-0"
+                                                        title={q}
+                                                    >
+                                                        <span className={isExpanded ? '' : 'line-clamp-2'}>{q}</span>
+                                                    </button>
+                                                </div>
+                                            );
+                                        })}
                                     </div>
                                 </div>
                             )}

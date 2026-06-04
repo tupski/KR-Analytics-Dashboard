@@ -14,12 +14,13 @@
  */
 
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
-import { Send, Bot, Brain, X, ChevronRight, Copy, Check, AlertTriangle, Eye, Lightbulb, Wrench, Zap, ChevronDown, RotateCw, Pencil } from 'lucide-react';
+import { Send, Bot, Brain, X, ChevronRight, ChevronDown, Copy, Check, AlertTriangle, Eye, Lightbulb, Wrench, Zap, RotateCw, Pencil } from 'lucide-react';
 import MarkdownRenderer from './MarkdownRenderer';
 import ChatModelSelector from './ChatModelSelector';
 import { loadMemory, addMemory, deleteMemory, getMemoryContext, extractMemoryFromConversation, type MemoryEntry } from '@/lib/ai/memory';
 import KraiLogo from '@/components/shared/KraiLogo';
 import { normalizeAiText } from '@/lib/ai/normalizeAiText';
+import { suggestionToUserPrompt } from '@/lib/ai/suggestionHelper';
 import {
     loadConfig,
     setActive,
@@ -525,13 +526,18 @@ export default function AIChatCore({
         }
     }, [input, pendingImage, loading, messages, thinkingMode, visionCapable, addSuggestions, activeProviderId, activeModelId]);
 
+    /** Track expanded suggestions per index */
+    const [expandedSugg, setExpandedSugg] = useState<Record<string, boolean>>({});
+
     /** Fill input instead of sending — used by template/suggestion buttons */
     const handleFillInput = useCallback((text: string) => {
-        setInput(text);
+        // Transform suggestion question into user prompt
+        const userPrompt = suggestionToUserPrompt(text);
+        setInput(userPrompt);
         setTimeout(() => {
             if (inputRef.current) {
                 inputRef.current.focus();
-                const len = text.length;
+                const len = userPrompt.length;
                 if ('setSelectionRange' in inputRef.current) {
                     inputRef.current.setSelectionRange(len, len);
                 }
@@ -770,17 +776,43 @@ export default function AIChatCore({
                         {/* Follow-up suggestions */}
                         {msg.role === 'assistant' && msg.typed && msg.suggestions && msg.suggestions.length > 0 && (
                             <div className={`flex flex-col gap-1.5 ${isFloat ? 'pl-8' : 'pl-9'}`}>
-                                {msg.suggestions.map((q, qi) => (
-                                    <button
-                                        key={qi}
-                                        onClick={() => handleFillInput(q)}
-                                        disabled={loading}
-                                        className={`flex items-start gap-1.5 text-xs px-3 py-2 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-xl text-blue-700 transition-colors disabled:opacity-50 text-left ${isFloat ? 'max-w-[260px]' : 'max-w-md'}`}
-                                    >
-                                        <ChevronRight className="w-3 h-3 flex-shrink-0 mt-0.5" />
-                                        <span className={isFloat ? 'line-clamp-2' : ''}>{q}</span>
-                                    </button>
-                                ))}
+                                {msg.suggestions.map((q, qi) => {
+                                    const suggKey = `${msg.timestamp || idx}-${qi}`;
+                                    const isExpanded = !!expandedSugg[suggKey];
+                                    const isLong = q.length > 80;
+                                    return (
+                                        <div
+                                            key={suggKey}
+                                            className={`flex items-start gap-1.5 text-xs px-3 py-2 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-xl text-blue-700 transition-colors ${isFloat ? 'max-w-[260px]' : 'max-w-md'}`}
+                                        >
+                                            {/* Chevron icon — click to expand/collapse */}
+                                            {isLong && (
+                                                <button
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        setExpandedSugg(prev => ({ ...prev, [suggKey]: !prev[suggKey] }));
+                                                    }}
+                                                    className="flex-shrink-0 mt-0.5 cursor-pointer hover:bg-blue-200 rounded p-0.5 transition-colors"
+                                                    aria-label={isExpanded ? 'Ciutkan' : 'Perluas'}
+                                                    title={isExpanded ? 'Ciutkan' : 'Perluas'}
+                                                >
+                                                    <ChevronRight className={`w-3.5 h-3.5 transition-transform duration-200 ${isExpanded ? 'rotate-90' : ''}`} />
+                                                </button>
+                                            )}
+                                            {!isLong && (
+                                                <ChevronRight className="w-3.5 h-3.5 flex-shrink-0 mt-0.5 text-blue-400" />
+                                            )}
+                                            {/* Suggestion body — click to fill input */}
+                                            <button
+                                                onClick={() => handleFillInput(q)}
+                                                disabled={loading}
+                                                className="flex-1 text-left disabled:opacity-50 cursor-pointer min-w-0"
+                                            >
+                                                <span className={isExpanded ? '' : 'line-clamp-2'}>{q}</span>
+                                            </button>
+                                        </div>
+                                    );
+                                })}
                             </div>
                         )}
                     </div>
