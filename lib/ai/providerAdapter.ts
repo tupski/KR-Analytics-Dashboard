@@ -30,6 +30,15 @@ export interface ProviderResponse {
     };
 }
 
+/** Streaming chunk from provider */
+export interface StreamChunk {
+    contentDelta?: string;
+    thinkingDelta?: string;
+    usage?: Record<string, unknown>;
+    done?: boolean;
+    finishReason?: string;
+}
+
 import { normalizeAiText } from './normalizeAiText';
 
 // ── Detect format ──────────────────────────────────────────────────────────────
@@ -127,6 +136,8 @@ export interface BuildBodyOptions {
     toolChoiceAuto?: boolean;
     maxTokens?: number;
     temperature?: number;
+    /** Enable streaming (OpenAI-compatible adds stream:true + stream_options) */
+    stream?: boolean;
 }
 
 /**
@@ -148,6 +159,7 @@ export function buildProviderBody(
         toolChoiceAuto,
         maxTokens = 1024,
         temperature = 0.7,
+        stream,
     } = options;
 
     // ── Gemini native format ───────────────────────────────────────────────
@@ -196,6 +208,10 @@ export function buildProviderBody(
             body.system = systemContent;
         }
 
+        if (stream) {
+            body.stream = true;
+        }
+
         return body;
     }
 
@@ -228,6 +244,12 @@ export function buildProviderBody(
         if (toolChoiceAuto) {
             body.tool_choice = 'auto';
         }
+    }
+
+    // Streaming
+    if (stream) {
+        body.stream = true;
+        body.stream_options = { include_usage: true };
     }
 
     return body;
@@ -344,4 +366,255 @@ export function parseProviderResponse(
     }
 
     throw new Error('Respons AI kosong.');
+}
+
+// ── Streaming response handler ─────────────────────────────────────────────────
+
+/**
+ * Parse a single SSE text line from an OpenAI-compatible streaming response.
+ * Returns content/thinking deltas and whether the stream is done.
+ */
+function parseOpenAISSELine(line: string): StreamChunk {
+    const result: StreamChunk = {};
+    const trimmed = line.trim();
+    if (!trimmed.startsWith('data:')) return result;
+
+    const payload = trimmed.replace(/^data:\s*/, '').trim();
+    if (!payload || payload === '[DONE]') {
+        if (payload === '[DONE]') result.done = true;
+        return result;
+    }
+
+    try {
+        const parsed = JSON.parse(payload);
+        const choice = parsed?.choices?.[0];
+        if (choice) {
+            const msg = choice.delta || choice.message;
+            if (msg) {
+                if (typeof msg.reasoning_content === 'string' && msg.reasoning_content) {
+                    result.thinkingDelta = msg.reasoning_content;
+                }
+                if (typeof msg.reasoning === 'string' && msg.reasoning) {
+                    result.thinkingDelta = (result.thinkingDelta || '') + msg.reasoning;
+                }
+                if (typeof msg.content === 'string' && msg.content) {
+                    result.contentDelta = msg.content;
+                }
+            }
+            if (choice.finish_reason && choice.finish_reason !== 'null') {
+                result.done = true;
+                result.finishReason = choice.finish_reason;
+            }
+        }
+        if (parsed.usage) {
+            result.usage = parsed.usage as Record<string, unknown>;
+        }
+    } catch {
+        // Skip malformed JSON
+    }
+
+    return result;
+}
+
+/**
+ * Stream an AI provider response as an async generator.
+ * Yields StreamChunk objects with content/thinking deltas.
+ *
+ * Supports:
+ * - OpenAI-compatible SSE (stream: true)
+ * - Anthropic event-stream
+ *
+ * For Gemini native, falls back to non-streaming since the
+ * OpenAI-compatible endpoint is the preferred path.
+ *
+ * @example
+ * ```ts
+ * for await (const chunk of streamProviderResponse(provider, model, key, url, body)) {
+ *   if (chunk.contentDelta) processAnswer(chunk.contentDelta);
+ *   if (chunk.thinkingDelta) processThinking(chunk.thinkingDelta);
+ *   if (chunk.done) break;
+ * }
+ * ```
+ */
+export async function* streamProviderResponse(
+    providerSlug: string,
+    modelId: string,
+    apiKey: string,
+    baseUrl: string | undefined,
+    body: Record<string, any>,
+): AsyncGenerator<StreamChunk> {
+    const format = detectProviderFormat(providerSlug);
+    const { url: resolvedUrl, headers } = resolveProviderRequest(providerSlug, modelId, apiKey, baseUrl);
+
+    // ── Gemini native streaming ─────────────────────────────────────────
+    if (format === 'gemini') {
+        // Gemini native uses :streamGenerateContent endpoint
+        const streamUrl = resolvedUrl.replace(':generateContent', ':streamGenerateContent');
+        const res = await fetch(streamUrl, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify(body),
+        });
+
+        if (!res.ok) {
+            const errorText = await res.text();
+            throw new Error(`AI API error: ${res.status} - ${errorText.substring(0, 300)}`);
+        }
+
+        const reader = res.body?.getReader();
+        if (!reader) throw new Error('Response body is not readable');
+
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        while (true) {
+            const { done: streamDone, value } = await reader.read();
+            if (streamDone) break;
+
+            buffer += decoder.decode(value, { stream: true });
+            // Gemini SSE format uses data: {...}\n
+            const lines = buffer.split('\n');
+            buffer = lines.pop() || '';
+
+            for (const line of lines) {
+                if (!line.trim().startsWith('data:')) continue;
+                const payload = line.trim().replace(/^data:\s*/, '').trim();
+                if (!payload || payload === '[DONE]') {
+                    if (payload === '[DONE]') yield { done: true, finishReason: 'stop' };
+                    continue;
+                }
+                try {
+                    const parsed = JSON.parse(payload);
+                    const candidate = parsed?.candidates?.[0];
+                    if (candidate?.content?.parts?.[0]?.text) {
+                        yield { contentDelta: candidate.content.parts[0].text };
+                    }
+                    if (candidate?.finishReason) {
+                        yield { done: true, finishReason: candidate.finishReason };
+                    }
+                } catch { /* skip */ }
+            }
+        }
+
+        yield { done: true, finishReason: 'stop' };
+        return;
+    }
+
+    // ── Anthropic streaming ────────────────────────────────────────────
+    if (format === 'anthropic') {
+        // Anthropic uses event stream: event: message_start, content_block_delta, etc.
+        const bodyWithStream = { ...body, stream: true };
+        const res = await fetch(resolvedUrl, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify(bodyWithStream),
+        });
+
+        if (!res.ok) {
+            const errorText = await res.text();
+            throw new Error(`AI API error: ${res.status} - ${errorText.substring(0, 300)}`);
+        }
+
+        const reader = res.body?.getReader();
+        if (!reader) throw new Error('Response body is not readable');
+
+        const decoder = new TextDecoder();
+        let buffer = '';
+        let currentEvent = '';
+
+        while (true) {
+            const { done: streamDone, value } = await reader.read();
+            if (streamDone) break;
+
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop() || '';
+
+            for (const line of lines) {
+                const clean = line.trim();
+                if (clean.startsWith('event:')) {
+                    currentEvent = clean.replace(/^event:\s*/, '').trim();
+                } else if (clean.startsWith('data:')) {
+                    const payload = clean.replace(/^data:\s*/, '').trim();
+                    if (!payload) continue;
+
+                    try {
+                        const parsed = JSON.parse(payload);
+                        if (currentEvent === 'content_block_delta') {
+                            const delta = parsed.delta;
+                            if (delta?.type === 'text_delta' && typeof delta.text === 'string') {
+                                yield { contentDelta: delta.text };
+                            }
+                            if (delta?.type === 'thinking_delta' && typeof delta.thinking === 'string') {
+                                yield { thinkingDelta: delta.thinking };
+                            }
+                        } else if (currentEvent === 'message_start' && parsed?.usage) {
+                            yield { usage: parsed.usage as Record<string, unknown> };
+                        } else if (currentEvent === 'message_delta') {
+                            if (parsed?.usage) {
+                                yield { usage: parsed.usage as Record<string, unknown> };
+                            }
+                            if (parsed?.delta?.stop_reason) {
+                                yield { done: true, finishReason: parsed.delta.stop_reason };
+                            }
+                        } else if (currentEvent === 'message_stop') {
+                            yield { done: true, finishReason: 'stop' };
+                        }
+                    } catch { /* skip */ }
+                }
+            }
+        }
+
+        yield { done: true, finishReason: 'stop' };
+        return;
+    }
+
+    // ── OpenAI-compatible streaming ────────────────────────────────────
+    const bodyWithStream = {
+        ...body,
+        stream: true,
+        stream_options: { include_usage: true },
+    };
+
+    const res = await fetch(resolvedUrl, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(bodyWithStream),
+    });
+
+    if (!res.ok) {
+        const errorText = await res.text();
+        throw new Error(`AI API error: ${res.status} - ${errorText.substring(0, 300)}`);
+    }
+
+    const reader = res.body?.getReader();
+    if (!reader) throw new Error('Response body is not readable');
+
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let hasEmittedDone = false;
+
+    while (true) {
+        const { done: streamDone, value } = await reader.read();
+        if (streamDone) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+            const chunk = parseOpenAISSELine(line);
+            if (chunk.thinkingDelta) yield { thinkingDelta: chunk.thinkingDelta };
+            if (chunk.contentDelta) yield { contentDelta: chunk.contentDelta };
+            if (chunk.usage) yield { usage: chunk.usage };
+            if (chunk.done && !hasEmittedDone) {
+                hasEmittedDone = true;
+                yield { done: true, finishReason: chunk.finishReason || 'stop' };
+            }
+        }
+    }
+
+    if (!hasEmittedDone) {
+        yield { done: true, finishReason: 'stop' };
+    }
 }

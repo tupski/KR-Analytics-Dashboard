@@ -7,6 +7,9 @@ import { parseAIResponse } from '@/lib/ai/responseParser';
 import { getHeaderSafeTitle } from '@/lib/utils/headerSafe';
 import { buildKraiSystemPrompt } from '@/lib/ai/krai-system-prompt';
 import { normalizeAiText } from '@/lib/ai/normalizeAiText';
+import { createNDJSONResponse, type NDJSONStreamWriter } from '@/lib/ai/streamHelpers';
+import { streamProviderResponse, type StreamChunk } from '@/lib/ai/providerAdapter';
+import { parseKraiResponse } from '@/lib/ai/kraiResponseParser';
 
 /**
  * KRAI CHAT ROUTE — Conversational AI with tool calling.
@@ -389,11 +392,12 @@ async function runAnthropicLoop(
 export async function POST(request: NextRequest) {
     try {
         const body = await request.json();
-        const { messages, config, thinkingMode, verbose } = body as {
+        const { messages, config, thinkingMode, verbose, stream } = body as {
             messages: any[];
             config: AIConfig;
             thinkingMode?: 'auto' | 'instant' | 'thinking';
             verbose?: boolean;
+            stream?: boolean;
         };
 
         // AUTO-FALLBACK ROUTING
@@ -533,7 +537,58 @@ Owner ingin analisis mendalam. Ambil waktu untuk:
         const systemContent = buildKraiSystemPrompt(memoryContext, quickContext)
             + (thinkingInstruction ? '\n\n' + thinkingInstruction : '');
 
-        // ── Retry loop over candidates with fallback on 429/5xx ─────────────
+        // ═══════════════════════════════════════════════════════════════════
+        // STREAMING PATH — NDJSON events over SSE
+        // ═══════════════════════════════════════════════════════════════════
+        if (stream === true) {
+            return createNDJSONResponse(async (writer) => {
+                let lastError: Error | null = null;
+
+                for (const cand of candidates) {
+                    try {
+                        // Pass the writer into the streaming call
+                        // (streamChat writes thinking/answer/usage/done events directly)
+                        await streamChat(writer, cand, systemContent, messages, verbose);
+                        return; // success — writer already closed
+                    } catch (error: any) {
+                        lastError = error;
+                        const statusMatch = String(error.message || '').match(/AI API error: (\d+)/);
+                        const status = statusMatch ? parseInt(statusMatch[1]) : 0;
+
+                        // 429 or 5xx → try next candidate
+                        if (status === 429 || (status >= 500 && status < 600)) {
+                            const nextLabel = candidates.indexOf(cand) + 1 < candidates.length
+                                ? candidates[candidates.indexOf(cand) + 1].label
+                                : null;
+                            if (nextLabel) {
+                                console.warn(`[KR·AI] ${cand.label} failed with ${status}, falling back to ${nextLabel}`);
+                            }
+                            continue;
+                        }
+                        // 401/403 → fatal
+                        if (status === 401 || status === 403) {
+                            writer.writeError(`Auth error pada ${cand.label} — periksa API key.`);
+                            writer.writeDone('error');
+                            return;
+                        }
+                        // Other → try next
+                        if (candidates.indexOf(cand) + 1 < candidates.length) continue;
+                        throw error;
+                    }
+                }
+
+                // All candidates exhausted
+                const msg = lastError
+                    ? `Gagal menghubungi AI: ${lastError.message}`
+                    : 'Tidak ada provider AI yang tersedia.';
+                writer.writeError(msg);
+                writer.writeDone('error');
+            });
+        }
+
+        // ═══════════════════════════════════════════════════════════════════
+        // NON-STREAMING PATH — existing JSON response
+        // ═══════════════════════════════════════════════════════════════════
         let lastError: Error | null = null;
 
         for (const cand of candidates) {
@@ -680,4 +735,442 @@ async function callProvider(
         default:
             throw new Error(`Provider "${cfg.provider}" tidak didukung`);
     }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// STREAMING FUNCTIONS — NDJSON chat with tool calling
+// ════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Execute a single provider+model call in streaming mode.
+ * Dispatches to the correct streaming loop based on provider format.
+ * Writes NDJSON events (thinking, answer, usage, done) to the writer.
+ */
+async function streamChat(
+    writer: NDJSONStreamWriter,
+    cfg: AIConfig,
+    systemContent: string,
+    messages: any[],
+    verbose?: boolean,
+): Promise<void> {
+    const format = cfg.provider === 'anthropic' ? 'anthropic' : 'openai';
+
+    if (format === 'anthropic') {
+        await runAnthropicStream(writer, cfg, systemContent, messages);
+        return;
+    }
+
+    // OpenAI-compatible (includes deepseek, gemini via compat, openai, groq, openrouter, kiro, openai-compatible)
+    await runOpenAIStream(writer, cfg, systemContent, messages, verbose);
+}
+
+/**
+ * Streaming version of runOpenAILoop — tool-calling loop with streaming final answer.
+ * Same tool loop logic as runOpenAILoop, but the final answer is streamed.
+ */
+async function runOpenAIStream(
+    writer: NDJSONStreamWriter,
+    cfg: AIConfig,
+    systemContent: string,
+    messages: any[],
+    verbose?: boolean,
+): Promise<void> {
+    const apiUrl = getOpenAIEndpoint(cfg);
+    const headers = getOpenAIHeaders(cfg);
+    const conversation: any[] = [
+        { role: 'system', content: systemContent },
+        ...messages.map((m: any) => ({ role: m.role, content: m.content })),
+    ];
+    let totalUsage: Record<string, unknown> = {};
+
+    // Verbose: thinking step
+    if (verbose) {
+        writer.writeThinking('Memahami pertanyaan...\n');
+    }
+
+    for (let iter = 0; iter < MAX_TOOL_ITERATIONS; iter++) {
+        if (verbose) {
+            writer.writeThinking(`Iterasi ke-${iter + 1}: memanggil AI...\n`);
+        }
+
+        const body = {
+            model: cfg.model,
+            messages: conversation,
+            tools: OPENAI_TOOLS,
+            tool_choice: 'auto',
+            temperature: 0.7,
+            max_tokens: 4096,
+        };
+
+        // We use streamProviderResponse for the actual API call
+        // (it handles stream: true automatically)
+        let answerAccumulator = '';
+        let isToolCallIteration = false;
+
+        try {
+            for await (const chunk of streamProviderResponse(
+                cfg.provider,
+                cfg.model,
+                cfg.apiKey,
+                cfg.baseUrl,
+                body,
+            )) {
+                if (chunk.thinkingDelta) {
+                    writer.writeThinking(chunk.thinkingDelta);
+                }
+                if (chunk.contentDelta) {
+                    answerAccumulator += chunk.contentDelta;
+                    // Write answer in real-time, but tool calling
+                    // is detected when there's NO content (just tool_calls)
+                }
+                if (chunk.usage) {
+                    totalUsage = chunk.usage;
+                }
+                if (chunk.done) {
+                    // Stream ended — parse the accumulated response
+                    break;
+                }
+            }
+        } catch (error: any) {
+            // If streaming fails, try non-streaming fallback
+            const nonStreamResult = await runOpenAILoop(
+                apiUrl, headers, cfg.model, systemContent, messages, verbose,
+            );
+            writer.writeAnswer(nonStreamResult.message);
+            if (nonStreamResult.usage) {
+                writer.writeUsage(nonStreamResult.usage as Record<string, unknown>);
+            }
+            writer.writeDone('stop');
+            return;
+        }
+
+        // The streaming response from a tool-call enabled endpoint
+        // returns tool_calls first, then content. We need to handle
+        // the case where content is empty (tool calling) vs. final answer.
+        //
+        // Since streamProviderResponse processes SSE and yields content,
+        // a tool-call response will have empty contentDelta and the tool_calls
+        // will be in the final non-streaming chunk. We need to detect this.
+        //
+        // Strategy: if accumulated content is empty/short and we haven't
+        // finished after a tool call, treat as tool iteration.
+        // Otherwise, it's the final answer.
+
+        // Check if this was a tool-call response by making a non-streaming
+        // request with the same conversation to detect tool calls
+        // (streaming tool_calls are complex to extract from SSE)
+        if (!answerAccumulator || answerAccumulator.length < 5) {
+            // It might be a tool call — verify with a non-streaming parse
+            const detectBody = {
+                model: cfg.model,
+                messages: conversation,
+                tools: OPENAI_TOOLS,
+                tool_choice: 'auto',
+                temperature: 0.7,
+                max_tokens: 4096,
+            };
+
+            let toolCallDetected = false;
+            try {
+                // Quick non-streaming request just for tool call detection
+                const detectRes = await fetch(apiUrl, {
+                    method: 'POST',
+                    headers,
+                    body: JSON.stringify(detectBody),
+                });
+
+                if (detectRes.ok) {
+                    const detectText = await detectRes.text();
+                    const detectData = parseAIResponse(detectText);
+                    const detectChoice = detectData?.choices?.[0];
+                    const detectMessage = detectChoice?.message;
+                    const toolCalls = detectMessage?.tool_calls;
+
+                    if (toolCalls && toolCalls.length > 0) {
+                        toolCallDetected = true;
+
+                        // Accumulate usage
+                        if (detectData.usage) {
+                            totalUsage = {
+                                ...totalUsage,
+                                ...(detectData.usage as Record<string, unknown>),
+                            };
+                        }
+
+                        // Execute tools
+                        conversation.push({
+                            role: 'assistant',
+                            content: detectMessage.content || '',
+                            tool_calls: toolCalls,
+                        });
+
+                        if (verbose) {
+                            writer.writeThinking(`AI akan menggunakan ${toolCalls.length} tool...\n`);
+                        }
+
+                        for (const tc of toolCalls) {
+                            let parsedArgs: Record<string, any> = {};
+                            try {
+                                parsedArgs = JSON.parse(tc.function?.arguments || '{}');
+                            } catch { /* ignore */ }
+
+                            const call: ToolCall = {
+                                name: tc.function?.name || '',
+                                arguments: parsedArgs,
+                            };
+
+                            if (verbose) {
+                                const prettyArgs = JSON.stringify(parsedArgs).slice(0, 200);
+                                writer.writeThinking(`🔍 ${call.name}(${prettyArgs})\n`);
+                            }
+
+                            const result = await executeTool(call);
+
+                            conversation.push({
+                                role: 'tool',
+                                tool_call_id: tc.id,
+                                name: call.name,
+                                content: JSON.stringify(result).slice(0, 12000),
+                            });
+                        }
+
+                        // Continue loop for next iteration
+                        continue;
+                    }
+                }
+            } catch {
+                // Non-streaming fallback
+            }
+
+            if (!toolCallDetected) {
+                // No tool calls, no answer — emit what we have as answer and finish
+                if (answerAccumulator) {
+                    writer.writeAnswer(answerAccumulator);
+                } else {
+                    writer.writeAnswer('Tidak ada respons dari AI.');
+                }
+                if (totalUsage && Object.keys(totalUsage).length > 0) {
+                    writer.writeUsage(totalUsage);
+                }
+                writer.writeDone('stop');
+                return;
+            }
+        } else {
+            // We got content — this is the final answer
+            const normalized = normalizeAiText(answerAccumulator);
+            writer.writeAnswer(normalized);
+            if (totalUsage && Object.keys(totalUsage).length > 0) {
+                writer.writeUsage(totalUsage);
+            }
+            writer.writeDone('stop');
+            return;
+        }
+    }
+
+    // Max iterations reached
+    if (verbose) {
+        writer.writeThinking('Semua data terkumpul, menyusun jawaban...\n');
+    }
+    writer.writeAnswer('Maaf, saya butuh terlalu banyak tool calls untuk menjawab. Coba persempit pertanyaan.');
+    writer.writeDone('stop');
+}
+
+/**
+ * Streaming version of runAnthropicLoop.
+ */
+async function runAnthropicStream(
+    writer: NDJSONStreamWriter,
+    cfg: AIConfig,
+    systemContent: string,
+    messages: any[],
+): Promise<void> {
+    let conversation: any[] = messages.map((m: any) => ({
+        role: m.role,
+        content: m.content,
+    }));
+    let totalUsage: Record<string, unknown> = {};
+
+    for (let iter = 0; iter < MAX_TOOL_ITERATIONS; iter++) {
+        const body = {
+            model: cfg.model,
+            max_tokens: 4096,
+            system: systemContent,
+            tools: ANTHROPIC_TOOLS,
+            messages: conversation,
+        };
+
+        let answerAccumulator = '';
+
+        try {
+            for await (const chunk of streamProviderResponse(
+                cfg.provider,
+                cfg.model,
+                cfg.apiKey,
+                cfg.baseUrl,
+                body,
+            )) {
+                if (chunk.thinkingDelta) {
+                    writer.writeThinking(chunk.thinkingDelta);
+                }
+                if (chunk.contentDelta) {
+                    answerAccumulator += chunk.contentDelta;
+                }
+                if (chunk.usage) {
+                    totalUsage = chunk.usage;
+                }
+                if (chunk.done) break;
+            }
+        } catch (error: any) {
+            // Fallback to non-streaming
+            const fallback = await runAnthropicLoop(
+                cfg.baseUrl || 'https://api.anthropic.com/v1/messages',
+                {
+                    'Content-Type': 'application/json',
+                    'x-api-key': cfg.apiKey,
+                    'anthropic-version': '2023-06-01',
+                },
+                cfg.model || 'claude-haiku-4-20250514',
+                systemContent,
+                messages,
+            );
+            writer.writeAnswer(fallback.message);
+            if (fallback.usage) {
+                writer.writeUsage(fallback.usage as Record<string, unknown>);
+            }
+            writer.writeDone('stop');
+            return;
+        }
+
+        // Check for tool calls (Anthropic returns them in the response)
+        // Since we're streaming, we need to parse the final accumulated content
+        // For simplicity, if no answer content, make a quick non-streaming
+        // detect call, similar to runOpenAIStream
+        if (!answerAccumulator || answerAccumulator.length < 5) {
+            const detectBody = {
+                model: cfg.model,
+                max_tokens: 4096,
+                system: systemContent,
+                tools: ANTHROPIC_TOOLS,
+                messages: conversation,
+            };
+
+            try {
+                const detectRes = await fetch(
+                    cfg.baseUrl || 'https://api.anthropic.com/v1/messages',
+                    {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'x-api-key': cfg.apiKey,
+                            'anthropic-version': '2023-06-01',
+                        },
+                        body: JSON.stringify(detectBody),
+                    },
+                );
+
+                if (detectRes.ok) {
+                    const detectText = await detectRes.text();
+                    const detectData = JSON.parse(detectText);
+                    const blocks = detectData.content || [];
+                    const textBlocks = blocks.filter((b: any) => b.type === 'text');
+                    const toolUseBlocks = blocks.filter((b: any) => b.type === 'tool_use');
+
+                    if (toolUseBlocks.length > 0) {
+                        // Tool call iteration
+                        if (detectData.usage) {
+                            totalUsage = {
+                                ...totalUsage,
+                                ...(detectData.usage as Record<string, unknown>),
+                            };
+                        }
+
+                        conversation.push({ role: 'assistant', content: blocks });
+
+                        const toolResults: any[] = [];
+                        for (const tu of toolUseBlocks) {
+                            const call: ToolCall = {
+                                name: tu.name,
+                                arguments: tu.input || {},
+                            };
+                            const result = await executeTool(call);
+                            toolResults.push({
+                                type: 'tool_result',
+                                tool_use_id: tu.id,
+                                content: JSON.stringify(result).slice(0, 12000),
+                            });
+                        }
+                        conversation.push({ role: 'user', content: toolResults });
+                        continue; // Loop again
+                    }
+
+                    // No tool calls — this is the final answer
+                    const text = textBlocks.map((b: any) => b.text).join('\n').trim();
+                    if (text) {
+                        writer.writeAnswer(normalizeAiText(text));
+                        if (Object.keys(totalUsage).length > 0) {
+                            writer.writeUsage(totalUsage);
+                        }
+                        writer.writeDone('stop');
+                        return;
+                    }
+                }
+            } catch {
+                // Fallback
+            }
+
+            // No answer available
+            writer.writeAnswer('Tidak ada respons dari AI.');
+            writer.writeDone('stop');
+            return;
+        }
+
+        // Have answer content — final answer
+        writer.writeAnswer(normalizeAiText(answerAccumulator));
+        if (Object.keys(totalUsage).length > 0) {
+            writer.writeUsage(totalUsage);
+        }
+        writer.writeDone('stop');
+        return;
+    }
+
+    writer.writeAnswer('Maaf, saya butuh terlalu banyak tool calls untuk menjawab. Coba persempit pertanyaan.');
+    writer.writeDone('stop');
+}
+
+// ── Endpoint/header helpers (mirrors callProvider dispatch) ───────────────
+
+function getOpenAIEndpoint(cfg: AIConfig): string {
+    switch (cfg.provider) {
+        case 'openai': return cfg.baseUrl || 'https://api.openai.com/v1/chat/completions';
+        case 'deepseek': return cfg.baseUrl || 'https://api.deepseek.com/v1/chat/completions';
+        case 'gemini': return cfg.baseUrl || 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions';
+        case 'groq': return cfg.baseUrl || 'https://api.groq.com/openai/v1/chat/completions';
+        case 'openrouter': {
+            let u = cfg.baseUrl || 'https://openrouter.ai/api/v1/chat/completions';
+            if (u.endsWith('/v1')) u = `${u}/chat/completions`;
+            return u;
+        }
+        case 'kiro': {
+            if (!cfg.baseUrl) throw new Error('Base URL Kiro belum dikonfigurasi.');
+            return cfg.baseUrl;
+        }
+        case 'openai-compatible': {
+            let u = cfg.baseUrl || 'https://api.openai.com/v1/chat/completions';
+            if (u.endsWith('/v1')) u = `${u}/chat/completions`;
+            return u;
+        }
+        default: throw new Error(`Provider "${cfg.provider}" tidak didukung`);
+    }
+}
+
+function getOpenAIHeaders(cfg: AIConfig): Record<string, string> {
+    const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${cfg.apiKey}`,
+    };
+    if (cfg.provider === 'openrouter') {
+        headers['HTTP-Referer'] = 'https://kakarama.com';
+        headers['X-Title'] = 'KR Analytics';
+    }
+    return headers;
 }

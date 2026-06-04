@@ -11,10 +11,13 @@ import {
     resolveProviderRequest,
     buildProviderBody,
     parseProviderResponse,
+    streamProviderResponse,
 } from '@/lib/ai/providerAdapter';
 import { parseAIResponse } from '@/lib/ai/responseParser';
 import { buildInsightSystemPrompt } from '@/lib/ai/krai-system-prompt';
 import { normalizeAiText } from '@/lib/ai/normalizeAiText';
+import { createNDJSONResponse, type NDJSONStreamWriter } from '@/lib/ai/streamHelpers';
+import { parseKraiResponse } from '@/lib/ai/kraiResponseParser';
 
 /**
  * AI INSIGHT ROUTE — Lightweight, cacheable, no tool calling.
@@ -78,7 +81,7 @@ interface InsightRequestBody {
  */
 export async function POST(request: NextRequest) {
     try {
-        const body: InsightRequestBody = await request.json();
+        const body: InsightRequestBody & { stream?: boolean } = await request.json();
         const {
             page,
             prompt,
@@ -92,6 +95,7 @@ export async function POST(request: NextRequest) {
             forceRefresh = false,
             withCompare = false,
             dataSummary,
+            stream,
         } = body;
 
         if (!page || !prompt) {
@@ -173,6 +177,10 @@ export async function POST(request: NextRequest) {
         if (!forceRefresh) {
             const cached = await getCachedInsight(cacheKey);
             if (cached) {
+                // If streaming requested, emit cached data as NDJSON (all at once)
+                if (stream === true) {
+                    return emitCachedInsightStream(cached.response);
+                }
                 return NextResponse.json({
                     cached: true,
                     response: cached.response,
@@ -183,6 +191,34 @@ export async function POST(request: NextRequest) {
         }
 
         // ── 4. Generate insight via AI ─────────────────────────────
+        // If streaming requested, use streaming path
+        if (stream === true) {
+            return createNDJSONResponse(async (writer) => {
+                try {
+                    const systemContent = buildInsightSystemPrompt(page, dataSummary, withCompare);
+                    await streamInsight(writer, aiConfig, systemContent, cacheKey, page, settings, {
+                        reportPeriodMode,
+                        rangeStart: startDate,
+                        rangeEnd: endDate,
+                        comparisonStart: comparisonStartDate,
+                        comparisonEnd: comparisonEndDate,
+                    });
+                } catch (aiError: any) {
+                    console.error('[ai/insight] Stream generation failed:', aiError.message);
+                    // Try rule-based fallback
+                    const fallbackText = generateFallbackInsight(page, dataSummary);
+                    if (fallbackText) {
+                        writer.writeAnswer(fallbackText);
+                        writer.writeDone('stop');
+                        return;
+                    }
+                    writer.writeError(aiError.message || 'Gagal menghasilkan insight');
+                    writer.writeDone('error');
+                }
+            });
+        }
+
+        // ── Non-streaming path ─────────────────────────────────────
         try {
             const systemContent = buildInsightSystemPrompt(page, dataSummary, withCompare);
 
@@ -337,6 +373,185 @@ async function callProviderForInsight(
     const data = parseAIResponse(rawText);
     const parsed = parseProviderResponse(cfg.providerSlug, data);
     return parsed;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// STREAMING HELPERS — NDJSON insight generation
+// ════════════════════════════════════════════════════════════════════════════
+
+interface CacheMeta {
+    reportPeriodMode?: string;
+    rangeStart?: string;
+    rangeEnd?: string;
+    comparisonStart?: string;
+    comparisonEnd?: string;
+}
+
+/**
+ * Stream insight generation via provider streaming.
+ * Writes thinking/answer/usage/done events.
+ */
+async function streamInsight(
+    writer: NDJSONStreamWriter,
+    cfg: { providerSlug: string; apiKey: string; modelId: string; baseUrl?: string },
+    systemContent: string,
+    cacheKey: string,
+    page: string,
+    settings: { cacheTtlMinutes?: number },
+    cacheMeta: CacheMeta,
+): Promise<void> {
+    const { url, headers } = resolveProviderRequest(
+        cfg.providerSlug,
+        cfg.modelId,
+        cfg.apiKey,
+        cfg.baseUrl,
+    );
+
+    const body = buildProviderBody(cfg.providerSlug, cfg.modelId, {
+        systemContent,
+        maxTokens: 1024,
+        temperature: 0.7,
+        stream: true,
+    });
+
+    let answerAccumulator = '';
+    let usageData: Record<string, unknown> | undefined;
+
+    try {
+        for await (const chunk of streamProviderResponse(
+            cfg.providerSlug,
+            cfg.modelId,
+            cfg.apiKey,
+            cfg.baseUrl,
+            body,
+        )) {
+            if (chunk.thinkingDelta) {
+                writer.writeThinking(chunk.thinkingDelta);
+            }
+            if (chunk.contentDelta) {
+                answerAccumulator += chunk.contentDelta;
+                writer.writeAnswer(chunk.contentDelta);
+            }
+            if (chunk.usage) {
+                usageData = chunk.usage;
+            }
+            if (chunk.done) break;
+        }
+    } catch {
+        // If streaming fails, fall back to non-streaming with parseKraiResponse
+        const result = await callProviderForInsight(cfg, systemContent);
+        const parsed = parseKraiResponse(result.message);
+        if (parsed.thinking) {
+            writer.writeThinking(parsed.thinking);
+        }
+        writer.writeAnswer(parsed.answer);
+        if (result.usage) {
+            writer.writeUsage(result.usage as Record<string, unknown>);
+        }
+        writer.writeDone(parsed.finishReason || 'stop', parsed.isTruncated);
+
+        // Cache the result
+        const responseData = {
+            message: parsed.answer,
+            model: cfg.modelId,
+            provider: cfg.providerSlug,
+            usage: result.usage,
+            fallback: false,
+        };
+        await setCachedInsight({
+            cacheKey,
+            page,
+            response: responseData,
+            ttlMinutes: settings.cacheTtlMinutes || 30,
+            providerSlug: cfg.providerSlug,
+            modelId: cfg.modelId,
+            reportPeriodMode: cacheMeta.reportPeriodMode,
+            rangeStart: cacheMeta.rangeStart,
+            rangeEnd: cacheMeta.rangeEnd,
+            comparisonStart: cacheMeta.comparisonStart,
+            comparisonEnd: cacheMeta.comparisonEnd,
+        }).catch(() => { });
+        return;
+    }
+
+    // Normalize the accumulated text
+    const normalizedAnswer = normalizeAiText(answerAccumulator);
+
+    // If answer is empty/unusable, try parseKraiResponse for structured extraction
+    if (!normalizedAnswer || normalizedAnswer.length < 10) {
+        // Try parsing the raw accumulated text
+        const parsed = parseKraiResponse(answerAccumulator);
+        const finalAnswer = parsed.answer || answerAccumulator || 'Insight tidak tersedia.';
+        writer.writeAnswer(finalAnswer);
+        if (usageData) writer.writeUsage(usageData);
+        writer.writeDone(parsed.finishReason || 'stop', parsed.isTruncated);
+
+        // Still cache what we got
+        const responseData = {
+            message: finalAnswer,
+            model: cfg.modelId,
+            provider: cfg.providerSlug,
+            usage: usageData,
+            fallback: false,
+        };
+        await setCachedInsight({
+            cacheKey,
+            page,
+            response: responseData,
+            ttlMinutes: settings.cacheTtlMinutes || 30,
+            providerSlug: cfg.providerSlug,
+            modelId: cfg.modelId,
+            reportPeriodMode: cacheMeta.reportPeriodMode,
+            rangeStart: cacheMeta.rangeStart,
+            rangeEnd: cacheMeta.rangeEnd,
+            comparisonStart: cacheMeta.comparisonStart,
+            comparisonEnd: cacheMeta.comparisonEnd,
+        }).catch(() => { });
+        return;
+    }
+
+    // Final successful answer — emit last events and cache
+    if (usageData) {
+        writer.writeUsage(usageData);
+    }
+    writer.writeDone('stop');
+
+    // Cache the final parsed result
+    const responseData = {
+        message: normalizedAnswer,
+        model: cfg.modelId,
+        provider: cfg.providerSlug,
+        usage: usageData,
+        fallback: false,
+    };
+    await setCachedInsight({
+        cacheKey,
+        page,
+        response: responseData,
+        ttlMinutes: settings.cacheTtlMinutes || 30,
+        providerSlug: cfg.providerSlug,
+        modelId: cfg.modelId,
+        reportPeriodMode: cacheMeta.reportPeriodMode,
+        rangeStart: cacheMeta.rangeStart,
+        rangeEnd: cacheMeta.rangeEnd,
+        comparisonStart: cacheMeta.comparisonStart,
+        comparisonEnd: cacheMeta.comparisonEnd,
+    }).catch(() => { });
+}
+
+/**
+ * Emit cached insight as NDJSON (all at once, no real-time since cached).
+ */
+function emitCachedInsightStream(cachedResponse: any): Response {
+    return createNDJSONResponse(async (writer) => {
+        const message = cachedResponse?.message || 'Insight tersimpan.';
+        const usage = cachedResponse?.usage;
+        writer.writeAnswer(message);
+        if (usage) {
+            writer.writeUsage(usage);
+        }
+        writer.writeDone('stop');
+    });
 }
 
 // ── Generic Fallback ─────────────────────────────────────────────────────────
