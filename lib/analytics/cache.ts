@@ -19,6 +19,10 @@ import { createHash } from 'crypto';
 import { queryAnalytics } from './db';
 import { CACHE_TTL } from '@/lib/config/constants';
 
+// Re-export fallback check from parser for use in insight caching
+// Export here so cache consumers don't need to import from parser directly
+export { isFallbackResponse } from '@/lib/ai/kraiResponseParser';
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // Types
 // ═══════════════════════════════════════════════════════════════════════════════

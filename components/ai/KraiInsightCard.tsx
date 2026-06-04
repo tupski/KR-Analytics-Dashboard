@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
     RefreshCw,
     Sparkles,
@@ -11,6 +11,7 @@ import {
     Zap,
     AlertCircle,
     Bot,
+    Clock,
 } from 'lucide-react';
 import MarkdownRenderer from './MarkdownRenderer';
 import { KraiThinkingSteps } from './KraiThinkingSteps';
@@ -141,6 +142,10 @@ async function readInsightNDJSON(
     }
 }
 
+// ─── Stream state type ──────────────────────────────────────────
+
+type InsightStreamState = 'idle' | 'streaming' | 'complete' | 'error' | 'timeout'
+
 // ─── Component ───────────────────────────────────────────────────
 
 export default function KraiInsightCard({
@@ -160,10 +165,14 @@ export default function KraiInsightCard({
     const [followUps, setFollowUps] = useState<string[]>([]);
     const [expandedSugg, setExpandedSugg] = useState<Record<string, boolean>>({});
     const [isSegarkanLoading, setIsSegarkanLoading] = useState(false);
+    const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const abortRef = useRef<AbortController | null>(null);
+    const streamStateRef = useRef<InsightStreamState>('idle');
 
     // ── Streaming state for main insight ──
     const [mainThinkingSteps, setMainThinkingSteps] = useState<string[]>([]);
     const [mainStreaming, setMainStreaming] = useState(false);
+    const [streamState, setStreamState] = useState<InsightStreamState>('idle');
 
     // ── In-card follow-up state ──
     const [followUpAnswers, setFollowUpAnswers] = useState<FollowUpAnswer[]>([]);
@@ -208,8 +217,16 @@ export default function KraiInsightCard({
         setFollowUps(qs);
     }, [pageContext, filters]);
 
+    /** Clear the answer timeout */
+    const clearAnswerTimeout = useCallback(() => {
+        if (timeoutRef.current) {
+            clearTimeout(timeoutRef.current);
+            timeoutRef.current = null;
+        }
+    }, []);
+
     const fetchInsight = useCallback(async (forceRefresh = false) => {
-        // Check cache (skip when forceRefresh)
+        // Check cache (skip when forceRefresh OR regenerate)
         if (!forceRefresh) {
             const cached = getCached(pageContext, dataHash);
             if (cached) {
@@ -219,20 +236,48 @@ export default function KraiInsightCard({
                 updateFollowUps(normalized);
                 setMainThinkingSteps([]);
                 setMainStreaming(false);
+                setStreamState('complete');
                 return;
             }
         }
+
+        // Abort any in-flight request
+        if (abortRef.current) {
+            abortRef.current.abort();
+        }
+        abortRef.current = new AbortController();
 
         setLoading(true);
         setError(null);
         setMainThinkingSteps([]);
         setMainStreaming(true);
+        setStreamState('streaming');
+        streamStateRef.current = 'streaming';
         if (forceRefresh) setIsSegarkanLoading(true);
 
+        // Start 30-second timeout for answer event
+        let gotAnswer = false;
+        clearAnswerTimeout();
+        timeoutRef.current = setTimeout(() => {
+            if (!gotAnswer) {
+                streamStateRef.current = 'timeout';
+                setStreamState('timeout');
+                setError('Waktu tunggu jawaban habis (30 detik). Coba regenerate.');
+                setMainStreaming(false);
+                setLoading(false);
+                setIsSegarkanLoading(false);
+                if (abortRef.current) {
+                    abortRef.current.abort();
+                }
+            }
+        }, 30000);
+
         try {
+            // Use regenerate:true to always bypass server cache
             const res = await fetch('/api/ai/insight', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
+                signal: abortRef.current.signal,
                 body: JSON.stringify({
                     page: pageContext,
                     prompt: buildPrompt(),
@@ -245,12 +290,14 @@ export default function KraiInsightCard({
                     reportPeriodMode: filters?.reportPeriodMode,
                     title,
                     forceRefresh,
+                    regenerate: true, // Always bypass server cache
                     dataSummary,
                     stream: true,
                 }),
             });
 
             if (!res.ok) {
+                setStreamState('error');
                 setError('Gagal mendapatkan insight');
                 setLoading(false);
                 setMainStreaming(false);
@@ -263,6 +310,7 @@ export default function KraiInsightCard({
             if (reader) {
                 let accumulatedAnswer = '';
                 let accumulatedThinking = '';
+                let doneCalled = false;
 
                 await readInsightNDJSON(reader, {
                     onThinking: (delta) => {
@@ -270,13 +318,21 @@ export default function KraiInsightCard({
                         setMainThinkingSteps(splitThinkingSteps(accumulatedThinking));
                     },
                     onAnswer: (delta) => {
+                        gotAnswer = true;
+                        clearAnswerTimeout();
                         accumulatedAnswer += delta;
                         setInsight(normalizeAiText(accumulatedAnswer));
+                        // If answer is short but thinking is long, keep waiting
+                        // (answer may still be streaming — don't mark complete yet)
                     },
                     onDone: (_finishReason, _isTruncated) => {
+                        doneCalled = true;
+                        gotAnswer = true;
+                        clearAnswerTimeout();
                         const final = normalizeAiText(accumulatedAnswer);
                         setInsight(final);
                         setMainStreaming(false);
+                        setStreamState('complete');
                         setMainThinkingSteps(splitThinkingSteps(accumulatedThinking));
                         if (final && final.length > 5) {
                             setCache(pageContext, final, dataHash);
@@ -286,18 +342,40 @@ export default function KraiInsightCard({
                         setIsSegarkanLoading(false);
                     },
                     onError: (message) => {
+                        gotAnswer = true;
+                        clearAnswerTimeout();
+                        setStreamState('error');
                         setError(message);
                         setMainStreaming(false);
                         setLoading(false);
                         setIsSegarkanLoading(false);
                     },
                 });
+
+                // If stream ended without done event, handle gracefully
+                if (!doneCalled) {
+                    gotAnswer = true;
+                    clearAnswerTimeout();
+                    const final = normalizeAiText(accumulatedAnswer);
+                    if (final && final.length > 5) {
+                        setInsight(final);
+                        setStreamState('complete');
+                    } else {
+                        setStreamState('error');
+                        setError('Stream berakhir tanpa jawaban lengkap. Coba regenerate.');
+                    }
+                    setMainStreaming(false);
+                    setLoading(false);
+                    setIsSegarkanLoading(false);
+                }
                 return;
             }
 
             // Non-streaming fallback
+            clearAnswerTimeout();
             const data = await res.json();
             if (data.disabled) {
+                setStreamState('error');
                 setError('Insight tidak tersedia');
                 setLoading(false);
                 setMainStreaming(false);
@@ -305,6 +383,7 @@ export default function KraiInsightCard({
                 return;
             }
             if (data.error && !data.fallback) {
+                setStreamState('error');
                 setError(data.message || 'Gagal mendapatkan insight');
                 setLoading(false);
                 setMainStreaming(false);
@@ -317,21 +396,42 @@ export default function KraiInsightCard({
                 setInsight(msg);
                 setCache(pageContext, msg, dataHash);
                 updateFollowUps(msg);
+                setStreamState('complete');
             } else {
+                setStreamState('error');
                 setError('Insight kosong');
             }
         } catch (err: any) {
+            // Ignore abort errors (from timeout or manual cancel)
+            if (err.name === 'AbortError') {
+                if (streamStateRef.current !== ('timeout' as any)) {
+                    setStreamState('error');
+                    setError('Permintaan dibatalkan.');
+                }
+                setLoading(false);
+                setMainStreaming(false);
+                setIsSegarkanLoading(false);
+                return;
+            }
+            clearAnswerTimeout();
+            setStreamState('error');
             setError(err.message || 'Gagal menghubungi server');
         } finally {
+            if (!gotAnswer) clearAnswerTimeout();
             setLoading(false);
             setMainStreaming(false);
             setIsSegarkanLoading(false);
         }
-    }, [pageContext, buildPrompt, filters, title, dataHash, dataSummary, updateFollowUps]);
+    }, [pageContext, buildPrompt, filters, title, dataHash, dataSummary, updateFollowUps, clearAnswerTimeout]);
 
     // Fetch on mount
     useEffect(() => {
         fetchInsight();
+        // Cleanup on unmount
+        return () => {
+            if (abortRef.current) abortRef.current.abort();
+            if (timeoutRef.current) clearTimeout(timeoutRef.current);
+        };
     }, [fetchInsight]);
 
     /** In-card follow-up: generate answer inside card via streaming */
@@ -518,10 +618,14 @@ export default function KraiInsightCard({
                         </div>
                     )}
 
-                    {/* Error */}
+                    {/* Error / Timeout */}
                     {error && !loading && (
-                        <div className="flex items-center gap-2 p-2.5 rounded-lg bg-amber-50 border border-amber-200 mb-2">
-                            <AlertCircle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                        <div className="flex items-start gap-2 p-2.5 rounded-lg bg-amber-50 border border-amber-200 mb-2">
+                            {streamState === 'timeout' ? (
+                                <Clock className="w-3.5 h-3.5 text-amber-600 shrink-0 mt-0.5" />
+                            ) : (
+                                <AlertCircle className="w-3.5 h-3.5 text-amber-600 shrink-0 mt-0.5" />
+                            )}
                             <div className="flex items-center gap-2 flex-1 min-w-0">
                                 <p className="text-xs text-amber-700">{error}</p>
                                 <button

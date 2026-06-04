@@ -15,6 +15,77 @@ import type { KraiAIResponse, KraiParserInput } from '../../types/ai'
 const REASONING_ONLY_FALLBACK =
     'KRAI belum menerima jawaban final dari model. Model hanya mengirim langkah berpikir dan berhenti sebelum jawaban selesai. Coba regenerate atau pilih model non-reasoning.'
 
+// ── Fallback patterns for cache quality check ────────────────────────────
+
+const FALLBACK_PATTERNS = [
+    'Insight tidak tersedia',
+    'KRAI belum menerima jawaban final',
+    'Jawaban terpotong karena batas token',
+    'Model selesai menganalisis',
+] as const
+
+/**
+ * Check if an answer is a fallback/error response that should NOT be cached.
+ * Returns true for empty, very short, or known fallback messages.
+ */
+export function isFallbackResponse(answer: string): boolean {
+    if (!answer || answer.trim().length < 10) return true
+    return FALLBACK_PATTERNS.some(p => answer.includes(p))
+}
+
+// ── Extract answer from reasoning text (when content is empty) ──────────
+
+/**
+ * Try to extract a usable answer from reasoning/thinking text.
+ * Only works for long reasoning (>200 chars) where the model likely
+ * wrote a draft answer inside its reasoning chain.
+ *
+ * Strategy:
+ * 1. Split thinking into paragraphs
+ * 2. Check last 2 paragraphs for substantive content (non-planning)
+ * 3. Fallback to last single paragraph if substantial
+ * 4. Return null if thinking is too short or looks like planning only
+ */
+export function extractAnswerFromThinking(thinking: string): string | null {
+    if (!thinking || thinking.length < 200) return null
+
+    const paragraphs = thinking.split('\n').filter(p => p.trim().length > 0)
+    if (paragraphs.length === 0) return null
+
+    // Step indicators — if text starts with these, it's likely planning
+    const planningIndicators = /^(first|second|third|finally|next|langkah|step|mari|pertama|1\.|2\.|3\.|sekarang|kemudian|setelah|sebelum)/i
+
+    // Try last 2 paragraphs — reasoning often has final answer at the end
+    const lastParts = paragraphs.slice(-2)
+    const combined = lastParts.join('\n').trim()
+
+    if (combined.length > 80 && !planningIndicators.test(combined)) {
+        return combined
+    }
+
+    // Try last single paragraph
+    const lastPara = paragraphs[paragraphs.length - 1].trim()
+    if (lastPara.length > 60 && !planningIndicators.test(lastPara)) {
+        return lastPara
+    }
+
+    return null
+}
+
+/**
+ * Get a contextual fallback message based on finish reason and thinking length.
+ * More informative than the blanket "tidak tersedia" message.
+ */
+export function getContextualFallback(finishReason?: string, thinking?: string): string {
+    if (finishReason === 'length') {
+        return 'Jawaban terpotong karena batas token. Coba naikkan max token atau gunakan model lain.'
+    }
+    if (thinking && thinking.length > 300) {
+        return `Model selesai menganalisis (${thinking.length} karakter) tetapi belum menghasilkan jawaban final dalam format yang bisa ditampilkan. Coba regenerate atau gunakan model non-reasoning.`
+    }
+    return REASONING_ONLY_FALLBACK
+}
+
 // ── Main parser ───────────────────────────────────────────────────────────
 
 /**
@@ -392,15 +463,7 @@ function parseSSEInput(text: string): KraiAIResponse {
         }
     }
 
-    // If we have no answer but got thinking from SSE, apply fallback
-    const hasAnswer = answer.trim().length > 0
-    const hasThinking = thinking.trim().length > 0
-
-    if (!hasAnswer && hasThinking) {
-        answer = REASONING_ONLY_FALLBACK
-    }
-
-    // Determine finish reason
+    // Determine finish reason (extract BEFORE using in fallback)
     let finishReason: KraiAIResponse['finishReason'] = 'stop'
     let isTruncated = false
 
@@ -411,6 +474,19 @@ function parseSSEInput(text: string): KraiAIResponse {
             isTruncated = true
         } else if (fr) {
             finishReason = fr
+        }
+    }
+
+    // If we have no answer but got thinking from SSE, try to extract from reasoning
+    const hasAnswer = answer.trim().length > 0
+    const hasThinking = thinking.trim().length > 0
+
+    if (!hasAnswer && hasThinking) {
+        const extracted = extractAnswerFromThinking(thinking)
+        if (extracted) {
+            answer = extracted
+        } else {
+            answer = getContextualFallback(finishReason ?? undefined, thinking)
         }
     }
 
@@ -456,10 +532,14 @@ function extractFromObject(obj: Record<string, unknown>): KraiAIResponse {
     const usage = extractUsage(obj)
     const isTruncated = finishReason === 'length'
 
-    // Empty content + reasoning present → fallback
+    // Empty content + reasoning present → try extraction, then contextual fallback
     const hasAnswer = answer.trim().length > 0
     const hasThinking = thinking.trim().length > 0
-    const finalAnswer = !hasAnswer && hasThinking ? REASONING_ONLY_FALLBACK : answer
+    let finalAnswer = answer
+    if (!hasAnswer && hasThinking) {
+        const extracted = extractAnswerFromThinking(thinking)
+        finalAnswer = extracted || getContextualFallback(finishReason ?? undefined, thinking)
+    }
 
     return {
         answer: sanitizeAnswer(finalAnswer),

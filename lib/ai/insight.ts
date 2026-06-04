@@ -11,6 +11,7 @@
 import { createServerClient } from '@/lib/supabase/server';
 import { loadAllProviderConfigs } from '@/lib/ai/configServer';
 import { createHash } from 'crypto';
+import { isFallbackResponse } from '@/lib/ai/kraiResponseParser';
 
 // ── Cache Key ────────────────────────────────────────────────────────────────
 
@@ -99,6 +100,13 @@ export interface SetCacheInput {
  * Uses cache_key as the conflict target (upsert).
  */
 export async function setCachedInsight(input: SetCacheInput): Promise<void> {
+    // Don't cache fallback/error responses — let next request try fresh
+    const responseMessage = input.response?.message || input.response?.text || '';
+    if (isFallbackResponse(responseMessage)) {
+        console.log('[insight] Skipping cache for fallback response:', responseMessage.substring(0, 60));
+        return;
+    }
+
     const supabase = createServerClient();
     const now = new Date();
     const expiresAt = new Date(now.getTime() + input.ttlMinutes * 60 * 1000);

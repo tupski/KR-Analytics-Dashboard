@@ -17,7 +17,7 @@ import { parseAIResponse } from '@/lib/ai/responseParser';
 import { buildInsightSystemPrompt } from '@/lib/ai/krai-system-prompt';
 import { normalizeAiText } from '@/lib/ai/normalizeAiText';
 import { createNDJSONResponse, type NDJSONStreamWriter } from '@/lib/ai/streamHelpers';
-import { parseKraiResponse } from '@/lib/ai/kraiResponseParser';
+import { parseKraiResponse, extractAnswerFromThinking, getContextualFallback } from '@/lib/ai/kraiResponseParser';
 
 /**
  * AI INSIGHT ROUTE — Lightweight, cacheable, no tool calling.
@@ -62,6 +62,7 @@ interface InsightRequestBody {
     reportPeriodMode?: string;
     title?: string;
     forceRefresh?: boolean;
+    regenerate?: boolean;
     withCompare?: boolean;
     /** Structured data summary passed by each page for contextual insights */
     dataSummary?: Record<string, any>;
@@ -93,6 +94,7 @@ export async function POST(request: NextRequest) {
             comparisonEndDate,
             reportPeriodMode,
             forceRefresh = false,
+            regenerate = false,
             withCompare = false,
             dataSummary,
             stream,
@@ -173,8 +175,9 @@ export async function POST(request: NextRequest) {
             modelId: aiConfig.modelId,
         });
 
-        // ── 3. Check cache (skip if forceRefresh) ──────────────────
-        if (!forceRefresh) {
+        // ── 3. Check cache (skip if forceRefresh OR regenerate) ────
+        //    regenerate=true explicitly bypasses cache so user gets fresh answer
+        if (!forceRefresh && !regenerate) {
             const cached = await getCachedInsight(cacheKey);
             if (cached) {
                 // If streaming requested, emit cached data as NDJSON (all at once)
@@ -415,7 +418,10 @@ async function streamInsight(
     });
 
     let answerAccumulator = '';
+    let thinkingAccumulator = '';
     let usageData: Record<string, unknown> | undefined;
+    let finishReason: string | undefined;
+    let isTruncated = false;
 
     try {
         for await (const chunk of streamProviderResponse(
@@ -426,6 +432,7 @@ async function streamInsight(
             body,
         )) {
             if (chunk.thinkingDelta) {
+                thinkingAccumulator += chunk.thinkingDelta;
                 writer.writeThinking(chunk.thinkingDelta);
             }
             if (chunk.contentDelta) {
@@ -434,6 +441,9 @@ async function streamInsight(
             }
             if (chunk.usage) {
                 usageData = chunk.usage;
+            }
+            if (chunk.finishReason) {
+                finishReason = chunk.finishReason;
             }
             if (chunk.done) break;
         }
@@ -444,15 +454,17 @@ async function streamInsight(
         if (parsed.thinking) {
             writer.writeThinking(parsed.thinking);
         }
-        writer.writeAnswer(parsed.answer);
+        // Always emit at least one answer event — never leave client hanging
+        const finalAnswer = parsed.answer || 'Insight tidak tersedia.';
+        writer.writeAnswer(finalAnswer);
         if (result.usage) {
             writer.writeUsage(result.usage as Record<string, unknown>);
         }
         writer.writeDone(parsed.finishReason || 'stop', parsed.isTruncated);
 
-        // Cache the result
+        // Cache result (setCachedInsight skips fallbacks internally)
         const responseData = {
-            message: parsed.answer,
+            message: finalAnswer,
             model: cfg.modelId,
             provider: cfg.providerSlug,
             usage: result.usage,
@@ -477,28 +489,38 @@ async function streamInsight(
     // Normalize the accumulated text
     const normalizedAnswer = normalizeAiText(answerAccumulator);
 
-    // If answer is empty/unusable, try parseKraiResponse for structured extraction
+    // If answer is empty/unusable, use parseKraiResponse for structured extraction
+    // This handles: reasoning-only responses, truncated content, etc.
     if (!normalizedAnswer || normalizedAnswer.length < 10) {
-        // Try parsing the raw accumulated text
-        const parsed = parseKraiResponse(answerAccumulator);
-        const finalAnswer = parsed.answer || answerAccumulator || 'Insight tidak tersedia.';
+        // Pass accumulated thinking + raw answer to parser for extraction
+        const rawText = answerAccumulator || thinkingAccumulator || '';
+        const parsed = parseKraiResponse(rawText || '{}');
+        // If parser still returned empty, try direct extraction from thinking
+        let finalAnswer = parsed.answer || '';
+        if (!finalAnswer && thinkingAccumulator) {
+            finalAnswer = extractAnswerFromThinking(thinkingAccumulator) || getContextualFallback(finishReason, thinkingAccumulator);
+        }
+        if (!finalAnswer) {
+            finalAnswer = 'Insight tidak tersedia.';
+        }
+        // Always emit answer event — never leave client waiting for missing event
         writer.writeAnswer(finalAnswer);
         if (usageData) writer.writeUsage(usageData);
-        writer.writeDone(parsed.finishReason || 'stop', parsed.isTruncated);
+        writer.writeDone(parsed.finishReason || finishReason || 'stop', parsed.isTruncated || isTruncated);
 
-        // Still cache what we got
+        // Don't cache fallback — skipCache logic in setCachedInsight handles this
         const responseData = {
             message: finalAnswer,
             model: cfg.modelId,
             provider: cfg.providerSlug,
             usage: usageData,
-            fallback: false,
+            fallback: true,
         };
         await setCachedInsight({
             cacheKey,
             page,
             response: responseData,
-            ttlMinutes: settings.cacheTtlMinutes || 30,
+            ttlMinutes: 5, // Short TTL so retry happens soon
             providerSlug: cfg.providerSlug,
             modelId: cfg.modelId,
             reportPeriodMode: cacheMeta.reportPeriodMode,
@@ -514,9 +536,9 @@ async function streamInsight(
     if (usageData) {
         writer.writeUsage(usageData);
     }
-    writer.writeDone('stop');
+    writer.writeDone(finishReason || 'stop', isTruncated);
 
-    // Cache the final parsed result
+    // Cache the final parsed result (setCachedInsight skips fallbacks)
     const responseData = {
         message: normalizedAnswer,
         model: cfg.modelId,
