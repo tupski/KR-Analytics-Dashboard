@@ -47,7 +47,10 @@ export function KraiThinkingSteps({
       {isExpanded && (
         <div className="max-h-48 overflow-y-auto space-y-1 px-3 pb-2">
           {displaySteps.map((step, i) => (
-            <div key={i} className="flex gap-2">
+            <div
+              key={i}
+              className={`flex gap-2 ${isStreaming && i === steps.length - 1 ? 'animate-fade-in' : ''}`}
+            >
               <span className="text-gray-400 shrink-0 text-xs w-4 text-right">{i + 1}.</span>
               <p className="text-xs text-gray-600 leading-relaxed">{step}</p>
             </div>

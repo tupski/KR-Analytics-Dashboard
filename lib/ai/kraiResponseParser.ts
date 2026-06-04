@@ -264,24 +264,48 @@ export function sanitizeAnswer(text: string): string {
 /**
  * Split raw thinking text into numbered step chunks.
  *
- * Rules:
- * - Split by double newline or paragraph breaks
- * - If single paragraph < 200 chars, return as single step
- * - If multiple paragraphs, each paragraph = 1 step
- * - Clean up empty steps
+ * Strategies (in order of preference):
+ * 1. Double newline paragraphs
+ * 2. Single newline lines
+ * 3. Sentence boundaries (. ! ?) followed by uppercase or step keywords
+ * 4. Explicit step markers (1., 2., Langkah, Step, -, •)
+ * 5. Fallback: return as single step
  */
 export function splitThinkingSteps(thinking: string): string[] {
-    if (!thinking) return []
+    if (!thinking || !thinking.trim()) return []
 
-    // Split by double newline (paragraph break)
-    const paragraphs = thinking.split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean)
+    const text = thinking.trim()
 
-    if (paragraphs.length === 0) return []
-    if (paragraphs.length === 1 && paragraphs[0].length < 200) {
-        return [paragraphs[0]]
+    // Strategy 1: Double newline paragraphs
+    const paragraphs = text.split(/\n\s*\n/).map((s) => s.trim()).filter(Boolean)
+    if (paragraphs.length > 1) {
+        return paragraphs
     }
 
-    return paragraphs
+    // Strategy 2: Single newline lines
+    const lines = text.split('\n').map((s) => s.trim()).filter(Boolean)
+    if (lines.length > 1) {
+        return lines
+    }
+
+    // Strategy 3: Sentence boundaries (. ! ?) followed by capital letter or step keywords
+    // Use lookahead with character class for leading uppercase / digit / quote and
+    // alternation for known step-starting keywords
+    const sentences = text.split(
+        /(?<=[.!?])\s+(?=[A-Z"'"]|Langkah|第一步|思考|分析|首先|然后|最后|第一|第二|第三|第四|第五|Step|First|Second|Third|Finally|Next|Then|Now)/,
+    )
+    if (sentences.length > 1) {
+        return sentences.map((s) => s.trim()).filter(Boolean)
+    }
+
+    // Strategy 4: Explicit step markers (number, bullet, Langkah, Step)
+    const steps = text.split(/\n\s*(?:\d+[.)]|\*|[-•]|Langkah\s+\d+|Step\s+\d+)/)
+    if (steps.length > 1) {
+        return steps.map((s) => s.trim()).filter(Boolean)
+    }
+
+    // Fallback: Single step
+    return [text]
 }
 
 // ── Internal helpers ──────────────────────────────────────────────────
