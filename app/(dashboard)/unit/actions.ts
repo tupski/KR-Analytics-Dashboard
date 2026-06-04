@@ -86,7 +86,7 @@ export async function fetchUnits(
                 .from('transactions')
                 .select('room_number, apartment_location, customer_name')
                 .lte('checkin_at', now)
-                .gte('checkout_at', now);
+                .or(`checkout_at.gte.${now},checkout_at.is.null`);
 
             activeTransactions?.forEach((tx: any) => {
                 const key = `${tx.apartment_location}-${tx.room_number}`;
