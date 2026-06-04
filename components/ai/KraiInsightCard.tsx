@@ -448,8 +448,11 @@ export default function KraiInsightCard({
             thinkingSteps: [],
             isStreaming: true,
         };
-        setFollowUpAnswers(prev => [...prev, newFollowUp]);
-        setActiveFollowUpIndex(followUpAnswers.length); // point to newest
+        setFollowUpAnswers(prev => {
+            const next = [...prev, newFollowUp];
+            setActiveFollowUpIndex(next.length - 1); // point to newest
+            return next;
+        });
 
         try {
             const res = await fetch('/api/ai/chat', {
