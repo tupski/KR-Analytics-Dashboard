@@ -3,10 +3,12 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { RefreshCw, Sparkles, ChevronDown, ChevronUp, Lightbulb, GitCompareArrows, ChevronRight, Zap, AlertCircle } from 'lucide-react';
 import MarkdownRenderer from './MarkdownRenderer';
+import { KraiThinkingSteps } from './KraiThinkingSteps';
 import { generateFollowUpQuestions } from '@/lib/ai/followUpQuestions';
 import type { KraiPageContext } from '@/lib/ai/followUpQuestions';
 import { normalizeAiText } from '@/lib/ai/normalizeAiText';
 import { suggestionToUserPrompt } from '@/lib/ai/suggestionHelper';
+import { parseKraiResponse, splitThinkingSteps } from '@/lib/ai/kraiResponseParser';
 
 interface AIInsightCardProps {
     prompt: string;
@@ -230,11 +232,14 @@ export default function AIInsightCard({
         fetchInsight(currentPrompt, next);
     };
 
-    /** Inline follow-up: generate answer inside the card via chat API */
+    /** Inline follow-up: generate answer inside the card via streaming chat API */
+    const [followUpThinkingSteps, setFollowUpThinkingSteps] = useState<string[]>([]);
+
     const handleFollowUpQuestion = async (q: string) => {
         setFollowUpQuestion(q);
         setFollowUpAnswer(null);
         setFollowUpError(null);
+        setFollowUpThinkingSteps([]);
         setFollowUpLoading(true);
 
         try {
@@ -249,17 +254,66 @@ export default function AIInsightCard({
                         provider: 'auto',
                         model: 'auto',
                     },
+                    stream: true,
                 }),
             });
 
             if (!res.ok) {
-                const err = await res.json();
+                const err = await res.json().catch(() => ({}));
                 throw new Error(err.error || `Gagal: ${res.status}`);
             }
 
+            // Try NDJSON streaming
+            const reader = res.body?.getReader();
+            if (reader) {
+                let accumulatedAnswer = '';
+                let accumulatedThinking = '';
+                const decoder = new TextDecoder();
+                let buffer = '';
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+
+                    buffer += decoder.decode(value, { stream: true });
+                    const lines = buffer.split('\n');
+                    buffer = lines.pop() || '';
+
+                    for (const line of lines) {
+                        const trimmed = line.trim();
+                        if (!trimmed) continue;
+                        try {
+                            const event = JSON.parse(trimmed);
+                            switch (event.type) {
+                                case 'thinking':
+                                    accumulatedThinking += event.delta || '';
+                                    setFollowUpThinkingSteps(splitThinkingSteps(accumulatedThinking));
+                                    break;
+                                case 'answer':
+                                    accumulatedAnswer += event.delta || '';
+                                    setFollowUpAnswer(accumulatedAnswer);
+                                    break;
+                                case 'done':
+                                    setFollowUpAnswer(normalizeAiText(accumulatedAnswer || 'KRAI belum menerima jawaban...'));
+                                    setFollowUpThinkingSteps(splitThinkingSteps(accumulatedThinking));
+                                    setFollowUpLoading(false);
+                                    break;
+                                case 'error':
+                                    setFollowUpError(event.message || 'Terjadi kesalahan.');
+                                    setFollowUpLoading(false);
+                                    break;
+                            }
+                        } catch { /* skip */ }
+                    }
+                }
+                return;
+            }
+
+            // Non-streaming fallback with parseKraiResponse
             const data = await res.json();
-            const answer = normalizeAiText(data.message || '');
-            setFollowUpAnswer(answer || 'Tidak ada jawaban.');
+            const parsed = parseKraiResponse(data.message || '');
+            setFollowUpAnswer(parsed.answer || 'Tidak ada jawaban.');
+            setFollowUpThinkingSteps(parsed.thinkingSteps);
         } catch (err: any) {
             setFollowUpError(err.message || 'Gagal menjawab pertanyaan');
         } finally {
@@ -462,7 +516,16 @@ export default function AIInsightCard({
                                 {followUpQuestion}
                             </div>
 
-                            {followUpLoading && (
+                            {/* Thinking steps */}
+                            {followUpThinkingSteps.length > 0 && (
+                                <KraiThinkingSteps
+                                    steps={followUpThinkingSteps}
+                                    isStreaming={followUpLoading}
+                                    isComplete={!followUpLoading}
+                                />
+                            )}
+
+                            {followUpLoading && !followUpAnswer && (
                                 <div className="flex items-center gap-2 text-sm text-blue-600 py-2">
                                     <div className="flex gap-1">
                                         <div className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></div>
@@ -473,7 +536,7 @@ export default function AIInsightCard({
                                 </div>
                             )}
 
-                            {followUpError && (
+                            {followUpError && !followUpLoading && (
                                 <div className="flex items-center gap-2 p-2 rounded-lg bg-red-50 border border-red-200">
                                     <AlertCircle className="w-3 h-3 text-red-500 shrink-0" />
                                     <span className="text-xs text-red-700">{followUpError}</span>
@@ -493,6 +556,7 @@ export default function AIInsightCard({
                                         setFollowUpQuestion(null);
                                         setFollowUpAnswer(null);
                                         setFollowUpError(null);
+                                        setFollowUpThinkingSteps([]);
                                     }}
                                     className="text-xs text-gray-400 hover:text-gray-600"
                                 >

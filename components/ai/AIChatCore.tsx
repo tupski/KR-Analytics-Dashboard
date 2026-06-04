@@ -8,7 +8,7 @@
  * - Thinking modes: Auto | Instant | Thinking
  * - Image paste (vision-capable models only)
  * - Copy button + timestamp + model badge per assistant message
- * - Animated typewriter loading states
+ * - NDJSON streaming with thinking steps
  * - Dynamic follow-up suggestions
  * - Italic foreign word emphasis (handled in MarkdownRenderer)
  */
@@ -17,10 +17,12 @@ import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { Send, Bot, Brain, X, ChevronRight, ChevronDown, Copy, Check, AlertTriangle, Eye, Lightbulb, Wrench, Zap, RotateCw, Pencil, Search, Loader2 } from 'lucide-react';
 import MarkdownRenderer from './MarkdownRenderer';
 import ChatModelSelector from './ChatModelSelector';
+import { KraiThinkingSteps } from './KraiThinkingSteps';
 import { loadMemory, addMemory, deleteMemory, getMemoryContext, extractMemoryFromConversation, type MemoryEntry } from '@/lib/ai/memory';
 import KraiLogo from '@/components/shared/KraiLogo';
 import { normalizeAiText } from '@/lib/ai/normalizeAiText';
 import { suggestionToUserPrompt } from '@/lib/ai/suggestionHelper';
+import { splitThinkingSteps, parseKraiResponse } from '@/lib/ai/kraiResponseParser';
 import {
     loadConfig,
     setActive,
@@ -63,6 +65,17 @@ export interface ChatMessage {
         detail?: string;
         data?: any;
     }>;
+    // ── NDJSON streaming fields ──
+    /** Raw accumulated thinking text from NDJSON thinking events */
+    thinking?: string;
+    /** Thinking split into step chunks for display via KraiThinkingSteps */
+    thinkingSteps?: string[];
+    /** True while NDJSON stream is active */
+    isStreaming?: boolean;
+    /** True if truncated by token limit */
+    isTruncated?: boolean;
+    /** Reason why generation finished */
+    finishReason?: string;
 }
 
 // ── Loading indicator — pure CSS dots, zero JS state ────────────────────────
@@ -101,6 +114,66 @@ function AssistantMessage({ content }: { content: string }) {
 
 // ── API ──────────────────────────────────────────────────────────────────────
 
+/**
+ * Read NDJSON stream from a fetch response body.
+ * Calls onThinking(delta), onAnswer(delta), onUsage(data), onDone(event), onError(msg).
+ */
+async function readNDJSONStream(
+    reader: ReadableStreamDefaultReader<Uint8Array>,
+    callbacks: {
+        onThinking: (delta: string) => void;
+        onAnswer: (delta: string) => void;
+        onUsage: (data: Record<string, unknown>) => void;
+        onDone: (finishReason: string, isTruncated: boolean) => void;
+        onError: (message: string) => void;
+    },
+): Promise<void> {
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed) continue;
+            try {
+                const event = JSON.parse(trimmed);
+                switch (event.type) {
+                    case 'thinking':
+                        callbacks.onThinking(event.delta || '');
+                        break;
+                    case 'answer':
+                        callbacks.onAnswer(event.delta || '');
+                        break;
+                    case 'usage':
+                        callbacks.onUsage(event.data || {});
+                        break;
+                    case 'done':
+                        callbacks.onDone(event.finishReason || 'stop', !!event.isTruncated);
+                        break;
+                    case 'error':
+                        callbacks.onError(event.message || 'Terjadi kesalahan.');
+                        break;
+                }
+            } catch {
+                // Skip malformed lines
+            }
+        }
+    }
+}
+
+/**
+ * Send chat message — tries NDJSON streaming first, falls back to non-streaming.
+ *
+ * When streaming: returns a promise that resolves when stream completes.
+ * When non-streaming (fallback): returns parsed result directly.
+ */
 async function sendChat(
     apiMessages: { role: string; content: string }[],
     memoryContext: string,
@@ -108,8 +181,15 @@ async function sendChat(
     needVision: boolean,
     activeProvider: ProviderId | 'auto',
     activeModel: string,
-): Promise<{ message: string; model?: string; provider?: string; usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number }; steps?: any[] }> {
-    // API keys are loaded server-side from DB — client never sends full keys
+    streamingCallbacks?: {
+        onThinking: (delta: string) => void;
+        onAnswer: (delta: string) => void;
+        onUsage: (data: Record<string, unknown>) => void;
+        onDone: (finishReason: string, isTruncated: boolean) => void;
+        onError: (message: string) => void;
+    },
+): Promise<{ message: string; model?: string; provider?: string; usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number }; steps?: any[]; isTruncated?: boolean; finishReason?: string } | null> {
+    // Always request streaming
     const res = await fetch('/api/ai/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -122,12 +202,46 @@ async function sendChat(
             thinkingMode,
             memoryContext,
             verbose: true,
+            stream: true,
         }),
     });
+
     if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.error || `HTTP ${res.status}`);
+        // Try non-streaming fallback
+        const fallbackRes = await fetch('/api/ai/chat', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                messages: apiMessages,
+                config: {
+                    provider: activeProvider,
+                    model: activeModel,
+                },
+                thinkingMode,
+                memoryContext,
+                verbose: true,
+            }),
+        });
+        if (!fallbackRes.ok) {
+            const err = await fallbackRes.json();
+            throw new Error(err.error || `HTTP ${fallbackRes.status}`);
+        }
+        return await fallbackRes.json();
     }
+
+    // If streaming callbacks provided, read NDJSON stream
+    if (streamingCallbacks) {
+        const reader = res.body?.getReader();
+        if (!reader) {
+            // No reader — try parsing as JSON (non-streaming response)
+            const data = await res.json();
+            return data;
+        }
+        await readNDJSONStream(reader, streamingCallbacks);
+        return null; // Stream fully consumed via callbacks
+    }
+
+    // No streaming callbacks — read full response as JSON
     return await res.json();
 }
 
@@ -492,8 +606,18 @@ export default function AIChatCore({
             timestamp: Date.now(),
             imageDataUrl: pendingImage || undefined,
         };
-        const newMessages: ChatMessage[] = [...messages, userMessage];
-        setMessages(newMessages);
+
+        // ── NDJSON streaming: create placeholder assistant message ──
+        const placeholderAssistant: ChatMessage = {
+            role: 'assistant',
+            content: '',
+            thinking: '',
+            thinkingSteps: [],
+            isStreaming: true,
+            timestamp: Date.now(),
+        };
+        const baseMessages: ChatMessage[] = [...messages, userMessage];
+        setMessages([...baseMessages, placeholderAssistant]);
         setInputAndNotify('');
         setPendingImage(null);
         setError(null);
@@ -501,8 +625,7 @@ export default function AIChatCore({
 
         try {
             const memCtx = getMemoryContext();
-            // For vision: send content as array; otherwise just text
-            const apiMessages = newMessages.map(m => {
+            const apiMessages = baseMessages.map(m => {
                 if (m.role === 'user' && m.imageDataUrl && visionCapable) {
                     return {
                         role: m.role,
@@ -515,35 +638,115 @@ export default function AIChatCore({
                 return { role: m.role, content: m.content };
             });
 
-            const result = await sendChat(apiMessages, memCtx, thinkingMode, !!pendingImage, activeProviderId, activeModelId);
+            // Streaming accumulators
+            let accumulatedAnswer = '';
+            let accumulatedThinking = '';
+            let streamModel: string | undefined;
+            let streamProvider: string | undefined;
+            let streamUsage: ChatMessage['usage'] | undefined;
 
-            // Centralized normalization — handles JSON extraction, double-wrapped JSON, all formats
-            let resultContent = normalizeAiText(result.message);
-            // Strip [DONE] SSE tail if present
-            if (resultContent.endsWith('[DONE]')) {
-                resultContent = resultContent.slice(0, -6).trim();
-            }
-
-            const assistantMsg: ChatMessage = {
-                role: 'assistant',
-                content: resultContent,
-                typed: true,        // immediate — no typing animation
-                timestamp: Date.now(),
-                model: result.model,
-                provider: result.provider,
-                usage: result.usage,
-                steps: (result as any).steps,
+            const updateAssistant = (patch: Partial<ChatMessage>) => {
+                setMessages(prev => {
+                    const updated = [...prev];
+                    const lastIdx = updated.length - 1;
+                    if (lastIdx >= 0 && updated[lastIdx].role === 'assistant') {
+                        updated[lastIdx] = { ...updated[lastIdx], ...patch };
+                    }
+                    return updated;
+                });
             };
-            setMessages([...newMessages, assistantMsg]);
-            setTimeout(() => addSuggestions(msg, result.message), 300);
 
-            // Auto-extract memory from this conversation (fire-and-forget, don't block UI)
-            extractMemoryFromConversation(
-                msg,
-                result.message,
-                async (msgs, mode) => sendChat(msgs, '', (mode as ThinkingMode) || 'instant', false, activeProviderId, activeModelId),
-            ).catch(() => { /* silent */ });
+            const result = await sendChat(apiMessages, memCtx, thinkingMode, !!pendingImage, activeProviderId, activeModelId, {
+                onThinking: (delta: string) => {
+                    accumulatedThinking += delta;
+                    updateAssistant({
+                        thinking: accumulatedThinking,
+                        thinkingSteps: splitThinkingSteps(accumulatedThinking),
+                        isStreaming: true,
+                    });
+                },
+                onAnswer: (delta: string) => {
+                    accumulatedAnswer += delta;
+                    updateAssistant({
+                        content: accumulatedAnswer,
+                        isStreaming: true,
+                    });
+                },
+                onUsage: (data: Record<string, unknown>) => {
+                    streamUsage = {
+                        prompt_tokens: (data as any).prompt_tokens || 0,
+                        completion_tokens: (data as any).completion_tokens || 0,
+                        total_tokens: (data as any).total_tokens || 0,
+                    };
+                },
+                onDone: (finishReason: string, isTruncated: boolean) => {
+                    const finalContent = accumulatedAnswer || 'KRAI belum menerima jawaban...';
+                    updateAssistant({
+                        content: normalizeAiText(finalContent),
+                        thinking: accumulatedThinking,
+                        thinkingSteps: splitThinkingSteps(accumulatedThinking),
+                        isStreaming: false,
+                        isTruncated,
+                        finishReason,
+                        typed: true,
+                        model: streamModel,
+                        provider: streamProvider,
+                        usage: streamUsage,
+                        timestamp: Date.now(),
+                    });
+                    setTimeout(() => addSuggestions(msg, finalContent), 300);
+                },
+                onError: (message: string) => {
+                    updateAssistant({
+                        content: `⚠️ ${message}`,
+                        isStreaming: false,
+                        typed: true,
+                    });
+                },
+            });
+
+            // Non-streaming fallback result
+            if (result !== null) {
+                let resultContent = normalizeAiText(result.message);
+                if (resultContent.endsWith('[DONE]')) {
+                    resultContent = resultContent.slice(0, -6).trim();
+                }
+                const parsed = parseKraiResponse(result.message);
+                updateAssistant({
+                    content: resultContent,
+                    thinking: parsed.thinking,
+                    thinkingSteps: parsed.thinkingSteps,
+                    isStreaming: false,
+                    typed: true,
+                    model: result.model,
+                    provider: result.provider,
+                    usage: result.usage,
+                    isTruncated: result.isTruncated,
+                    finishReason: result.finishReason,
+                    timestamp: Date.now(),
+                });
+                setTimeout(() => addSuggestions(msg, resultContent), 300);
+
+                extractMemoryFromConversation(
+                    msg,
+                    resultContent,
+                    async (msgs, mode) => sendChat(msgs, '', (mode as ThinkingMode) || 'instant', false, activeProviderId, activeModelId),
+                ).catch(() => { /* silent */ });
+            }
         } catch (err: any) {
+            setMessages(prev => {
+                const updated = [...prev];
+                const lastIdx = updated.length - 1;
+                if (lastIdx >= 0 && updated[lastIdx].role === 'assistant' && updated[lastIdx].isStreaming) {
+                    updated[lastIdx] = {
+                        ...updated[lastIdx],
+                        content: `⚠️ ${err.message || 'Gagal menghubungi KR·AI'}`,
+                        isStreaming: false,
+                        typed: true,
+                    };
+                }
+                return updated;
+            });
             setError(err.message || 'Gagal menghubungi KR·AI');
         } finally {
             setLoading(false);
@@ -722,8 +925,19 @@ export default function AIChatCore({
                                 >
                                     {msg.role === 'assistant' ? (
                                         <>
-                                            {/* Verbose thinking steps */}
-                                            {(msg as any).steps && (msg as any).steps.length > 0 && (
+                                            {/* ── NDJSON thinking steps ── */}
+                                            {msg.thinkingSteps && msg.thinkingSteps.length > 0 && (
+                                                <div className="mb-2">
+                                                    <KraiThinkingSteps
+                                                        steps={msg.thinkingSteps}
+                                                        isStreaming={!!msg.isStreaming}
+                                                        isComplete={!msg.isStreaming}
+                                                        maxPreviewLines={isFloat ? 2 : 5}
+                                                    />
+                                                </div>
+                                            )}
+                                            {/* Verbose thinking steps (non-NDJSON) */}
+                                            {(msg as any).steps && (msg as any).steps.length > 0 && !msg.thinkingSteps?.length && (
                                                 <div className="mb-2">
                                                     <button
                                                         onClick={() => setExpandedStepsIdx(expandedStepsIdx === idx ? null : idx)}
@@ -755,7 +969,26 @@ export default function AIChatCore({
                                                     )}
                                                 </div>
                                             )}
-                                            <AssistantMessage content={msg.content} />
+                                            {/* Loading state before answer starts */}
+                                            {msg.isStreaming && !msg.content && (
+                                                <div className="flex items-center gap-1.5 text-sm text-gray-400 py-1">
+                                                    <span className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-pulse" />
+                                                    <span className="text-xs italic">Menulis jawaban...</span>
+                                                </div>
+                                            )}
+                                            {/* Answer content */}
+                                            {msg.content && <AssistantMessage content={msg.content} />}
+                                            {/* Streaming cursor */}
+                                            {msg.isStreaming && msg.content && (
+                                                <span className="inline-block w-1.5 h-4 bg-gray-400 animate-pulse ml-0.5 align-text-bottom" />
+                                            )}
+                                            {/* Truncation warning */}
+                                            {msg.isTruncated && !msg.isStreaming && (
+                                                <div className="text-xs text-amber-600 mt-1 flex items-center gap-1">
+                                                    <AlertTriangle className="w-3 h-3" />
+                                                    Jawaban terpotong karena batas token. Coba naikkan max token atau gunakan model lain.
+                                                </div>
+                                            )}
                                         </>
                                     ) : (
                                         <span>{msg.content}</span>

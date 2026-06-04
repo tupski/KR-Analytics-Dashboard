@@ -13,11 +13,13 @@ import {
     Bot,
 } from 'lucide-react';
 import MarkdownRenderer from './MarkdownRenderer';
+import { KraiThinkingSteps } from './KraiThinkingSteps';
 import type { FilterState } from '@/components/shared/FilterState';
 import { generateFollowUpQuestions } from '@/lib/ai/followUpQuestions';
 import type { KraiPageContext } from '@/lib/ai/followUpQuestions';
 import { normalizeAiText } from '@/lib/ai/normalizeAiText';
 import { suggestionToUserPrompt } from '@/lib/ai/suggestionHelper';
+import { splitThinkingSteps } from '@/lib/ai/kraiResponseParser';
 
 // ─── Types ───────────────────────────────────────────────────────
 
@@ -32,8 +34,18 @@ export interface KraiInsightCardProps {
     dataSummary?: Record<string, any>;
     defaultCollapsed?: boolean;
     badgeLabel?: string;
-    /** Called when user clicks follow-up — sends question + context to KRAI chat */
+    /** Deprecated — follow-up now renders in-card */
     onFollowUpClick?: (question: string, contextPayload?: Record<string, any>) => void;
+}
+
+interface FollowUpAnswer {
+    id: string;
+    question: string;
+    answer: string;
+    thinking: string;
+    thinkingSteps: string[];
+    isStreaming: boolean;
+    isTruncated?: boolean;
 }
 
 // ─── Cache helpers ───────────────────────────────────────────────
@@ -82,6 +94,53 @@ function hashData(data?: Record<string, any>): string {
     }
 }
 
+// ─── NDJSON stream reader ───────────────────────────────────────
+
+async function readInsightNDJSON(
+    reader: ReadableStreamDefaultReader<Uint8Array>,
+    callbacks: {
+        onThinking: (delta: string) => void;
+        onAnswer: (delta: string) => void;
+        onDone: (finishReason: string, isTruncated: boolean) => void;
+        onError: (message: string) => void;
+    },
+): Promise<void> {
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed) continue;
+            try {
+                const event = JSON.parse(trimmed);
+                switch (event.type) {
+                    case 'thinking':
+                        callbacks.onThinking(event.delta || '');
+                        break;
+                    case 'answer':
+                        callbacks.onAnswer(event.delta || '');
+                        break;
+                    case 'done':
+                        callbacks.onDone(event.finishReason || 'stop', !!event.isTruncated);
+                        break;
+                    case 'error':
+                        callbacks.onError(event.message || 'Terjadi kesalahan.');
+                        break;
+                    // usage: silently ignore
+                }
+            } catch { /* skip */ }
+        }
+    }
+}
+
 // ─── Component ───────────────────────────────────────────────────
 
 export default function KraiInsightCard({
@@ -92,7 +151,7 @@ export default function KraiInsightCard({
     dataSummary,
     defaultCollapsed = true,
     badgeLabel = 'KRAI Insight',
-    onFollowUpClick,
+    onFollowUpClick: _onFollowUpClick,
 }: KraiInsightCardProps) {
     const [collapsed, setCollapsed] = useState(defaultCollapsed);
     const [insight, setInsight] = useState<string | null>(null);
@@ -101,6 +160,14 @@ export default function KraiInsightCard({
     const [followUps, setFollowUps] = useState<string[]>([]);
     const [expandedSugg, setExpandedSugg] = useState<Record<string, boolean>>({});
     const [isSegarkanLoading, setIsSegarkanLoading] = useState(false);
+
+    // ── Streaming state for main insight ──
+    const [mainThinkingSteps, setMainThinkingSteps] = useState<string[]>([]);
+    const [mainStreaming, setMainStreaming] = useState(false);
+
+    // ── In-card follow-up state ──
+    const [followUpAnswers, setFollowUpAnswers] = useState<FollowUpAnswer[]>([]);
+    const [activeFollowUpIndex, setActiveFollowUpIndex] = useState(0);
 
     const dataHash = hashData(dataSummary);
 
@@ -146,18 +213,20 @@ export default function KraiInsightCard({
         if (!forceRefresh) {
             const cached = getCached(pageContext, dataHash);
             if (cached) {
-                // Normalize cache on read — handles old raw JSON cached entries
                 const normalized = normalizeAiText(cached);
                 setInsight(normalized);
-                // Overwrite cache with normalized version
                 setCache(pageContext, normalized, dataHash);
                 updateFollowUps(normalized);
+                setMainThinkingSteps([]);
+                setMainStreaming(false);
                 return;
             }
         }
 
         setLoading(true);
         setError(null);
+        setMainThinkingSteps([]);
+        setMainStreaming(true);
         if (forceRefresh) setIsSegarkanLoading(true);
 
         try {
@@ -177,38 +246,75 @@ export default function KraiInsightCard({
                     title,
                     forceRefresh,
                     dataSummary,
+                    stream: true,
                 }),
             });
 
             if (!res.ok) {
                 setError('Gagal mendapatkan insight');
                 setLoading(false);
+                setMainStreaming(false);
                 setIsSegarkanLoading(false);
                 return;
             }
 
-            const data = await res.json();
+            // Try NDJSON streaming
+            const reader = res.body?.getReader();
+            if (reader) {
+                let accumulatedAnswer = '';
+                let accumulatedThinking = '';
 
+                await readInsightNDJSON(reader, {
+                    onThinking: (delta) => {
+                        accumulatedThinking += delta;
+                        setMainThinkingSteps(splitThinkingSteps(accumulatedThinking));
+                    },
+                    onAnswer: (delta) => {
+                        accumulatedAnswer += delta;
+                        setInsight(normalizeAiText(accumulatedAnswer));
+                    },
+                    onDone: (_finishReason, _isTruncated) => {
+                        const final = normalizeAiText(accumulatedAnswer);
+                        setInsight(final);
+                        setMainStreaming(false);
+                        setMainThinkingSteps(splitThinkingSteps(accumulatedThinking));
+                        if (final && final.length > 5) {
+                            setCache(pageContext, final, dataHash);
+                            updateFollowUps(final);
+                        }
+                        setLoading(false);
+                        setIsSegarkanLoading(false);
+                    },
+                    onError: (message) => {
+                        setError(message);
+                        setMainStreaming(false);
+                        setLoading(false);
+                        setIsSegarkanLoading(false);
+                    },
+                });
+                return;
+            }
+
+            // Non-streaming fallback
+            const data = await res.json();
             if (data.disabled) {
                 setError('Insight tidak tersedia');
                 setLoading(false);
+                setMainStreaming(false);
                 setIsSegarkanLoading(false);
                 return;
             }
-
             if (data.error && !data.fallback) {
                 setError(data.message || 'Gagal mendapatkan insight');
                 setLoading(false);
+                setMainStreaming(false);
                 setIsSegarkanLoading(false);
                 return;
             }
-
-            // Extract message from response — normalize to strip any JSON wrapping
             const raw = data.response?.message || data.response?.text || '';
             const msg = normalizeAiText(raw);
             if (msg && msg.length > 5) {
                 setInsight(msg);
-                // Only cache normalized text — never raw JSON
                 setCache(pageContext, msg, dataHash);
                 updateFollowUps(msg);
             } else {
@@ -218,6 +324,7 @@ export default function KraiInsightCard({
             setError(err.message || 'Gagal menghubungi server');
         } finally {
             setLoading(false);
+            setMainStreaming(false);
             setIsSegarkanLoading(false);
         }
     }, [pageContext, buildPrompt, filters, title, dataHash, dataSummary, updateFollowUps]);
@@ -227,27 +334,130 @@ export default function KraiInsightCard({
         fetchInsight();
     }, [fetchInsight]);
 
-    /** Send follow-up question to KRAI chat with context payload — uses transformed user prompt */
-    const handleFollowUp = (q: string) => {
+    /** In-card follow-up: generate answer inside card via streaming */
+    const handleFollowUp = useCallback(async (q: string) => {
         const userPrompt = suggestionToUserPrompt(q);
-        if (onFollowUpClick) {
-            onFollowUpClick(userPrompt, {
-                pageContext,
-                insightText: insight || '',
-                rangePreset: filters?.rangePreset,
-                startDate: filters?.startDate,
-                endDate: filters?.endDate,
-                comparisonMode: filters?.comparisonMode,
-                comparisonStartDate: filters?.comparisonStartDate,
-                comparisonEndDate: filters?.comparisonEndDate,
-                reportPeriodMode: filters?.reportPeriodMode,
-                dataSummary,
+        const followUpId = `fu-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+
+        // Create placeholder
+        const newFollowUp: FollowUpAnswer = {
+            id: followUpId,
+            question: q,
+            answer: '',
+            thinking: '',
+            thinkingSteps: [],
+            isStreaming: true,
+        };
+        setFollowUpAnswers(prev => [...prev, newFollowUp]);
+        setActiveFollowUpIndex(followUpAnswers.length); // point to newest
+
+        try {
+            const res = await fetch('/api/ai/chat', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    messages: [
+                        { role: 'user', content: `Berdasarkan insight berikut:\n\n${insight}\n\nJawab pertanyaan ini: ${userPrompt}` },
+                    ],
+                    config: { provider: 'auto', model: 'auto' },
+                    stream: true,
+                }),
             });
-        } else {
-            // Fallback: dispatch event for chat components
-            window.dispatchEvent(new CustomEvent('ai-chat-prompt-send', { detail: userPrompt }));
+
+            if (!res.ok) {
+                const errData = await res.json().catch(() => ({}));
+                setFollowUpAnswers(prev => prev.map(fa =>
+                    fa.id === followUpId
+                        ? { ...fa, answer: `⚠️ Gagal: ${errData.error || `HTTP ${res.status}`}`, isStreaming: false }
+                        : fa,
+                ));
+                return;
+            }
+
+            const reader = res.body?.getReader();
+            if (!reader) {
+                // Non-streaming fallback
+                const data = await res.json();
+                const answer = normalizeAiText(data.message || 'Tidak ada jawaban.');
+                setFollowUpAnswers(prev => prev.map(fa =>
+                    fa.id === followUpId
+                        ? { ...fa, answer, isStreaming: false }
+                        : fa,
+                ));
+                return;
+            }
+
+            let accumulatedAnswer = '';
+            let accumulatedThinking = '';
+
+            const decoder = new TextDecoder();
+            let buffer = '';
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split('\n');
+                buffer = lines.pop() || '';
+
+                for (const line of lines) {
+                    const trimmed = line.trim();
+                    if (!trimmed) continue;
+                    try {
+                        const event = JSON.parse(trimmed);
+                        switch (event.type) {
+                            case 'thinking':
+                                accumulatedThinking += event.delta || '';
+                                setFollowUpAnswers(prev => prev.map(fa =>
+                                    fa.id === followUpId
+                                        ? { ...fa, thinking: accumulatedThinking, thinkingSteps: splitThinkingSteps(accumulatedThinking) }
+                                        : fa,
+                                ));
+                                break;
+                            case 'answer':
+                                accumulatedAnswer += event.delta || '';
+                                setFollowUpAnswers(prev => prev.map(fa =>
+                                    fa.id === followUpId
+                                        ? { ...fa, answer: accumulatedAnswer }
+                                        : fa,
+                                ));
+                                break;
+                            case 'done':
+                                setFollowUpAnswers(prev => prev.map(fa =>
+                                    fa.id === followUpId
+                                        ? {
+                                            ...fa,
+                                            answer: normalizeAiText(accumulatedAnswer || 'KRAI belum menerima jawaban...'),
+                                            thinking: accumulatedThinking,
+                                            thinkingSteps: splitThinkingSteps(accumulatedThinking),
+                                            isStreaming: false,
+                                            isTruncated: !!event.isTruncated,
+                                        }
+                                        : fa,
+                                ));
+                                break;
+                            case 'error':
+                                setFollowUpAnswers(prev => prev.map(fa =>
+                                    fa.id === followUpId
+                                        ? { ...fa, answer: `⚠️ ${event.message || 'Terjadi kesalahan.'}`, isStreaming: false }
+                                        : fa,
+                                ));
+                                break;
+                        }
+                    } catch { /* skip */ }
+                }
+            }
+        } catch (err: any) {
+            setFollowUpAnswers(prev => prev.map(fa =>
+                fa.id === followUpId
+                    ? { ...fa, answer: `⚠️ ${err.message || 'Gagal'}`, isStreaming: false }
+                    : fa,
+            ));
         }
-    };
+    }, [insight]);
+
+    const activeFollowUp = followUpAnswers[activeFollowUpIndex];
 
     const handleRefresh = (e: React.MouseEvent) => {
         e.stopPropagation();
@@ -297,7 +507,7 @@ export default function KraiInsightCard({
                     )}
 
                     {/* Loading */}
-                    {loading && (
+                    {loading && !insight && (
                         <div className="flex items-center gap-2 text-sm text-blue-600 py-3">
                             <div className="flex gap-1">
                                 <div className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
@@ -324,10 +534,20 @@ export default function KraiInsightCard({
                         </div>
                     )}
 
+                    {/* Streaming thinking steps for main insight */}
+                    {mainStreaming && mainThinkingSteps.length > 0 && (
+                        <div className="mb-2">
+                            <KraiThinkingSteps
+                                steps={mainThinkingSteps}
+                                isStreaming={true}
+                            />
+                        </div>
+                    )}
+
                     {/* Insight content */}
-                    {insight && !loading && (
+                    {(insight || mainStreaming) && !error && (
                         <>
-                            <MarkdownRenderer content={insight} className="text-sm text-gray-800 leading-relaxed" />
+                            <MarkdownRenderer content={insight || ''} className="text-sm text-gray-800 leading-relaxed" />
 
                             {/* Segarkan button at bottom */}
                             <div className="mt-3 flex justify-end">
@@ -341,8 +561,8 @@ export default function KraiInsightCard({
                                 </button>
                             </div>
 
-                            {/* Follow-up questions — send to KRAI chat */}
-                            {followUps.length > 0 && (
+                            {/* Follow-up questions — generate IN-CARD, NOT dispatch */}
+                            {!mainStreaming && followUps.length > 0 && (
                                 <div className="mt-3 pt-3 border-t border-blue-100">
                                     <div className="flex items-center gap-1.5 mb-2">
                                         <Lightbulb className="w-3 h-3 text-blue-500" />
@@ -358,7 +578,6 @@ export default function KraiInsightCard({
                                                     key={suggKey}
                                                     className="text-xs bg-white border border-blue-200 rounded-xl text-blue-700 flex items-start gap-1.5 sm:max-w-xs"
                                                 >
-                                                    {/* Chevron — toggle expand */}
                                                     {isLong && (
                                                         <button
                                                             onClick={(e) => {
@@ -374,7 +593,6 @@ export default function KraiInsightCard({
                                                     {!isLong && (
                                                         <ChevronRight className="w-3.5 h-3.5 flex-shrink-0 mt-1 ml-2 text-blue-400" />
                                                     )}
-                                                    {/* Suggestion body — click sends user intent */}
                                                     <button
                                                         onClick={() => handleFollowUp(q)}
                                                         className="flex-1 py-2 pr-3 text-left cursor-pointer min-w-0"
@@ -386,6 +604,70 @@ export default function KraiInsightCard({
                                             );
                                         })}
                                     </div>
+                                </div>
+                            )}
+
+                            {/* ── In-card follow-up answers ── */}
+                            {followUpAnswers.length > 0 && (
+                                <div className="mt-3 pt-3 border-t border-blue-100">
+                                    {/* Navigation */}
+                                    {followUpAnswers.length > 1 && (
+                                        <div className="flex items-center gap-2 mb-2">
+                                            <button
+                                                onClick={() => setActiveFollowUpIndex(Math.max(0, activeFollowUpIndex - 1))}
+                                                disabled={activeFollowUpIndex === 0}
+                                                className="text-xs text-gray-500 hover:text-blue-600 disabled:opacity-30"
+                                            >
+                                                ← Prev
+                                            </button>
+                                            <span className="text-xs text-gray-400">
+                                                {activeFollowUpIndex + 1} / {followUpAnswers.length}
+                                            </span>
+                                            <button
+                                                onClick={() => setActiveFollowUpIndex(Math.min(followUpAnswers.length - 1, activeFollowUpIndex + 1))}
+                                                disabled={activeFollowUpIndex === followUpAnswers.length - 1}
+                                                className="text-xs text-gray-500 hover:text-blue-600 disabled:opacity-30"
+                                            >
+                                                Next →
+                                            </button>
+                                        </div>
+                                    )}
+
+                                    {activeFollowUp && (
+                                        <div className="space-y-2">
+                                            <div className="text-xs font-medium text-blue-700 bg-blue-100 px-3 py-1.5 rounded-lg">
+                                                {activeFollowUp.question}
+                                            </div>
+
+                                            {/* Thinking steps */}
+                                            {activeFollowUp.thinkingSteps.length > 0 && (
+                                                <KraiThinkingSteps
+                                                    steps={activeFollowUp.thinkingSteps}
+                                                    isStreaming={activeFollowUp.isStreaming}
+                                                    isComplete={!activeFollowUp.isStreaming}
+                                                />
+                                            )}
+
+                                            {/* Answer */}
+                                            {activeFollowUp.answer && (
+                                                <div className="bg-white border border-blue-100 rounded-lg p-3">
+                                                    <MarkdownRenderer content={activeFollowUp.answer} className="text-sm" />
+                                                </div>
+                                            )}
+
+                                            {/* Loading */}
+                                            {activeFollowUp.isStreaming && !activeFollowUp.answer && (
+                                                <div className="flex items-center gap-2 text-sm text-blue-600 py-2">
+                                                    <div className="flex gap-1">
+                                                        <div className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                                                        <div className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                                                        <div className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                                                    </div>
+                                                    <span>Menjawab...</span>
+                                                </div>
+                                            )}
+                                        </div>
+                                    )}
                                 </div>
                             )}
                         </>
