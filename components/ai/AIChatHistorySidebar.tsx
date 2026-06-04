@@ -104,7 +104,7 @@ export default function AIChatHistorySidebar({ activeId, onSelect, onNew }: Prop
             )}
 
             {/* List */}
-            <div className="flex-1 overflow-y-auto px-2 pb-2">
+            <div className="flex-1 min-h-0 overflow-y-auto px-2 pb-2">
                 {filtered.length === 0 && (
                     <div className="text-center py-6 px-3">
                         <MessageCircle className="w-6 h-6 text-gray-300 mx-auto mb-1.5" />

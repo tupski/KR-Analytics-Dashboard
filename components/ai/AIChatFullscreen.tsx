@@ -247,7 +247,7 @@ export default function AIChatFullscreen({ conversationId, forceNew }: Props) {
         <div className="flex flex-1 min-h-0 overflow-hidden bg-white">
             {/* ── Desktop sticky sidebar ── */}
             <aside
-                className="hidden md:flex flex-shrink-0 w-64 border-r border-gray-200 bg-gray-50/80 flex-col overflow-hidden"
+                className="hidden md:flex h-full min-h-0 flex-shrink-0 w-64 border-r border-gray-200 bg-gray-50/80 flex-col overflow-hidden"
             >
                 {sidebarContent}
             </aside>

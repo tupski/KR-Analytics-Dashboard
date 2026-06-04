@@ -27,7 +27,7 @@ export default function ContentWrapper({ children }: { children: React.ReactNode
     });
 
     // Chat routes: disable parent scroll so chat layout handles its own
-    const isChatRoute = pathname?.startsWith('/chat');
+    const isChatRoute = pathname?.startsWith('/chat') || pathname?.startsWith('/analytics-ai');
 
     useEffect(() => {
         const sync = () => {

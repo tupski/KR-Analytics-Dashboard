@@ -686,7 +686,7 @@ export default function AIChatCore({
             {showMemory && <MemoryPanel onClose={() => setShowMemory(false)} />}
 
             {/* Message list */}
-            <div className={`flex-1 overflow-y-auto ${isFloat ? 'p-3 space-y-3 bg-slate-50' : 'px-4 py-4 space-y-4 bg-slate-50/50'}`}>
+            <div className={`flex-1 min-h-0 overflow-y-auto ${isFloat ? 'p-3 space-y-3 bg-slate-50' : 'px-4 py-4 space-y-4 bg-slate-50/50'}`}>
                 {/* Only show greeting in float mode - full mode has its own welcome screen */}
                 {messages.length === 0 && !loading && isFloat && (
                     <div className="text-center py-6">

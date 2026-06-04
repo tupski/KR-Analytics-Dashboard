@@ -153,3 +153,47 @@ export interface ParsedAIResponse {
     followUpQuestions?: AIFollowUpQuestion[];
     error?: string;
 }
+
+// ─── KRAI Unified Response Parser Types ───
+
+/** Clean, parsed response ready for UI rendering */
+export interface KraiAIResponse {
+    /** Final answer text for user. Empty string if model only sent reasoning. */
+    answer: string
+    /** Raw reasoning/thinking text from provider (if any) */
+    thinking: string
+    /** Thinking split into step chunks for display */
+    thinkingSteps: string[]
+    /** Model identifier */
+    model?: string
+    /** Token usage info (never render directly — only for debug) */
+    usage?: Record<string, unknown>
+    /** Reason why generation finished */
+    finishReason?: 'stop' | 'length' | 'error' | 'unknown'
+    /** True if truncated by token limit */
+    isTruncated?: boolean
+    /** Raw response kept for debugging (never render) */
+    raw?: unknown
+}
+
+/** Input to the parser — what comes from AI provider */
+export type KraiParserInput =
+    | string
+    | Record<string, unknown>
+    | unknown
+    | null
+    | undefined
+
+/** Parsed SSE line event */
+export interface SSELine {
+    type: 'data' | 'event' | 'comment' | 'done'
+    data?: string
+    event?: string
+}
+
+/** Thinking step display state (KRAI parser variant) */
+export interface KraiThinkingStep {
+    content: string
+    index: number
+    isComplete?: boolean
+}
