@@ -301,9 +301,13 @@ export function parseProviderResponse(
     const choice = rawData?.choices?.[0];
     const message = choice?.message;
 
-    if (message?.content) {
+    // DeepSeek reasoner / thinking models return content in reasoning_content
+    // instead of content. Check reasoning_content first, then content.
+    const contentText = message?.reasoning_content || message?.content;
+
+    if (contentText) {
         return {
-            message: normalizeAiText(message.content),
+            message: normalizeAiText(contentText),
             usage: rawData?.usage
                 ? {
                     prompt_tokens: rawData.usage.prompt_tokens || 0,

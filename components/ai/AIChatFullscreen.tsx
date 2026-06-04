@@ -35,6 +35,7 @@ export default function AIChatFullscreen({ conversationId, forceNew }: Props) {
     const router = useRouter();
     const [activeConv, setActiveConv] = useState<Conversation | null>(null);
     const [messages, setMessages] = useState<ChatMessage[]>([]);
+    const [inputDraft, setInputDraft] = useState('');
     const [memoryCount, setMemoryCount] = useState(0);
     const [historyLoaded, setHistoryLoaded] = useState(false);
 
@@ -50,41 +51,56 @@ export default function AIChatFullscreen({ conversationId, forceNew }: Props) {
         // Sync remote history in background on first load
         syncFromRemote().catch(() => { });
 
-        if (!conversationId) {
+        // Check if we're coming from float mode with an open conversation
+        let floatConvId: string | null = null;
+        let floatDraft = '';
+        try {
+            floatConvId = localStorage.getItem('krai:openConversationId');
+            floatDraft = localStorage.getItem('krai:openConversationDraft') || '';
+            // Clear markers after reading
+            if (floatConvId) {
+                localStorage.removeItem('krai:openConversationId');
+                localStorage.removeItem('krai:openConversationDraft');
+            }
+        } catch { /* noop */ }
+
+        // Determine which conversation id to use: URL param, float storage, or new
+        const targetId = conversationId || floatConvId;
+        if (!targetId) {
             setHistoryLoaded(true);
             return;
         }
 
         try {
             if (forceNew) {
-                const existing = getConversation(conversationId);
+                const existing = getConversation(targetId);
                 if (existing) {
                     setActiveConv(existing);
                     setMessages(existing.messages || []);
                 } else {
-                    const newConv = createConversation(conversationId);
+                    const newConv = createConversation(targetId);
                     setActiveConv(newConv);
                     setMessages([]);
                 }
-                setActiveConversation(conversationId);
+                setActiveConversation(targetId);
                 setHistoryLoaded(true);
             } else {
                 // Try local first, then fetch from Supabase if needed
-                const local = getConversation(conversationId);
+                const local = getConversation(targetId);
                 if (local && local.messages && local.messages.length > 0) {
                     setActiveConv(local);
                     setMessages(local.messages);
-                    setActiveConversation(conversationId);
+                    setActiveConversation(targetId);
                     setHistoryLoaded(true);
                 } else {
                     // May need to load messages from Supabase
-                    const newConv = local || createConversation(conversationId);
+                    const newConv = local || createConversation(targetId);
                     setActiveConv(newConv);
                     setMessages([]);
-                    setActiveConversation(conversationId);
+                    setActiveConversation(targetId);
                     setHistoryLoaded(true);
                     // Load messages async
-                    getConversationWithMessages(conversationId)
+                    getConversationWithMessages(targetId)
                         .then(full => {
                             if (full && full.messages && full.messages.length > 0) {
                                 setActiveConv(full);
@@ -95,6 +111,11 @@ export default function AIChatFullscreen({ conversationId, forceNew }: Props) {
                             console.error('[AIChatFullscreen] Failed to load conversation:', err);
                         });
                 }
+            }
+
+            // Restore draft from float mode
+            if (floatDraft) {
+                setInputDraft(floatDraft);
             }
         } catch (err) {
             console.error('[AIChatFullscreen] Init error:', err);
@@ -115,6 +136,10 @@ export default function AIChatFullscreen({ conversationId, forceNew }: Props) {
             console.error('[AIChatFullscreen] Failed to update messages:', err);
         }
     }, [activeConv]);
+
+    const handleInputChange = useCallback((val: string) => {
+        setInputDraft(val);
+    }, []);
 
     // ── Navigation to a conversation ─────────────────────────────────────────
     const handleSelectConversation = (id: string) => {
@@ -142,7 +167,7 @@ export default function AIChatFullscreen({ conversationId, forceNew }: Props) {
         TEMPLATE_GROUPS.forEach(g => setActiveGroup(g.id));
     };
 
-    // ── Sidebar content ───────────────────────────────────────────────────────
+    // ── Sidebar content (used by both desktop sidebar and mobile drawer) ──────
     const sidebarContent = (
         <div className="h-full flex flex-col overflow-hidden">
             {/* Templates section — collapsible */}
@@ -195,7 +220,7 @@ export default function AIChatFullscreen({ conversationId, forceNew }: Props) {
                 )}
             </div>
 
-            {/* Chat history */}
+            {/* Chat history — takes remaining space, scrolls internally */}
             <div className="flex-1 min-h-0 overflow-hidden">
                 <AIChatHistorySidebar
                     activeId={activeConv?.id ?? null}
@@ -204,7 +229,7 @@ export default function AIChatFullscreen({ conversationId, forceNew }: Props) {
                 />
             </div>
 
-            {/* Footer */}
+            {/* Settings footer — always at bottom */}
             <div className="px-2 py-2 border-t border-gray-200 flex-shrink-0">
                 <Link
                     href="/pengaturan"
@@ -219,13 +244,15 @@ export default function AIChatFullscreen({ conversationId, forceNew }: Props) {
 
     // ── Render ────────────────────────────────────────────────────────────────
     return (
-        <div className="flex h-full overflow-hidden bg-white">
-            {/* Desktop sidebar */}
-            <aside className="hidden md:flex flex-shrink-0 w-64 border-r border-gray-200 bg-gray-50/80 flex-col overflow-hidden">
+        <div className="flex flex-1 min-h-0 overflow-hidden bg-white">
+            {/* ── Desktop sticky sidebar ── */}
+            <aside
+                className="hidden md:flex flex-shrink-0 w-64 border-r border-gray-200 bg-gray-50/80 flex-col overflow-hidden"
+            >
                 {sidebarContent}
             </aside>
 
-            {/* Mobile sidebar drawer */}
+            {/* ── Mobile sidebar drawer ── */}
             <div
                 className={`md:hidden fixed inset-0 z-50 transition-opacity duration-200 ${sidebarOpen ? 'pointer-events-auto opacity-100' : 'pointer-events-none opacity-0'}`}
             >
@@ -247,10 +274,18 @@ export default function AIChatFullscreen({ conversationId, forceNew }: Props) {
                 </aside>
             </div>
 
-            {/* Main area */}
-            <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
-                {/* Top bar */}
-                <div className="flex items-center justify-between px-3 py-2 border-b border-gray-100 bg-white flex-shrink-0">
+            {/* ── Main area — full height flex column ── */}
+            {/* overflow-hidden is deliberately NOT set here — parent boundaries
+                (ContentWrapper overflow-hidden on chat routes, page overflow-hidden)
+                already contain the flex-1 height. The header below uses flex-shrink-0
+                to stay at top without relying on sticky (which breaks inside overflow-hidden).
+                Scrolling is handled internally by AIChatCore's message list and the
+                welcome state's overflow-y-auto. */}
+            <div className="flex-1 flex flex-col min-w-0">
+                {/* ── Top bar — flex-shrink-0 keeps it at top ── */}
+                <div
+                    className="flex items-center justify-between px-3 py-2 border-b border-gray-100 bg-white/95 backdrop-blur-sm flex-shrink-0 z-20"
+                >
                     <div className="flex items-center gap-2 min-w-0">
                         {/* Mobile: toggle sidebar */}
                         <button
@@ -305,11 +340,11 @@ export default function AIChatFullscreen({ conversationId, forceNew }: Props) {
                     </div>
                 </div>
 
-                {/* Welcome state — only when no messages */}
+                {/* ── Welcome state — only when no messages ── */}
                 {historyLoaded && messages.length === 0 && (
                     <div className="flex-shrink-0 overflow-y-auto">
                         <div className="max-w-2xl mx-auto px-4 pt-6 pb-4">
-                            {/* Branding - Icon on left, smaller text */}
+                            {/* Branding */}
                             <div className="flex items-start gap-3 mb-6">
                                 <div className="w-12 h-12 bg-gradient-to-br from-blue-600 to-blue-400 rounded-xl flex items-center justify-center flex-shrink-0 shadow-md">
                                     <Bot className="w-6 h-6 text-white" />
@@ -324,13 +359,12 @@ export default function AIChatFullscreen({ conversationId, forceNew }: Props) {
                                 </div>
                             </div>
 
-                            {/* Template questions card - max 1 question on mobile */}
+                            {/* Template questions card */}
                             <div className="w-full rounded-xl border border-blue-100 bg-blue-50/30 p-3 mb-3">
                                 <p className="text-xs font-semibold text-blue-700 mb-2">
                                     📊 Performa Harian
                                 </p>
                                 <div className="space-y-1.5">
-                                    {/* Show only 1 question on mobile, 2 on desktop */}
                                     {TEMPLATE_GROUPS[0]?.questions.slice(0, 1).map((q, qi) => (
                                         <button
                                             key={qi}
@@ -341,7 +375,6 @@ export default function AIChatFullscreen({ conversationId, forceNew }: Props) {
                                             <span>{q}</span>
                                         </button>
                                     ))}
-                                    {/* Show 2nd question only on desktop */}
                                     <div className="hidden sm:block">
                                         {TEMPLATE_GROUPS[0]?.questions.slice(1, 2).map((q, qi) => (
                                             <button
@@ -357,7 +390,6 @@ export default function AIChatFullscreen({ conversationId, forceNew }: Props) {
                                 </div>
                             </div>
 
-                            {/* View all templates link */}
                             <div className="text-center">
                                 <button
                                     onClick={handleViewAllTemplates}
@@ -371,13 +403,15 @@ export default function AIChatFullscreen({ conversationId, forceNew }: Props) {
                     </div>
                 )}
 
-                {/* Chat core */}
+                {/* ── Chat core — flex-1, min-h-0 for proper overflow containment ── */}
                 <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
                     {historyLoaded && (
                         <AIChatCoreWithDispatch
                             key={activeConv?.id ?? 'new'}
                             messages={messages}
+                            initialInput={inputDraft}
                             onMessagesChange={handleMessagesChange}
+                            onInputChange={handleInputChange}
                         />
                     )}
                 </div>
@@ -388,10 +422,14 @@ export default function AIChatFullscreen({ conversationId, forceNew }: Props) {
 
 function AIChatCoreWithDispatch({
     messages,
+    initialInput,
     onMessagesChange,
+    onInputChange,
 }: {
     messages: ChatMessage[];
+    initialInput?: string;
     onMessagesChange: (msgs: ChatMessage[]) => void;
+    onInputChange?: (val: string) => void;
 }) {
     const sendRef = useRef<((q: string) => void) | null>(null);
 
@@ -407,7 +445,9 @@ function AIChatCoreWithDispatch({
         <AIChatCore
             mode="full"
             initialMessages={messages}
+            initialInput={initialInput || ''}
             onMessagesChange={onMessagesChange}
+            onInputChange={onInputChange}
             onSendRef={sendRef}
             showMemoryButton
             showTopBar

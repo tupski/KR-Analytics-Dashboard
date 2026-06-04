@@ -250,7 +250,9 @@ function formatTimestamp(ts: number): string {
 export interface AIChatCoreProps {
     mode: 'float' | 'full';
     initialMessages?: ChatMessage[];
+    initialInput?: string;
     onMessagesChange?: (msgs: ChatMessage[]) => void;
+    onInputChange?: (val: string) => void;
     onSendRef?: React.MutableRefObject<((q: string) => void) | null>;
     showMemoryButton?: boolean;
     /** Show top toolbar with model selector + thinking mode (always shown in 'full', optional in 'float') */
@@ -260,13 +262,15 @@ export interface AIChatCoreProps {
 export default function AIChatCore({
     mode,
     initialMessages = [],
+    initialInput = '',
     onMessagesChange,
+    onInputChange,
     onSendRef,
     showMemoryButton = false,
     showTopBar = true,
 }: AIChatCoreProps) {
     const [messages, setMessages] = useState<ChatMessage[]>(initialMessages);
-    const [input, setInput] = useState('');
+    const [input, setInput] = useState(initialInput);
     const [pendingImage, setPendingImage] = useState<string | null>(null);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -282,6 +286,16 @@ export default function AIChatCore({
     const inputRef = useRef<HTMLInputElement | HTMLTextAreaElement>(null);
     const onMessagesChangeRef = useRef(onMessagesChange);
     onMessagesChangeRef.current = onMessagesChange;
+    const onInputChangeRef = useRef(onInputChange);
+    onInputChangeRef.current = onInputChange;
+
+    // Sync input changes to parent (for float → full conversation carry-over)
+    const inputSyncRef = useRef(onInputChange);
+    inputSyncRef.current = onInputChange;
+    const setInputAndNotify = useCallback((val: string) => {
+        setInput(val);
+        inputSyncRef.current?.(val);
+    }, []);
 
     // Sync messages with external store (e.g., conversation switch via key prop in parent)
     // The parent (AIChatFullscreen) uses `key={activeConv?.id}` to remount on switch,
@@ -471,7 +485,7 @@ export default function AIChatCore({
         };
         const newMessages: ChatMessage[] = [...messages, userMessage];
         setMessages(newMessages);
-        setInput('');
+        setInputAndNotify('');
         setPendingImage(null);
         setError(null);
         setLoading(true);
@@ -524,7 +538,7 @@ export default function AIChatCore({
         } finally {
             setLoading(false);
         }
-    }, [input, pendingImage, loading, messages, thinkingMode, visionCapable, addSuggestions, activeProviderId, activeModelId]);
+    }, [input, pendingImage, loading, messages, thinkingMode, visionCapable, addSuggestions, activeProviderId, activeModelId, setInputAndNotify]);
 
     /** Track expanded suggestions per index */
     const [expandedSugg, setExpandedSugg] = useState<Record<string, boolean>>({});
@@ -533,7 +547,7 @@ export default function AIChatCore({
     const handleFillInput = useCallback((text: string) => {
         // Transform suggestion question into user prompt
         const userPrompt = suggestionToUserPrompt(text);
-        setInput(userPrompt);
+        setInputAndNotify(userPrompt);
         setTimeout(() => {
             if (inputRef.current) {
                 inputRef.current.focus();
@@ -543,7 +557,7 @@ export default function AIChatCore({
                 }
             }
         }, 50);
-    }, []);
+    }, [setInputAndNotify]);
 
     /** Listen for ai-chat-prompt-send events from insight cards — send directly */
     useEffect(() => {
@@ -597,7 +611,7 @@ export default function AIChatCore({
             const start = textarea.selectionStart;
             const end = textarea.selectionEnd;
             const newValue = input.substring(0, start) + '\n' + input.substring(end);
-            setInput(newValue);
+            setInputAndNotify(newValue);
             // Restore cursor position after value change
             requestAnimationFrame(() => {
                 textarea.selectionStart = textarea.selectionEnd = start + 1;
@@ -751,7 +765,7 @@ export default function AIChatCore({
                                         <span className="text-[10px] text-gray-400">{formatTimestamp(msg.timestamp)}</span>
                                         <button
                                             onClick={() => {
-                                                setInput(msg.content);
+                                                setInputAndNotify(msg.content);
                                                 setShowModelPicker(true);
                                                 if (inputRef.current) {
                                                     inputRef.current.focus();
@@ -888,7 +902,7 @@ export default function AIChatCore({
                             <textarea
                                 ref={inputRef as React.RefObject<HTMLTextAreaElement>}
                                 value={input}
-                                onChange={e => setInput(e.target.value)}
+                                onChange={e => setInputAndNotify(e.target.value)}
                                 onKeyDown={handleKeyDown}
                                 onPaste={handlePaste}
                                 placeholder="Tanya KR·AI..."
@@ -902,7 +916,7 @@ export default function AIChatCore({
                                 ref={inputRef as React.RefObject<HTMLInputElement>}
                                 type="text"
                                 value={input}
-                                onChange={e => setInput(e.target.value)}
+                                onChange={e => setInputAndNotify(e.target.value)}
                                 onKeyDown={handleKeyDown}
                                 onPaste={handlePaste}
                                 placeholder="Tanya KR·AI..."

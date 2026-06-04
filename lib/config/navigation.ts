@@ -19,7 +19,6 @@ export const NAV_ITEMS: NavItem[] = [
     { label: 'Unit', href: '/unit', icon: Building, mobileShow: true },
     { label: 'Customer', href: '/customer', icon: Users },
     { label: 'Laporan', href: '/laporan', icon: Wallet, mobileShow: true },
-    { label: 'Keuangan', href: '/keuangan', icon: Receipt },
     { label: 'KR·AI Chat', href: '/chat', icon: Brain, isKrai: true },
     { label: 'Pengaturan', href: '/pengaturan', icon: Settings },
 ];

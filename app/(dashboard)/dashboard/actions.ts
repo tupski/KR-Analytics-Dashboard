@@ -616,16 +616,33 @@ export async function fetchRevenueData(filter: RevenueFilter): Promise<RevenueDa
 /**
  * Fetch occupancy rate data for specified period.
  *
- * Delegates to the corrected getDailyOccupancyTrend() which computes
- * TRUE daily occupancy: a room is occupied on a day if any transaction
- * has checkin_at <= end of that day AND checkout_at >= start of that day.
- * (Multi-day stays count on every day, not just check-in day.)
+ * Delegates to getDailyOccupancyTrend() with dynamic range.
+ * When dateParams provided, range is derived from actualDayStart→actualDayEnd.
+ * Otherwise uses default 30-day lookback.
  *
- * @param days Number of days to fetch (default 30)
+ * @param days Number of days to fetch (default 30, ignored when dateParams provided)
+ * @param dateParams Optional date filter to override default range
  * @returns Promise<OccupancyDataPoint[]> Array of occupancy data points
- *
  */
-export async function fetchOccupancyData(days: number = 30): Promise<OccupancyDataPoint[]> {
+export async function fetchOccupancyData(
+    days: number = 30,
+    dateParams?: DateFilterParams,
+): Promise<OccupancyDataPoint[]> {
+    if (dateParams?.rangePreset || dateParams?.startDate) {
+        const { getReportPeriodSetting } = await import('@/lib/get-report-period-setting');
+        const mode = await getReportPeriodSetting();
+        const range = computeDateRange(
+            dateParams.rangePreset || 'custom',
+            dateParams.startDate,
+            dateParams.endDate,
+            mode,
+        );
+        // Use the date range to compute days count (minimum 1)
+        const start = new Date(range.start);
+        const end = new Date(range.end);
+        const diffDays = Math.max(1, Math.round((end.getTime() - start.getTime()) / 86400000) + 1);
+        return getDailyOccupancyTrend(diffDays);
+    }
     return getDailyOccupancyTrend(days);
 }
 

@@ -1,24 +1,30 @@
 'use client';
 
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { usePathname } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import { X, Bot, Maximize2 } from 'lucide-react';
-import Link from 'next/link';
 import AIChatCore, { type ChatMessage } from './AIChatCore';
 import { hasConfiguredProviders } from '@/lib/ai/configClient';
 import KraiLogo from '@/components/shared/KraiLogo';
 import { normalizeAiText } from '@/lib/ai/normalizeAiText';
+import { createConversation, updateConversationMessages } from '@/lib/ai/history';
 
 const GREETING_DISMISSED_KEY = 'kr_ai_greeting_dismissed';
+const FLOAT_CONV_KEY = 'krai:floatConversationId';
+const FLOAT_MESSAGES_KEY = 'krai:floatMessages';
+const FLOAT_DRAFT_KEY = 'krai:floatDraft';
 
 export default function AIChatFloat() {
     const pathname = usePathname();
+    const router = useRouter();
     const [isOpen, setIsOpen] = useState(false);
     const [messages, setMessages] = useState<ChatMessage[]>([]);
+    const [inputDraft, setInputDraft] = useState('');
     const [hasConfig, setHasConfig] = useState(false);
     const [showGreeting, setShowGreeting] = useState(false);
+    const [convId, setConvId] = useState<string | null>(null);
 
-    // Hide greeting on KR-AI full page paths
+    // All hooks must be called unconditionally — compute flags after hooks
     const isOnAiPage = pathname?.startsWith('/chat') || pathname?.startsWith('/analytics-ai');
 
     useEffect(() => {
@@ -32,17 +38,44 @@ export default function AIChatFloat() {
         }
         checkConfig();
 
-        // Greeting: once per session, not on AI pages
-        if (!isOnAiPage) {
-            try {
-                const dismissed = sessionStorage.getItem(GREETING_DISMISSED_KEY);
-                if (dismissed !== 'true') {
-                    const timer = setTimeout(() => setShowGreeting(true), 1500);
-                    return () => clearTimeout(timer);
-                }
-            } catch { }
-        }
-    }, [isOpen, isOnAiPage]);
+        // Restore conversation from storage
+        try {
+            const storedId = localStorage.getItem(FLOAT_CONV_KEY);
+            if (storedId) setConvId(storedId);
+
+            const storedMsgs = localStorage.getItem(FLOAT_MESSAGES_KEY);
+            if (storedMsgs) {
+                const parsed = JSON.parse(storedMsgs) as ChatMessage[];
+                setMessages(parsed);
+            }
+
+            const storedDraft = localStorage.getItem(FLOAT_DRAFT_KEY);
+            if (storedDraft) setInputDraft(storedDraft);
+        } catch { /* noop */ }
+
+        // Greeting: once per session
+        try {
+            const dismissed = sessionStorage.getItem(GREETING_DISMISSED_KEY);
+            if (dismissed !== 'true') {
+                const timer = setTimeout(() => setShowGreeting(true), 1500);
+                return () => clearTimeout(timer);
+            }
+        } catch { }
+    }, []);
+
+    // Persist messages to localStorage
+    useEffect(() => {
+        try {
+            localStorage.setItem(FLOAT_MESSAGES_KEY, JSON.stringify(messages));
+        } catch { /* quota */ }
+    }, [messages]);
+
+    // Persist draft to localStorage
+    useEffect(() => {
+        try {
+            localStorage.setItem(FLOAT_DRAFT_KEY, inputDraft);
+        } catch { /* quota */ }
+    }, [inputDraft]);
 
     const dismissGreeting = () => {
         setShowGreeting(false);
@@ -54,13 +87,61 @@ export default function AIChatFloat() {
         setIsOpen(true);
     };
 
-    // Intercept follow-up clicks from insight cards — open chat + send
+    // Expand to full page — continue same conversation
+    const handleExpand = useCallback(() => {
+        const id = convId || globalThis.crypto.randomUUID().replace(/-/g, '').slice(0, 16);
+
+        // Ensure conversation exists in history with messages
+        try {
+            if (messages.length > 0) {
+                createConversation(id);
+                updateConversationMessages(id, messages);
+            }
+        } catch { /* noop */ }
+
+        // Store current conversation id + draft so AIChatFullscreen picks it up
+        try {
+            localStorage.setItem('krai:openConversationId', id);
+            localStorage.setItem('krai:openConversationDraft', inputDraft);
+        } catch { /* noop */ }
+
+        setIsOpen(false);
+        router.push(`/chat/${id}`);
+    }, [convId, messages, inputDraft, router]);
+
+    // Messages change handler
+    const handleMessagesChange = useCallback((msgs: ChatMessage[]) => {
+        const sanitized = msgs.map(m => {
+            if (m.role === 'assistant' && m.content) {
+                const normalized = normalizeAiText(m.content);
+                if (normalized !== m.content) return { ...m, content: normalized };
+            }
+            return m;
+        });
+        setMessages(sanitized);
+
+        // Generate conversation id on first user message
+        if (sanitized.length > 0 && !convId) {
+            const newId = globalThis.crypto.randomUUID().replace(/-/g, '').slice(0, 16);
+            setConvId(newId);
+            try { localStorage.setItem(FLOAT_CONV_KEY, newId); } catch { /* quota */ }
+        }
+    }, [convId]);
+
+    const handleInputChange = useCallback((val: string) => {
+        setInputDraft(val);
+    }, []);
+
+    // Intercept follow-up clicks from insight cards
     useExternalPromptHandler(isOpen, setIsOpen);
+
+    // If on AI chat page, render nothing — hooks already called above
+    if (isOnAiPage) return null;
 
     return (
         <>
-            {/* Greeting popup — once per session, not on full AI pages */}
-            {showGreeting && !isOpen && !isOnAiPage && (
+            {/* Greeting popup */}
+            {showGreeting && !isOpen && (
                 <div className="fixed bottom-20 right-4 sm:bottom-24 sm:right-6 z-40 max-w-[260px] animate-fade-in">
                     <div className="relative bg-white rounded-2xl rounded-br-sm shadow-xl border border-blue-200 p-3 pr-8">
                         <button
@@ -89,7 +170,6 @@ export default function AIChatFloat() {
                                 </button>
                             </div>
                         </div>
-                        {/* Tail pointing to button */}
                         <div className="absolute -bottom-1.5 right-4 w-3 h-3 bg-white border-r border-b border-blue-200 rotate-45" />
                     </div>
                 </div>
@@ -118,14 +198,13 @@ export default function AIChatFloat() {
                             </span>
                         </div>
                         <div className="flex items-center gap-1">
-                            <Link
-                                href="/analytics-ai/chat"
+                            <button
+                                onClick={handleExpand}
                                 className="p-1.5 hover:bg-white/20 rounded-lg transition-colors"
                                 title="Buka fullscreen"
-                                onClick={() => setIsOpen(false)}
                             >
                                 <Maximize2 className="w-4 h-4" />
-                            </Link>
+                            </button>
                             <button
                                 onClick={() => setIsOpen(false)}
                                 className="p-1.5 hover:bg-white/20 rounded-lg transition-colors"
@@ -142,25 +221,28 @@ export default function AIChatFloat() {
                             <div className="flex-1 overflow-y-auto p-4 bg-slate-50 flex flex-col items-center justify-center text-center">
                                 <Bot className="w-10 h-10 text-blue-300 mb-2" />
                                 <p className="text-sm font-medium text-gray-700">AI belum dikonfigurasi.</p>
-                                <Link
-                                    href="/pengaturan"
+                                <button
+                                    onClick={() => { setIsOpen(false); router.push('/pengaturan'); }}
                                     className="mt-2 inline-block text-xs text-blue-600 hover:underline font-medium"
-                                    onClick={() => setIsOpen(false)}
                                 >
                                     Setup API key di Pengaturan →
-                                </Link>
+                                </button>
                             </div>
                         ) : (
-                            <AIChatCoreFloat
-                                messages={messages}
-                                onMessagesChange={setMessages}
+                            <AIChatCore
+                                mode="float"
+                                initialMessages={messages}
+                                initialInput={inputDraft}
+                                onMessagesChange={handleMessagesChange}
+                                onInputChange={handleInputChange}
+                                showTopBar
                             />
                         )}
                     </div>
                 </div>
             )}
 
-            {/* Floating button — always visible on all pages */}
+            {/* Floating button */}
             <button
                 onClick={() => { dismissGreeting(); setIsOpen(v => !v); }}
                 className="fixed bottom-4 right-4 sm:bottom-6 sm:right-6 w-[52px] h-[52px] bg-blue-600 text-white rounded-full shadow-lg hover:shadow-xl transition-all hover:scale-110 flex items-center justify-center z-40"
@@ -173,50 +255,8 @@ export default function AIChatFloat() {
     );
 }
 
-function AIChatCoreFloat({
-    messages,
-    onMessagesChange,
-}: {
-    messages: ChatMessage[];
-    onMessagesChange: (msgs: ChatMessage[]) => void;
-}) {
-    const sendRef = useRef<((q: string) => void) | null>(null);
-
-    useEffect(() => {
-        const handler = (e: Event) => {
-            sendRef.current?.((e as CustomEvent<string>).detail);
-        };
-        window.addEventListener('ai-chat-float-send', handler);
-        return () => window.removeEventListener('ai-chat-float-send', handler);
-    }, []);
-
-    // Sanitize incoming messages — normalize any JSON-wrapped response
-    const handleMessagesChange = useCallback((msgs: ChatMessage[]) => {
-        const sanitized = msgs.map(m => {
-            if (m.role === 'assistant' && m.content) {
-                const normalized = normalizeAiText(m.content);
-                if (normalized !== m.content) {
-                    return { ...m, content: normalized };
-                }
-            }
-            return m;
-        });
-        onMessagesChange(sanitized);
-    }, [onMessagesChange]);
-
-    return (
-        <AIChatCore
-            mode="float"
-            initialMessages={messages}
-            onMessagesChange={handleMessagesChange}
-            onSendRef={sendRef}
-            showTopBar
-        />
-    );
-}
-
 /**
- * Hook for AIChatFloat to intercept follow-up clicks from insight cards.
+ * Hook to intercept follow-up clicks from insight cards.
  * Opens chat if closed and re-dispatches the question so AIChatCore picks it up.
  */
 function useExternalPromptHandler(isOpen: boolean, setIsOpen: (v: boolean) => void) {
@@ -226,7 +266,6 @@ function useExternalPromptHandler(isOpen: boolean, setIsOpen: (v: boolean) => vo
             if (!q?.trim()) return;
             if (!isOpen) {
                 setIsOpen(true);
-                // Re-dispatch after core mounts (React state update is async)
                 setTimeout(() => {
                     window.dispatchEvent(new CustomEvent('ai-chat-prompt-send', { detail: q }));
                 }, 150);

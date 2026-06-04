@@ -230,7 +230,9 @@ async function runOpenAILoop(
 
         const toolCalls = message.tool_calls;
         if (!toolCalls || toolCalls.length === 0) {
-            const normalized = normalizeAiText(message.content || 'Tidak ada respons.');
+            // DeepSeek reasoner: content may be in reasoning_content
+            const rawContent = message.reasoning_content || message.content || 'Tidak ada respons.';
+            const normalized = normalizeAiText(rawContent);
             return { message: normalized, usage: totalUsage };
         }
 
