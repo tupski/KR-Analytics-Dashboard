@@ -5,6 +5,14 @@
  * and AI tooling used across the application.
  */
 
+/** Step-by-step thinking log from AI chat (verbose mode) */
+export interface ThinkingStep {
+    type: 'think' | 'tool_call' | 'tool_result' | 'compose';
+    label: string;
+    detail?: string;
+    data?: any;
+}
+
 // ─── AI Insight ───
 
 export interface AIInsightRequest {

@@ -123,20 +123,38 @@ PREFERENSI TOOLS (PENTING!):
 // =========================================================
 // OpenAI / DeepSeek / OpenAI-compatible loop
 // =========================================================
+interface ThinkingStep {
+    type: 'think' | 'tool_call' | 'tool_result' | 'compose';
+    label: string;
+    detail?: string;
+    data?: any;
+}
+
 async function runOpenAILoop(
     apiUrl: string,
     headers: Record<string, string>,
     model: string,
     systemContent: string,
     userMessages: any[],
-): Promise<{ message: string; usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number } }> {
+    verbose?: boolean,
+): Promise<{ message: string; usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number }; steps?: ThinkingStep[] }> {
     const conversation: any[] = [
         { role: 'system', content: systemContent },
         ...userMessages.map((m: any) => ({ role: m.role, content: m.content })),
     ];
     let totalUsage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
+    const steps: ThinkingStep[] = [];
+
+    // Step 1: Understand question
+    const userQ = userMessages.map((m: any) => m.content).filter(Boolean).join(' ').slice(0, 200);
+    if (verbose) {
+        steps.push({ type: 'think', label: 'Memahami pertanyaan...', detail: `Menganalisis: "${userQ}"` });
+    }
 
     for (let iter = 0; iter < MAX_TOOL_ITERATIONS; iter++) {
+        if (verbose) {
+            steps.push({ type: 'think', label: `Iterasi ke-${iter + 1}: memanggil AI...` });
+        }
         const body = {
             model,
             messages: conversation,
@@ -233,7 +251,10 @@ async function runOpenAILoop(
             // DeepSeek reasoner: content may be in reasoning_content
             const rawContent = message.reasoning_content || message.content || 'Tidak ada respons.';
             const normalized = normalizeAiText(rawContent);
-            return { message: normalized, usage: totalUsage };
+            if (verbose) {
+                steps.push({ type: 'compose', label: 'Menyusun jawaban...', detail: 'AI telah mengumpulkan data, sekarang menyusun jawaban.' });
+            }
+            return { message: normalized, usage: totalUsage, steps: verbose ? steps : undefined };
         }
 
         // Append assistant message + tool results, then loop
@@ -254,7 +275,21 @@ async function runOpenAILoop(
                 name: tc.function?.name || '',
                 arguments: parsedArgs,
             };
+
+            // Verbose: logging tool call
+            if (verbose) {
+                const prettyArgs = JSON.stringify(parsedArgs).slice(0, 200);
+                steps.push({ type: 'tool_call', label: `🔍 ${call.name}`, detail: `Args: ${prettyArgs}` });
+            }
+
             const result = await executeTool(call);
+
+            // Verbose: logging tool result
+            if (verbose) {
+                const resultSummary = Array.isArray(result) ? `${result.length} data points` : typeof result === 'object' ? Object.keys(result).join(', ') : String(result).slice(0, 100);
+                steps.push({ type: 'tool_result', label: `✅ ${call.name}`, detail: `Ditemukan: ${resultSummary}`, data: Array.isArray(result) ? result.slice(0, 3) : result });
+            }
+
             conversation.push({
                 role: 'tool',
                 tool_call_id: tc.id,
@@ -264,7 +299,10 @@ async function runOpenAILoop(
         }
     }
 
-    return { message: 'Maaf, saya butuh terlalu banyak tool calls untuk menjawab. Coba persempit pertanyaan.', usage: totalUsage };
+    if (verbose) {
+        steps.push({ type: 'think', label: 'Semua data terkumpul, menyusun jawaban...' });
+    }
+    return { message: 'Maaf, saya butuh terlalu banyak tool calls untuk menjawab. Coba persempit pertanyaan.', usage: totalUsage, steps: verbose ? steps : undefined };
 }
 
 // =========================================================
@@ -351,10 +389,11 @@ async function runAnthropicLoop(
 export async function POST(request: NextRequest) {
     try {
         const body = await request.json();
-        const { messages, config, thinkingMode } = body as {
+        const { messages, config, thinkingMode, verbose } = body as {
             messages: any[];
             config: AIConfig;
             thinkingMode?: 'auto' | 'instant' | 'thinking';
+            verbose?: boolean;
         };
 
         // AUTO-FALLBACK ROUTING
@@ -499,12 +538,13 @@ Owner ingin analisis mendalam. Ambil waktu untuk:
 
         for (const cand of candidates) {
             try {
-                const result = await callProvider(cand, systemContent, messages);
+                const result = await callProvider(cand, systemContent, messages, verbose);
                 return NextResponse.json({
                     message: normalizeAiText(result.message),
                     model: cand.model,
                     provider: cand.provider,
                     usage: result.usage,
+                    steps: (result as any).steps,
                 });
             } catch (error: any) {
                 lastError = error;
@@ -550,7 +590,8 @@ async function callProvider(
     cfg: AIConfig,
     systemContent: string,
     messages: any[],
-): Promise<{ message: string; usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number } }> {
+    verbose?: boolean,
+): Promise<{ message: string; usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number }; steps?: ThinkingStep[] }> {
     switch (cfg.provider) {
         case 'openai':
             return runOpenAILoop(
@@ -559,6 +600,7 @@ async function callProvider(
                 cfg.model || 'gpt-4o-mini',
                 systemContent,
                 messages,
+                verbose,
             );
         case 'deepseek':
             return runOpenAILoop(
@@ -567,6 +609,7 @@ async function callProvider(
                 cfg.model || 'deepseek-chat',
                 systemContent,
                 messages,
+                verbose,
             );
         case 'gemini':
             return runOpenAILoop(
@@ -575,6 +618,7 @@ async function callProvider(
                 cfg.model || 'gemini-2.0-flash',
                 systemContent,
                 messages,
+                verbose,
             );
         case 'groq':
             return runOpenAILoop(
@@ -583,6 +627,7 @@ async function callProvider(
                 cfg.model || 'llama-3.3-70b-versatile',
                 systemContent,
                 messages,
+                verbose,
             );
         case 'openrouter': {
             let apiUrl = cfg.baseUrl || 'https://openrouter.ai/api/v1/chat/completions';
@@ -598,6 +643,7 @@ async function callProvider(
                 cfg.model || 'meta-llama/llama-3.3-70b-instruct:free',
                 systemContent,
                 messages,
+                verbose,
             );
         }
         case 'kiro': {
@@ -608,6 +654,7 @@ async function callProvider(
                 cfg.model || 'kiro-claude-sonnet-4',
                 systemContent,
                 messages,
+                verbose,
             );
         }
         case 'anthropic':
@@ -627,6 +674,7 @@ async function callProvider(
                 cfg.model || 'gpt-4o-mini',
                 systemContent,
                 messages,
+                verbose,
             );
         }
         default:

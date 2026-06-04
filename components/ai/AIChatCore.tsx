@@ -14,7 +14,7 @@
  */
 
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
-import { Send, Bot, Brain, X, ChevronRight, ChevronDown, Copy, Check, AlertTriangle, Eye, Lightbulb, Wrench, Zap, RotateCw, Pencil } from 'lucide-react';
+import { Send, Bot, Brain, X, ChevronRight, ChevronDown, Copy, Check, AlertTriangle, Eye, Lightbulb, Wrench, Zap, RotateCw, Pencil, Search, Loader2 } from 'lucide-react';
 import MarkdownRenderer from './MarkdownRenderer';
 import ChatModelSelector from './ChatModelSelector';
 import { loadMemory, addMemory, deleteMemory, getMemoryContext, extractMemoryFromConversation, type MemoryEntry } from '@/lib/ai/memory';
@@ -56,6 +56,13 @@ export interface ChatMessage {
         completion_tokens: number;
         total_tokens: number;
     };
+    /** Verbose thinking steps (only when verbose mode on) */
+    steps?: Array<{
+        type: 'think' | 'tool_call' | 'tool_result' | 'compose';
+        label: string;
+        detail?: string;
+        data?: any;
+    }>;
 }
 
 // ── Loading indicator — pure CSS dots, zero JS state ────────────────────────
@@ -101,7 +108,7 @@ async function sendChat(
     needVision: boolean,
     activeProvider: ProviderId | 'auto',
     activeModel: string,
-): Promise<{ message: string; model?: string; provider?: string; usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number } }> {
+): Promise<{ message: string; model?: string; provider?: string; usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number }; steps?: any[] }> {
     // API keys are loaded server-side from DB — client never sends full keys
     const res = await fetch('/api/ai/chat', {
         method: 'POST',
@@ -114,6 +121,7 @@ async function sendChat(
             },
             thinkingMode,
             memoryContext,
+            verbose: true,
         }),
     });
     if (!res.ok) {
@@ -282,6 +290,7 @@ export default function AIChatCore({
     const [loadingModels, setLoadingModels] = useState(false);
     const [retryingIdx, setRetryingIdx] = useState<number | null>(null);
     const [editingIdx, setEditingIdx] = useState<number | null>(null);
+    const [expandedStepsIdx, setExpandedStepsIdx] = useState<number | null>(null);
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const inputRef = useRef<HTMLInputElement | HTMLTextAreaElement>(null);
     const onMessagesChangeRef = useRef(onMessagesChange);
@@ -523,6 +532,7 @@ export default function AIChatCore({
                 model: result.model,
                 provider: result.provider,
                 usage: result.usage,
+                steps: (result as any).steps,
             };
             setMessages([...newMessages, assistantMsg]);
             setTimeout(() => addSuggestions(msg, result.message), 300);
@@ -711,7 +721,42 @@ export default function AIChatCore({
                                         }`}
                                 >
                                     {msg.role === 'assistant' ? (
-                                        <AssistantMessage content={msg.content} />
+                                        <>
+                                            {/* Verbose thinking steps */}
+                                            {(msg as any).steps && (msg as any).steps.length > 0 && (
+                                                <div className="mb-2">
+                                                    <button
+                                                        onClick={() => setExpandedStepsIdx(expandedStepsIdx === idx ? null : idx)}
+                                                        className="flex items-center gap-1 text-[10px] text-gray-500 hover:text-blue-600 transition-colors w-full"
+                                                    >
+                                                        <ChevronRight className={`w-3 h-3 transition-transform ${expandedStepsIdx === idx ? 'rotate-90' : ''}`} />
+                                                        <Search className="w-2.5 h-2.5" />
+                                                        <span>Langkah berpikir ({(msg as any).steps.length})</span>
+                                                    </button>
+                                                    {expandedStepsIdx === idx && (
+                                                        <div className="mt-1.5 space-y-1 border-l-2 border-blue-200 pl-3">
+                                                            {(msg as any).steps.map((s: any, si: number) => (
+                                                                <div key={si} className="text-[10px] leading-relaxed">
+                                                                    <div className="flex items-start gap-1.5">
+                                                                        <span className="flex-shrink-0 mt-0.5">
+                                                                            {s.type === 'think' && <Loader2 className="w-2.5 h-2.5 text-blue-400 animate-spin" />}
+                                                                            {s.type === 'tool_call' && <span className="text-amber-500">🔍</span>}
+                                                                            {s.type === 'tool_result' && <span className="text-emerald-500">📊</span>}
+                                                                            {s.type === 'compose' && <Brain className="w-2.5 h-2.5 text-purple-400" />}
+                                                                        </span>
+                                                                        <div className="flex-1 min-w-0">
+                                                                            <span className="font-medium text-gray-600">{s.label}</span>
+                                                                            {s.detail && <span className="text-gray-400 ml-1">— {s.detail}</span>}
+                                                                        </div>
+                                                                    </div>
+                                                                </div>
+                                                            ))}
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            )}
+                                            <AssistantMessage content={msg.content} />
+                                        </>
                                     ) : (
                                         <span>{msg.content}</span>
                                     )}
