@@ -26,8 +26,18 @@ interface ChartDataPoint {
 export default function GrafikPendapatan({ initialData, initialFilter }: GrafikPendapatanProps) {
     const [filter, setFilter] = useState<RevenueFilter>(initialFilter);
     const [data, setData] = useState<RevenueDataPoint[]>(initialData);
-    const [expenseData, setExpenseData] = useState<ChartDataPoint[]>([]);
     const [isPending, startTransition] = useTransition();
+
+    // Derive chart data: merge revenue + expense
+    // Use a ref to store latest chart data so expense fetch doesn't depend on state
+    const [expenseData, setExpenseData] = useState<ChartDataPoint[]>(() =>
+        initialData.map(r => ({
+            label: r.label || r.date,
+            revenue: r.revenue,
+            expense: 0,
+            transactionCount: r.transactionCount,
+        }))
+    );
 
     const filters: { value: RevenueFilter; label: string }[] = [
         { value: 'daily', label: 'Harian' },
@@ -36,50 +46,75 @@ export default function GrafikPendapatan({ initialData, initialFilter }: GrafikP
         { value: 'yearly', label: 'Tahunan' },
     ];
 
-    // Fetch expense data alongside revenue via server action
-    const fetchExpenses = useCallback(async (revData: RevenueDataPoint[]) => {
+    // Merge expenses into chart data with flexible date matching
+    // For daily: exact date match. For weekly/monthly: match by YYYY-MM prefix.
+    // For yearly: match by YYYY prefix.
+    const mergeExpenses = useCallback((revData: RevenueDataPoint[], expenses: { date: string; amount: number }[]): ChartDataPoint[] => {
+        if (expenses.length === 0) {
+            return revData.map(r => ({
+                label: r.label || r.date,
+                revenue: r.revenue,
+                expense: 0,
+                transactionCount: r.transactionCount,
+            }));
+        }
+        const expenseMap = new Map(expenses.map(e => [e.date, e.amount]));
+        const isYearly = revData.length > 0 && /^\d{4}$/.test(revData[0].date);
+
+        return revData.map(r => {
+            let expense = 0;
+            if (isYearly) {
+                // Yearly: match expense entries with same year prefix "2026"
+                for (const [d, amt] of expenseMap) {
+                    if (d.startsWith(r.date)) { expense += amt; }
+                }
+            } else {
+                // Daily/Weekly/Monthly: try exact match first, then YYYY-MM prefix
+                expense = expenseMap.get(r.date) || 0;
+                if (!expense && r.date.length >= 7) {
+                    const prefix = r.date.substring(0, 7); // YYYY-MM
+                    for (const [d, amt] of expenseMap) {
+                        if (d.startsWith(prefix)) { expense += amt; }
+                    }
+                }
+            }
+            return {
+                label: r.label || r.date,
+                revenue: r.revenue,
+                expense,
+                transactionCount: r.transactionCount,
+            };
+        });
+    }, []);
+
+    // Helper: map RevenueFilter to expense groupBy
+    const getGroupBy = useCallback((f: RevenueFilter): 'day' | 'month' => {
+        if (f === 'daily' || f === 'weekly') return 'day';
+        return 'month';
+    }, []);
+
+    // Fetch expenses when revenue data changes
+    const updateChartData = useCallback(async (revData: RevenueDataPoint[], currentFilter: RevenueFilter) => {
         if (revData.length === 0) {
             setExpenseData([]);
             return;
         }
         const startDate = revData[0].date;
         const endDate = revData[revData.length - 1].date;
-        const groupBy = filter === 'daily' ? 'day' : 'month';
+        const groupBy = getGroupBy(currentFilter);
         try {
             const { getExpenseTrendAction } = await import('@/app/(dashboard)/dashboard/actions');
-            const expenses = await getExpenseTrendAction(startDate, endDate, groupBy as 'day' | 'month');
-
-            // Merge expenses into chart data
-            const expenseMap = new Map(expenses.map((e: any) => [e.date, e.amount]));
-            const merged: ChartDataPoint[] = revData.map(r => ({
-                label: r.label || r.date,
-                revenue: r.revenue,
-                expense: expenseMap.get(r.date) || 0,
-                transactionCount: r.transactionCount,
-            }));
-            setExpenseData(merged);
+            const expenses = await getExpenseTrendAction(startDate, endDate, groupBy);
+            setExpenseData(mergeExpenses(revData, expenses));
         } catch {
-            // If expense service unavailable, show 0 for all
-            const merged: ChartDataPoint[] = revData.map(r => ({
-                label: r.label || r.date,
-                revenue: r.revenue,
-                expense: 0,
-                transactionCount: r.transactionCount,
-            }));
-            setExpenseData(merged);
+            setExpenseData(mergeExpenses(revData, []));
         }
-    }, [filter]);
+    }, [getGroupBy, mergeExpenses]);
 
-    // Helper: map RevenueFilter to expense groupBy
-    const getGroupBy = (f: RevenueFilter): 'day' | 'month' => {
-        if (f === 'daily') return 'day';
-        return 'month';
-    };
-
-    // Initial expense load
+    // Initial load + reload when filter changes (data updated)
     useEffect(() => {
-        fetchExpenses(data);
-    }, [data]);
+        updateChartData(data, filter);
+    }, [data, filter, updateChartData]);
 
     const handleFilterChange = async (newFilter: RevenueFilter) => {
         if (newFilter === filter) return;
@@ -90,6 +125,7 @@ export default function GrafikPendapatan({ initialData, initialFilter }: GrafikP
                 const { fetchRevenueData } = await import('@/app/(dashboard)/dashboard/actions');
                 const newData = await fetchRevenueData(newFilter);
                 setData(newData);
+                // Expenses will load via useEffect([data, filter])
             } catch (error) {
                 console.error('Error fetching revenue data:', error);
             }
