@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { RefreshCw, Sparkles, ChevronDown, ChevronUp, Lightbulb, GitCompareArrows, ChevronRight, Zap, AlertCircle } from 'lucide-react';
+import { RefreshCw, Sparkles, ChevronDown, ChevronUp, Lightbulb, GitCompareArrows, ChevronRight, Zap, AlertCircle, Send } from 'lucide-react';
 import MarkdownRenderer from './MarkdownRenderer';
 import { generateFollowUpQuestions } from '@/lib/ai/followUpQuestions';
 import type { KraiPageContext } from '@/lib/ai/followUpQuestions';
@@ -54,6 +54,12 @@ export default function AIInsightCard({
     const [compareMode, setCompareMode] = useState(false);
     const [dynamicSuggestions, setDynamicSuggestions] = useState<string[]>([]);
     const initialFetchDone = useRef(false);
+
+    // Inline follow-up Q&A state
+    const [followUpQuestion, setFollowUpQuestion] = useState<string | null>(null);
+    const [followUpAnswer, setFollowUpAnswer] = useState<string | null>(null);
+    const [followUpLoading, setFollowUpLoading] = useState(false);
+    const [followUpError, setFollowUpError] = useState<string | null>(null);
 
     // Client-side cache helpers (secondary cache — primary is server-side)
     const getClientCacheKey = useCallback((p: string, cmp: boolean) =>
@@ -120,10 +126,8 @@ export default function AIInsightCard({
         if (!forceRefresh) {
             const cached = getClientCached(p, cmp);
             if (cached) {
-                // Normalize cache on read — handles old raw JSON cached entries
                 const normalized = normalizeAiText(cached);
                 setInsight(normalized);
-                // Overwrite cache with normalized version
                 setClientCache(p, cmp, normalized);
                 setAiEnabled(true);
                 generateDynamicSuggestions(p, normalized);
@@ -131,11 +135,14 @@ export default function AIInsightCard({
             }
         }
 
-        // Clear transient fetch errors on retry — aiEnabled stays as config-truth
         setFetchError(null);
         setError(null);
         setLoading(true);
         setDynamicSuggestions([]);
+        // Reset follow-up state when fetching new insight
+        setFollowUpQuestion(null);
+        setFollowUpAnswer(null);
+        setFollowUpError(null);
 
         try {
             const res = await fetch('/api/ai/insight', {
@@ -158,7 +165,6 @@ export default function AIInsightCard({
             });
 
             if (!res.ok) {
-                // Transient server error — compact banner, don't touch aiEnabled
                 setFetchError('Gagal menghubungi server insight');
                 setLoading(false);
                 return;
@@ -166,21 +172,18 @@ export default function AIInsightCard({
 
             const data = await res.json();
 
-            // Insight disabled from server (redundant check) — compact banner
             if (data.disabled) {
                 setFetchError('Insight tidak tersedia');
                 setLoading(false);
                 return;
             }
 
-            // AI error with fallback flag → transient fetch error
             if (data.error && data.fallback) {
                 setFetchError(data.message || 'Gagal mendapatkan insight AI');
                 setLoading(false);
                 return;
             }
 
-            // AI error without fallback → show error
             if (data.error && !data.fallback) {
                 setError(data.message || 'Gagal mendapatkan insight');
                 setLoading(false);
@@ -192,12 +195,10 @@ export default function AIInsightCard({
             const msg = normalizeAiText(raw);
             if (msg) {
                 setInsight(msg);
-                // Only cache normalized text — never raw JSON
                 setClientCache(p, cmp, msg);
                 setAiEnabled(true);
                 generateDynamicSuggestions(p, msg);
             } else {
-                // Empty response — transient, no fallback needed
                 setFetchError('Insight kosong');
             }
         } catch (err: any) {
@@ -227,7 +228,44 @@ export default function AIInsightCard({
         fetchInsight(currentPrompt, next);
     };
 
-    // ── Compact disabled banner (aiEnabled=false from config) ──
+    /** Inline follow-up: generate answer inside the card via chat API */
+    const handleFollowUpQuestion = async (q: string) => {
+        setFollowUpQuestion(q);
+        setFollowUpAnswer(null);
+        setFollowUpError(null);
+        setFollowUpLoading(true);
+
+        try {
+            const res = await fetch('/api/ai/chat', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    messages: [
+                        { role: 'user', content: `Berdasarkan insight berikut:\n\n${insight}\n\nJawab pertanyaan ini: ${q}` },
+                    ],
+                    config: {
+                        provider: 'auto',
+                        model: 'auto',
+                    },
+                }),
+            });
+
+            if (!res.ok) {
+                const err = await res.json();
+                throw new Error(err.error || `Gagal: ${res.status}`);
+            }
+
+            const data = await res.json();
+            const answer = normalizeAiText(data.message || '');
+            setFollowUpAnswer(answer || 'Tidak ada jawaban.');
+        } catch (err: any) {
+            setFollowUpError(err.message || 'Gagal menjawab pertanyaan');
+        } finally {
+            setFollowUpLoading(false);
+        }
+    };
+
+    // ── Compact disabled banner ──
     if (aiEnabled === false && !loading && !insight) {
         return (
             <div className={`flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 shadow-sm ${className}`}>
@@ -258,7 +296,9 @@ export default function AIInsightCard({
         );
     }
 
-    const isLong = insight && insight.length > 300;
+    // Collapse long insight: show max 5 lines
+    const LINE_CLAMP_THRESHOLD = 300;
+    const isLong = insight && insight.length > LINE_CLAMP_THRESHOLD;
     const displayText = insight && isLong && !expanded ? insight.slice(0, 280) + '...' : insight;
 
     return (
@@ -297,7 +337,7 @@ export default function AIInsightCard({
                 </div>
             </div>
 
-            {/* Transient fetch error banner (compact) — aiEnabled remains untouched */}
+            {/* Transient fetch error banner */}
             {fetchError && !loading && (
                 <div className="flex items-center gap-2 p-2.5 rounded-lg bg-amber-50 border border-amber-200 mb-2">
                     <AlertCircle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
@@ -339,7 +379,7 @@ export default function AIInsightCard({
                             className="mt-2 flex items-center gap-1 text-xs text-blue-600 hover:text-blue-700 font-medium"
                         >
                             {expanded ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
-                            {expanded ? 'Lebih sedikit' : 'Selengkapnya'}
+                            {expanded ? 'Tutup' : 'Lihat selengkapnya'}
                         </button>
                     )}
                 </>
@@ -359,26 +399,78 @@ export default function AIInsightCard({
                 </div>
             )}
 
-            {/* Follow-up questions — send to KRAI chat */}
-            {!loading && insight && dynamicSuggestions.length > 0 && (
+            {/* Inline follow-up — question + answer inside card */}
+            {!loading && insight && (
                 <div className="mt-3 pt-3 border-t border-blue-100">
                     <div className="flex items-center gap-1.5 mb-2">
                         <Lightbulb className="w-3 h-3 text-blue-500" />
-                        <span className="text-xs text-blue-600 font-medium">Tanyakan ke KRAI</span>
+                        <span className="text-xs text-blue-600 font-medium">Tanya lanjutan</span>
                     </div>
-                    <div className="flex flex-col gap-1.5 sm:flex-row sm:flex-wrap">
-                        {dynamicSuggestions.slice(0, 3).map((q: string) => (
-                            <button
-                                key={q}
-                                onClick={() => handleAlternativeClick(q)}
-                                className="text-xs px-3 py-2 bg-white border border-blue-200 rounded-xl text-blue-700 hover:bg-blue-100 transition-colors text-left flex items-start gap-1.5 sm:max-w-xs cursor-pointer"
-                                title={`Tanyakan ke KRAI: ${q}`}
-                            >
-                                <ChevronRight className="w-3 h-3 flex-shrink-0 mt-0.5" />
-                                <span className="line-clamp-2 sm:line-clamp-none">{q}</span>
-                            </button>
-                        ))}
-                    </div>
+
+                    {/* Follow-up question list */}
+                    {!followUpQuestion && dynamicSuggestions.length > 0 && (
+                        <div className="flex flex-col gap-1.5 sm:flex-row sm:flex-wrap">
+                            {dynamicSuggestions.slice(0, 3).map((q: string) => (
+                                <button
+                                    key={q}
+                                    onClick={() => handleFollowUpQuestion(q)}
+                                    disabled={followUpLoading}
+                                    className="text-xs px-3 py-2 bg-white border border-blue-200 rounded-xl text-blue-700 hover:bg-blue-100 transition-colors text-left flex items-start gap-1.5 sm:max-w-xs cursor-pointer disabled:opacity-50"
+                                    title={q}
+                                >
+                                    <ChevronRight className="w-3 h-3 flex-shrink-0 mt-0.5" />
+                                    <span className="line-clamp-2 sm:line-clamp-none">{q}</span>
+                                </button>
+                            ))}
+                        </div>
+                    )}
+
+                    {/* Inline follow-up answer */}
+                    {followUpQuestion && (
+                        <div className="mt-2 space-y-2">
+                            <div className="text-xs font-medium text-blue-700 bg-blue-100 px-3 py-1.5 rounded-lg">
+                                {followUpQuestion}
+                            </div>
+
+                            {followUpLoading && (
+                                <div className="flex items-center gap-2 text-sm text-blue-600 py-2">
+                                    <div className="flex gap-1">
+                                        <div className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></div>
+                                        <div className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></div>
+                                        <div className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></div>
+                                    </div>
+                                    <span>Menjawab...</span>
+                                </div>
+                            )}
+
+                            {followUpError && (
+                                <div className="flex items-center gap-2 p-2 rounded-lg bg-red-50 border border-red-200">
+                                    <AlertCircle className="w-3 h-3 text-red-500 shrink-0" />
+                                    <span className="text-xs text-red-700">{followUpError}</span>
+                                </div>
+                            )}
+
+                            {followUpAnswer && !followUpLoading && (
+                                <div className="bg-white border border-blue-100 rounded-lg p-3">
+                                    <MarkdownRenderer content={followUpAnswer} className="text-sm" />
+                                </div>
+                            )}
+
+                            {/* Close follow-up */}
+                            {!followUpLoading && (
+                                <button
+                                    onClick={() => {
+                                        setFollowUpQuestion(null);
+                                        setFollowUpAnswer(null);
+                                        setFollowUpError(null);
+                                    }}
+                                    className="text-xs text-gray-400 hover:text-gray-600"
+                                >
+                                    Tutup
+                                </button>
+                            )}
+                        </div>
+                    )}
                 </div>
             )}
         </div>

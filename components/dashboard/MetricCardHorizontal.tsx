@@ -135,8 +135,8 @@ export default function MetricCardHorizontal({
                     {/* Title */}
                     <p className="text-xs sm:text-sm text-gray-500 truncate">{title}</p>
 
-                    {/* Value */}
-                    <p className="text-lg sm:text-2xl font-bold text-gray-900 mt-0.5 break-words">
+                    {/* Value — whitespace-nowrap prevents "Jt/Rb/M" from wrapping to new line */}
+                    <p className="text-lg sm:text-2xl font-bold text-gray-900 mt-0.5 whitespace-nowrap leading-none min-w-0">
                         {value}
                     </p>
 

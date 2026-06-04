@@ -15,7 +15,8 @@ import CollapsibleChartTable from '@/components/shared/CollapsibleChartTable';
 import type { KPIData, KPICompareMode, LocationHealthItem, MarketingPerformanceItem, DashboardInsight } from '@/types/dashboard';
 import type { UnitPerformanceData } from '@/lib/dashboard/unit-performance';
 import { Calendar, DollarSign, TrendingUp, Home, Clock, MapPin } from 'lucide-react';
-import { formatCurrencyCompactIDR } from '@/lib/utils/format';
+import { formatCurrencyCompactIDR, formatCurrency } from '@/lib/utils/format';
+import MoneyValue from '@/components/shared/MoneyValue';
 
 // ─── Dynamic card titles ───────────────────────────────────────
 
@@ -38,16 +39,22 @@ function getCardTitle(base: string, rangePreset?: string): string {
     }
 }
 
-// ─── Busy-hour helper ─────────────────────────────────────────
+// ─── Busy-hour helper — per-aggregate, filter 0, range label ──
 
-function computeBusyHours(checkins: any[]): { hour: string; count: number }[] {
+function computeBusyHours(items: any[]): { hour: string; count: number }[] {
     const buckets: Record<string, number> = {};
-    checkins.forEach((item: any) => {
-        const hour = item.time?.split(':')[0] || '00';
+    for (const item of items) {
+        // Try time from formatted time field first, then checkinAt
+        const timeStr = item.time || '';
+        const hour = timeStr.split(':')[0] || '00';
         buckets[hour] = (buckets[hour] || 0) + 1;
-    });
+    }
     return Object.entries(buckets)
-        .map(([hour, count]) => ({ hour: `${hour}:00`, count }))
+        .filter(([, count]) => count > 0) // hide 0-checkin hours
+        .map(([hour, count]) => ({
+            hour: `${hour.padStart(2, '0')}:00 - ${hour.padStart(2, '0')}:59`,
+            count,
+        }))
         .sort((a, b) => a.hour.localeCompare(b.hour));
 }
 
@@ -149,6 +156,7 @@ export default function TabContent({
                             icon={<DollarSign className="w-5 h-5" />}
                             title={getCardTitle('Pendapatan', filterRangePreset)}
                             value={formatCurrencyCompactIDR(kpiData.revenueToday)}
+                            subtitle={kpiData.revenueToday >= 1000000 ? formatCurrency(kpiData.revenueToday) : undefined}
                             comparisonValue={kpiData.prev?.revenue ? formatCurrencyCompactIDR(kpiData.prev.revenue) : undefined}
                             deltaAmount={
                                 change?.revenueChangePct != null

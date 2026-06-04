@@ -55,9 +55,22 @@ export async function fetchUnitStatus(): Promise<UnitStatusCounts> {
  * @throws Error if data fetching fails
  * 
  */
-export async function fetchTodayCheckins(): Promise<CheckinItem[]> {
+export async function fetchTodayCheckins(dateParams?: DateFilterParams): Promise<CheckinItem[]> {
     const supabase = createServerClient();
-    const { start, end } = await getTodayReportRange();
+    // Use dateParams if provided, otherwise fall back to today
+    let start: string;
+    let end: string;
+    if (dateParams?.rangePreset || (dateParams?.startDate && dateParams?.endDate)) {
+        const { getReportPeriodSetting } = await import('@/lib/get-report-period-setting');
+        const mode = await getReportPeriodSetting();
+        const range = computeDateRange(dateParams.rangePreset || 'custom', dateParams.startDate, dateParams.endDate, mode);
+        start = range.start;
+        end = range.end;
+    } else {
+        const todayRange = await getTodayReportRange();
+        start = todayRange.start;
+        end = todayRange.end;
+    }
 
     try {
         const { data, error } = await supabase
@@ -65,8 +78,8 @@ export async function fetchTodayCheckins(): Promise<CheckinItem[]> {
             .select('id, apartment_location, room_number, customer_name, checkin_at')
             .gte('checkin_at', start)
             .lte('checkin_at', end)
-            .order('checkin_at', { ascending: true })
-            .limit(5);
+            .order('checkin_at', { ascending: false })
+            .limit(10);
 
         if (error) {
             console.error('Error fetching check-ins:', error);
@@ -105,9 +118,22 @@ export async function fetchTodayCheckins(): Promise<CheckinItem[]> {
  * @throws Error if data fetching fails
  * 
  */
-export async function fetchTodayCheckouts(): Promise<CheckoutItem[]> {
+export async function fetchTodayCheckouts(dateParams?: DateFilterParams): Promise<CheckoutItem[]> {
     const supabase = createServerClient();
-    const { start, end } = await getTodayReportRange();
+    // Use dateParams if provided, otherwise fall back to today
+    let start: string;
+    let end: string;
+    if (dateParams?.rangePreset || (dateParams?.startDate && dateParams?.endDate)) {
+        const { getReportPeriodSetting } = await import('@/lib/get-report-period-setting');
+        const mode = await getReportPeriodSetting();
+        const range = computeDateRange(dateParams.rangePreset || 'custom', dateParams.startDate, dateParams.endDate, mode);
+        start = range.start;
+        end = range.end;
+    } else {
+        const todayRange = await getTodayReportRange();
+        start = todayRange.start;
+        end = todayRange.end;
+    }
 
     try {
         const { data, error } = await supabase
@@ -115,8 +141,8 @@ export async function fetchTodayCheckouts(): Promise<CheckoutItem[]> {
             .select('id, apartment_location, room_number, customer_name, checkout_at')
             .gte('checkout_at', start)
             .lte('checkout_at', end)
-            .order('checkout_at', { ascending: false })
-            .limit(5);
+            .order('checkout_at', { ascending: true })
+            .limit(10);
 
         if (error) {
             console.error('Error fetching check-outs:', error);
@@ -522,6 +548,24 @@ async function fetchRevenueDataLegacy(filter: RevenueFilter): Promise<RevenueDat
  * @param filter Time period filter: 'daily' | 'weekly' | 'monthly' | 'yearly'
  * @returns Promise<RevenueDataPoint[]> Array of revenue data points
  */
+/**
+ * Server action to fetch expense trend data for chart comparison.
+ * Avoids importing pg-dependent modules in client components.
+ */
+export async function getExpenseTrendAction(
+    startDate: string,
+    endDate: string,
+    groupBy: 'day' | 'month' = 'day'
+): Promise<{ date: string; amount: number }[]> {
+    try {
+        const { getExpenseTrend } = await import('@/lib/services/expense');
+        const expenses = await getExpenseTrend(startDate, endDate, groupBy);
+        return expenses.map(e => ({ date: e.date, amount: e.total_amount }));
+    } catch {
+        return [];
+    }
+}
+
 export async function fetchRevenueData(filter: RevenueFilter): Promise<RevenueDataPoint[]> {
     const today = new Date();
     let startDate: Date;

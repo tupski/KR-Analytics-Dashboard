@@ -1,12 +1,13 @@
 'use client';
 
-import React from 'react';
-import Link from 'next/link';
+import React, { useState } from 'react';
 import { ArrowDown } from 'lucide-react';
 import { CheckinItem } from '@/types/dashboard';
 import { useAppSettings } from '@/lib/contexts/AppSettingsContext';
 import { REPORT_PERIOD_DESCRIPTIONS } from '@/lib/reporting-period';
 import type { ReportPeriodMode } from '@/lib/reporting-period';
+import RoomDetailModal from '@/components/shared/RoomDetailModal';
+import type { DateFilter } from '@/app/(dashboard)/laporan/actions';
 
 interface CheckinHariIniProps {
     items: CheckinItem[];
@@ -14,22 +15,26 @@ interface CheckinHariIniProps {
 }
 
 /**
- * CheckinHariIni Component
- * 
- * Displays today's check-in list with location, room number, customer name, and time.
- * Shows maximum 5 items with a "Lihat Semua" link to view all check-ins.
- * 
+ * Baru Check-in Hari Ini — Clickable rows with transaction detail modal.
  */
 export default function CheckinHariIni({ items, isLoading = false }: CheckinHariIniProps) {
     const { settings } = useAppSettings();
     const periodMode: ReportPeriodMode = (settings?.report_period_mode as ReportPeriodMode) || 'calendar_day';
     const periodDesc = REPORT_PERIOD_DESCRIPTIONS[periodMode];
+    const [selectedTx, setSelectedTx] = useState<CheckinItem | null>(null);
+    const [modalOpen, setModalOpen] = useState(false);
+
+    const handleRowClick = (item: CheckinItem) => {
+        setSelectedTx(item);
+        setModalOpen(true);
+    };
+
     // Show skeleton loader when loading
     if (isLoading) {
         return (
             <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4 sm:p-6">
                 <div className="flex items-center justify-between mb-4">
-                    <h2 className="text-base sm:text-lg font-semibold text-gray-900">Check-in Hari Ini</h2>
+                    <h2 className="text-base sm:text-lg font-semibold text-gray-900">Baru Check-in Hari Ini</h2>
                     <div className="h-4 w-20 bg-gray-200 rounded animate-pulse"></div>
                 </div>
                 <div className="space-y-3">
@@ -48,12 +53,12 @@ export default function CheckinHariIni({ items, isLoading = false }: CheckinHari
         );
     }
 
-    // Show empty state when no check-ins exist
+    // Show empty state
     if (!items || items.length === 0) {
         return (
             <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4 sm:p-6">
                 <div className="flex items-center justify-between mb-4">
-                    <h2 className="text-base sm:text-lg font-semibold text-gray-900">Check-in Hari Ini</h2>
+                    <h2 className="text-base sm:text-lg font-semibold text-gray-900">Baru Check-in Hari Ini</h2>
                 </div>
                 <div className="text-center py-8">
                     <div className="inline-flex items-center justify-center w-12 h-12 rounded-full bg-gray-100 mb-3">
@@ -65,15 +70,16 @@ export default function CheckinHariIni({ items, isLoading = false }: CheckinHari
         );
     }
 
-    // Display maximum 5 items
-    const displayItems = items.slice(0, 5);
+    // Sort by newest check-in first
+    const sorted = [...items].sort((a, b) => new Date(b.checkinAt).getTime() - new Date(a.checkinAt).getTime());
+    const displayItems = sorted.slice(0, 5);
     const hasMore = items.length > 5;
 
     return (
         <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4 sm:p-6">
             {/* Header */}
             <div className="flex items-center justify-between mb-4">
-                <h2 className="text-base sm:text-lg font-semibold text-gray-900">Check-in Hari Ini</h2>
+                <h2 className="text-base sm:text-lg font-semibold text-gray-900">Baru Check-in Hari Ini</h2>
                 <span className="text-xs sm:text-sm font-medium text-blue-600 bg-blue-50 px-2.5 py-1 rounded-full">
                     {items.length} {items.length === 1 ? 'tamu' : 'tamu'}
                 </span>
@@ -82,18 +88,18 @@ export default function CheckinHariIni({ items, isLoading = false }: CheckinHari
             {/* Check-in List */}
             <div className="space-y-3">
                 {displayItems.map((item) => (
-                    <div
+                    <button
                         key={item.id}
-                        className="flex items-start gap-3 pb-3 border-b border-gray-100 last:border-0"
+                        onClick={() => handleRowClick(item)}
+                        className="w-full flex items-start gap-3 pb-3 border-b border-gray-100 last:border-0 text-left hover:bg-blue-50/50 rounded-lg p-1 -mx-1 transition-colors cursor-pointer"
                     >
                         {/* Check-in Icon */}
                         <div className="flex-shrink-0 w-8 h-8 rounded-full bg-green-100 flex items-center justify-center">
                             <ArrowDown className="w-4 h-4 text-green-600" />
                         </div>
 
-                        {/* Check-in Details */}
+                        {/* Details */}
                         <div className="flex-1 min-w-0">
-                            {/* Location and Room Number */}
                             <div className="flex items-center gap-2 mb-1">
                                 <span className="text-sm font-medium text-gray-900 truncate">
                                     {item.apartmentLocation}
@@ -102,8 +108,6 @@ export default function CheckinHariIni({ items, isLoading = false }: CheckinHari
                                     {item.roomNumber}
                                 </span>
                             </div>
-
-                            {/* Customer Name */}
                             <p className="text-sm text-gray-600 truncate">{item.customerName}</p>
                         </div>
 
@@ -111,38 +115,29 @@ export default function CheckinHariIni({ items, isLoading = false }: CheckinHari
                         <div className="flex-shrink-0 text-right">
                             <span className="text-sm font-medium text-gray-900">{item.time}</span>
                         </div>
-                    </div>
+                    </button>
                 ))}
             </div>
 
-            {/* "Lihat Semua" Link */}
             {hasMore && (
-                <div className="mt-4 pt-4 border-t border-gray-100">
-                    <Link
-                        href="/customer"
-                        className="text-sm font-medium text-blue-600 hover:text-blue-700 transition-colors inline-flex items-center gap-1"
-                    >
-                        Lihat Semua
-                        <svg
-                            className="w-4 h-4"
-                            fill="none"
-                            stroke="currentColor"
-                            viewBox="0 0 24 24"
-                        >
-                            <path
-                                strokeLinecap="round"
-                                strokeLinejoin="round"
-                                strokeWidth={2}
-                                d="M9 5l7 7-7 7"
-                            />
-                        </svg>
-                    </Link>
-                </div>
+                <p className="mt-3 text-xs text-gray-400 text-center">
+                    +{items.length - 5} check-in lainnya
+                </p>
             )}
 
             <p className="mt-3 text-xs text-gray-400 text-center">
                 Periode {periodMode === 'hotel_day' ? 'hotel' : 'harian'}: {periodDesc}
             </p>
+
+            {/* Transaction Detail Modal */}
+            {modalOpen && selectedTx && (
+                <RoomDetailModal
+                    location={selectedTx.apartmentLocation}
+                    room={selectedTx.roomNumber}
+                    filter={'today' as DateFilter}
+                    onClose={() => setModalOpen(false)}
+                />
+            )}
         </div>
     );
 }

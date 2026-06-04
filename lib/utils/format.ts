@@ -119,3 +119,40 @@ export function formatCurrencyCompactIDR(value: number): string {
     }
     return `Rp ${value.toLocaleString('id-ID')}`;
 }
+
+/**
+ * Format date in Indonesian long format.
+ * @example "05 Juni 2026"
+ */
+export function formatDateIndonesian(date: Date | string): string {
+    const d = typeof date === 'string' ? new Date(date) : date;
+    return d.toLocaleDateString('id-ID', {
+        day: 'numeric',
+        month: 'long',
+        year: 'numeric',
+    });
+}
+
+/**
+ * Format date in Indonesian compact format for tables/charts.
+ * @example "05 Jun"
+ */
+export function formatDateCompact(date: Date | string): string {
+    const d = typeof date === 'string' ? new Date(date) : date;
+    return formatDateFns(d, 'dd MMM', { locale: id });
+}
+
+/**
+ * Format datetime in Indonesian format with time.
+ * @example "05 Juni 2026, 14:35"
+ */
+export function formatDateTimeIndonesian(date: Date | string): string {
+    const d = typeof date === 'string' ? new Date(date) : date;
+    return d.toLocaleDateString('id-ID', {
+        day: 'numeric',
+        month: 'long',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+    });
+}
