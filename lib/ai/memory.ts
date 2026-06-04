@@ -97,7 +97,7 @@ export function addMemoryAuto(text: string): MemoryEntry {
 export async function extractMemoryFromConversation(
     userQuestion: string,
     aiAnswer: string,
-    sendChat: (msgs: any[], thinkingMode?: string) => Promise<{ message: string }>,
+    sendChat: (msgs: any[], thinkingMode?: string) => Promise<{ message: string } | null>,
 ): Promise<string[]> {
     try {
         const prompt = `Kamu adalah KRAI, asisten AI Kakarama Room. Ekstrak fakta penting dari percakapan ini yang perlu diingat untuk percakapan masa depan.
@@ -125,6 +125,7 @@ Fakta penting (maks 3 baris, kosongkan jika tidak ada fakta spesifik):`;
             [{ role: 'user', content: prompt }],
             'instant',
         );
+        if (!result) return [];
         const lines = result.message
             .split('\n')
             .map((l: string) => l.trim().replace(/^[-•*\d.)\s]+/, '').trim())
