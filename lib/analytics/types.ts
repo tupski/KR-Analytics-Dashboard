@@ -46,6 +46,10 @@ export interface OccupancyDaily {
     apartment_location: string;
     room_number: string;
     is_occupied: boolean;
+    transaction_id: number | null;
+    customer_name: string | null;
+    checkin_at: string | null;
+    checkout_at: string | null;
 }
 
 // ─── Sync metadata for a table ───

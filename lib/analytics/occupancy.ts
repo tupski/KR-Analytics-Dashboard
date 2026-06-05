@@ -2,16 +2,17 @@ import { queryAnalytics, parseNumeric } from './db';
 import type { OccupancyDaily } from './types';
 
 /**
- * ─── Occupancy Definition ───
+ * ─── Occupancy Definition (stay-span overlap model) ───
  *
  * A room is considered **occupied** on a given date (WIB) if there is at least
- * one transaction recorded for that room on that date, based on
- * `(created_at AT TIME ZONE 'Asia/Jakarta')::DATE`.
+ * one active stay spanning that date, based on
+ * `generate_series(checkin_at::date, checkout_at::date - 1)` in WIB timezone.
  *
  * This is computed during the summary refresh in the sync-worker and stored in
- * `analytics_occupancy_daily.is_occupied`.
+ * `analytics_occupancy_daily` (one row per occupied room-day).
  *
- * The table stores one row per (date_wib, apartment_location, room_number).
+ * The table stores one row per (date_wib, apartment_location, room_number),
+ * with `is_occupied = true` for all rows.
  */
 
 function getDefaultDateRange(): { startDate: string; endDate: string } {

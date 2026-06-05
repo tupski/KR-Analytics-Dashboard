@@ -11,29 +11,19 @@ import {
 // ============================================================
 // lib/services/occupancy.ts
 //
-// Occupancy-related service functions extracted from:
-//   - dashboard/actions.ts  → fetchUnitStatus() + fetchOccupancyData()
-//   - laporan/actions.ts    → fetchHighOccupancyLocations()
+// Occupancy-related service functions.
 //
-// Migration Phase 2B-5B:
-//   Analytics DB first, Supabase fallback.
-//   Old implementation kept for fallback.
+// Both analytics DB and Supabase fallback use stay-span overlap model.
+// analytics_occupancy_daily is populated by sync-worker using generate_series
+// from checkin_at::date to checkout_at::date (exclusive).
+// Supabase fallback uses the same checkin_at/checkout_at overlap logic.
+// Results are identical for the same period and rooms.
 //
-// ⚠️ DEFINITION DIFFERENCE DOCUMENTED:
-//   Legacy (Supabase): stay-span model — a room is occupied on a date
-//     if checkin_at ≤ end_of_day AND checkout_at ≥ start_of_day. Multi-day
-//     stays count on EVERY day they span.
-//   Analytics DB: transaction-creation model — a room is occupied on a
-//     date (WIB) if at least 1 transaction was created that day, based on
-//     (created_at AT TIME ZONE 'Asia/Jakarta')::DATE.
-//   These differ when stays span multiple days. Both are preserved
-//   intentionally. See docs for full comparison.
-//
-// FUNCTIONS NOT MIGRATED (Supabase-only):
+// NOT MIGRATED (Supabase-only):
 //   - getLiveOccupancy(): point-in-time active stay check, no analytics
 //     table models real-time occupancy.
-//   - getDailyCheckinVolume(): counts by checkin_at field, analytics DB
-//     uses created_at — different semantics, irrelevant to migrate.
+//   - getDailyCheckinVolume(): counts by checkin_at field, different
+//     semantics from occupancy, irrelevant to migrate.
 // ============================================================
 
 export interface LocationOccupancyItem {
@@ -223,13 +213,8 @@ export async function getLiveOccupancy(): Promise<LiveOccupancyResult> {
 // ============================================================
 // getDailyOccupancyTrend(days=30)
 //
-// ⚠️ DEFINITION DIFFERENCE (see header):
-//   Analytics path: room is occupied on date WIB if any transaction
-//   was created that day (created_at AT TIME ZONE 'Asia/Jakarta')::DATE.
-//   Legacy path: room is occupied on date if checkin_at ≤ dayEnd AND
-//   checkout_at ≥ dayStart (stay-span model).
-//
-// Analytics path preferred, falls back to legacy Supabase.
+// Both analytics DB and Supabase fallback use stay-span overlap model.
+// Analytics path preferred, falls back to Supabase.
 // ============================================================
 export async function getDailyOccupancyTrend(days: number = 30): Promise<DailyOccupancyTrendPoint[]> {
     // ── Analytics path (primary) ──────────────────────────────
@@ -291,7 +276,7 @@ export async function getDailyOccupancyTrend(days: number = 30): Promise<DailyOc
     return getDailyOccupancyTrendLegacy(days);
 }
 
-/** Supabase-only fallback (unchanged, stay-span model). */
+/** Supabase-only fallback (stay-span overlap model, identical definition to analytics DB). */
 async function getDailyOccupancyTrendLegacy(days: number = 30): Promise<DailyOccupancyTrendPoint[]> {
     const supabase = createServerClient();
     const today = new Date();
@@ -382,11 +367,8 @@ async function getDailyOccupancyTrendLegacy(days: number = 30): Promise<DailyOcc
 // ============================================================
 // getRoomDayUtilization(start, end)
 //
-// ⚠️ DEFINITION DIFFERENCE (see header):
-//   Analytics path: uses is_occupied from analytics_occupancy_daily
-//   (created_at WIB date). Legacy path: stay-span overlap model.
-//
-// Analytics path preferred, falls back to legacy Supabase.
+// Both analytics DB and Supabase fallback use stay-span overlap model.
+// Analytics path preferred, falls back to Supabase.
 // ============================================================
 export async function getRoomDayUtilization(start: string, end: string): Promise<RoomDayUtilizationItem[]> {
     // ── Analytics path (primary) ──────────────────────────────
@@ -458,7 +440,7 @@ export async function getRoomDayUtilization(start: string, end: string): Promise
     return getRoomDayUtilizationLegacy(start, end);
 }
 
-/** Supabase-only fallback (unchanged, stay-span model). */
+/** Supabase-only fallback (stay-span overlap model, identical definition to analytics DB). */
 async function getRoomDayUtilizationLegacy(start: string, end: string): Promise<RoomDayUtilizationItem[]> {
     const supabase = createServerClient();
 
