@@ -235,7 +235,7 @@ function MiniCalendar({ selected, onSelect, onClose }: MiniCalendarProps) {
     return (
         <div
             ref={containerRef}
-            className="absolute z-50 mt-2 bg-white border border-gray-200 rounded-xl shadow-xl p-4 min-w-[280px]"
+            className="absolute z-[70] mt-2 bg-white border border-gray-200 rounded-xl shadow-xl p-4 min-w-[280px]"
         >
             {/* Header */}
             <div className="flex items-center justify-between mb-3">
@@ -399,7 +399,7 @@ export default function DateRangePicker({
             {openDropdown && showPresets && (
                 <div
                     ref={dropdownRef}
-                    className="absolute z-40 mt-2 bg-white border border-gray-200 rounded-xl shadow-xl py-1 min-w-[200px]"
+                    className="absolute z-[60] mt-2 bg-white border border-gray-200 rounded-xl shadow-xl py-1 min-w-[200px]"
                 >
                     {(Object.keys(PRESET_LABELS) as DatePreset[]).map(p => (
                         <button

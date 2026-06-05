@@ -158,7 +158,7 @@ export default function StickyComparisonBar({
         <div
             ref={barRef}
             className={`
-                z-40 bg-white/95 backdrop-blur-sm border-b border-gray-200
+                z-[51] bg-white/95 backdrop-blur-sm border-b border-gray-200
                 sm:sticky sm:top-[56px] sm:z-30
                 fixed bottom-0 left-0 right-0 sm:relative
                 pb-safe-or-0 sm:pb-0

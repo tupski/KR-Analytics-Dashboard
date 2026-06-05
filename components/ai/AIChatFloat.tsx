@@ -179,8 +179,9 @@ export default function AIChatFloat() {
             {isOpen && (
                 <div className="
                     fixed z-50 bg-white shadow-2xl border border-blue-200 flex flex-col overflow-hidden
-                    bottom-0 left-0 right-0 rounded-t-2xl h-[70vh] max-h-[70vh]
-                    sm:bottom-6 sm:right-6 sm:left-auto sm:w-[420px] sm:h-[560px] sm:max-h-[calc(100vh-5rem)] sm:rounded-2xl
+                    bottom-0 left-3 right-3 rounded-t-2xl h-[70vh] max-h-[70vh] max-w-[calc(100vw-24px)]
+                    sm:bottom-6 sm:right-6 sm:left-auto sm:w-[420px] sm:h-[560px] sm:max-h-[calc(100vh-5rem)] sm:rounded-2xl sm:max-w-none
+                    safe-bottom
                 ">
                     {/* Drag handle (mobile) */}
                     <div className="flex justify-center pt-2 pb-1 sm:hidden flex-shrink-0">

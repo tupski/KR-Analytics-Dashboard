@@ -130,10 +130,10 @@ export function DeltaDisplay({
             <div className="flex items-center gap-1">
                 <span
                     className={`text-xs sm:text-sm font-medium flex items-center gap-0.5 ${delta.trend === 'same'
-                            ? 'text-gray-400'
-                            : isGood
-                                ? 'text-green-600'
-                                : 'text-red-600'
+                        ? 'text-gray-400'
+                        : isGood
+                            ? 'text-green-600'
+                            : 'text-red-600'
                         }`}
                 >
                     {delta.trend === 'up' && '↑'}
@@ -219,7 +219,7 @@ export default function ComparisonFilter({
 
             {/* Dropdown */}
             {openDropdown && (
-                <div className="absolute z-40 mt-2 bg-white border border-gray-200 rounded-xl shadow-xl py-1 min-w-[220px]">
+                <div className="absolute z-[60] mt-2 bg-white border border-gray-200 rounded-xl shadow-xl py-1 min-w-[220px]">
                     {(Object.keys(MODE_LABELS) as ComparisonMode[]).map(m => (
                         <button
                             key={m}
@@ -238,7 +238,7 @@ export default function ComparisonFilter({
 
             {/* Custom Date Picker */}
             {showCustomPicker && (
-                <div className="absolute z-40 mt-2 bg-white border border-gray-200 rounded-xl shadow-xl p-4 min-w-[280px]">
+                <div className="absolute z-[60] mt-2 bg-white border border-gray-200 rounded-xl shadow-xl p-4 min-w-[280px]">
                     <h4 className="text-sm font-semibold text-gray-900 mb-3">Pilih Periode Pembanding</h4>
                     <div className="space-y-3">
                         <div>
