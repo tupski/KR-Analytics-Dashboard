@@ -8,6 +8,7 @@
 
 import { createServerClient } from '@/lib/supabase/server';
 import { getDateBoundariesISO } from '@/lib/dashboard/periods';
+import { getNowWIB } from '@/lib/utils/format';
 
 // ─── Public Types ───────────────────────────────────────────
 
@@ -54,7 +55,7 @@ export async function getOperationsSummary(params: {
 }): Promise<OperationsSummaryResult> {
     const supabase = createServerClient();
     const todayBoundaries = await getDateBoundariesISO(new Date());
-    const nowISO = new Date().toISOString();
+    const nowISO = getNowWIB();
 
     // ── Build queries ────────────────────────────────────────
     let checkinsQuery = supabase

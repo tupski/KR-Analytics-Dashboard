@@ -1,5 +1,6 @@
 import { format, subDays, eachDayOfInterval } from 'date-fns';
 import { createServerClient } from '@/lib/supabase/server';
+import { getNowWIB } from '@/lib/utils/format';
 import { getOccupancyWindow } from '@/lib/dashboard/periods';
 import {
     getOccupancyDaily as getOccupancyDailyAnalytics,
@@ -35,10 +36,23 @@ import {
 //     uses created_at — different semantics, irrelevant to migrate.
 // ============================================================
 
+export interface LocationOccupancyItem {
+    name: string;
+    totalRooms: number;
+    occupiedRooms: number;
+    occupancyRate: number;
+}
+
 export interface LiveOccupancyResult {
     tersedia: number;
     ditempati: number;
     total: number;
+    // Standardized fields (aliases for backward compat)
+    totalRooms: number;
+    occupiedRooms: number;
+    availableRooms: number;
+    occupancyRate: number;
+    locationBreakdown: LocationOccupancyItem[];
 }
 
 export interface DailyOccupancyTrendPoint {
@@ -118,17 +132,22 @@ export async function getLiveOccupancy(): Promise<LiveOccupancyResult> {
     const supabase = createServerClient();
 
     try {
-        // Get total rooms from nomor_kamar table
-        const { count: totalRoomCount } = await supabase
-            .from('nomor_kamar')
-            .select('id', { count: 'exact', head: true });
+        // Fetch all rooms with location info in parallel with transactions
+        const [{ count: totalRoomCount }, { data: allRooms }] = await Promise.all([
+            supabase
+                .from('nomor_kamar')
+                .select('id', { count: 'exact', head: true }),
+            supabase
+                .from('nomor_kamar')
+                .select('name, lokasi'),
+        ]);
 
         const totalRooms = totalRoomCount || 0;
 
         // Get distinct rooms currently occupied.
         // Overlap: checkin_at <= now AND (checkout_at >= now OR checkout_at IS NULL).
         // null checkout_at means guest is still staying (no checkout time recorded yet).
-        const now = new Date().toISOString();
+        const now = getNowWIB();
         const { data: occupiedData, error: occError } = await supabase
             .from('transactions')
             .select('room_number, apartment_location')
@@ -139,15 +158,51 @@ export async function getLiveOccupancy(): Promise<LiveOccupancyResult> {
             console.error('Error fetching occupied rooms:', occError);
         }
 
-        // Count unique occupied rooms
-        const occupiedRooms = new Set(
+        // Count unique occupied rooms globally
+        const occupiedSet = new Set<string>(
             occupiedData?.map((t: any) => `${t.apartment_location}-${t.room_number}`) || []
-        ).size;
+        );
+        const occupiedRooms = occupiedSet.size;
+        const occupancyRate = totalRooms > 0
+            ? Math.round((occupiedRooms / totalRooms) * 10000) / 100
+            : 0;
+
+        // Build per-location room count
+        const roomsPerLocation = new Map<string, number>();
+        allRooms?.forEach((r: any) => {
+            roomsPerLocation.set(r.lokasi, (roomsPerLocation.get(r.lokasi) || 0) + 1);
+        });
+
+        // Build per-location occupied count
+        const occupiedPerLocation = new Map<string, Set<string>>();
+        occupiedData?.forEach((t: any) => {
+            const loc = t.apartment_location;
+            if (!occupiedPerLocation.has(loc)) {
+                occupiedPerLocation.set(loc, new Set());
+            }
+            occupiedPerLocation.get(loc)!.add(`${t.apartment_location}-${t.room_number}`);
+        });
+
+        // Build location breakdown
+        const locationBreakdown: LocationOccupancyItem[] = Array.from(roomsPerLocation.entries())
+            .map(([name, locTotalRooms]) => {
+                const locOccupied = occupiedPerLocation.get(name)?.size || 0;
+                const locRate = locTotalRooms > 0
+                    ? Math.round((locOccupied / locTotalRooms) * 10000) / 100
+                    : 0;
+                return { name, totalRooms: locTotalRooms, occupiedRooms: locOccupied, occupancyRate: locRate };
+            })
+            .sort((a, b) => b.occupancyRate - a.occupancyRate);
 
         return {
             tersedia: Math.max(0, totalRooms - occupiedRooms),
             ditempati: occupiedRooms,
             total: totalRooms,
+            totalRooms,
+            occupiedRooms,
+            availableRooms: Math.max(0, totalRooms - occupiedRooms),
+            occupancyRate,
+            locationBreakdown,
         };
     } catch (error) {
         console.error('Error in getLiveOccupancy:', error);
@@ -156,6 +211,11 @@ export async function getLiveOccupancy(): Promise<LiveOccupancyResult> {
             tersedia: 0,
             ditempati: 0,
             total: 0,
+            totalRooms: 0,
+            occupiedRooms: 0,
+            availableRooms: 0,
+            occupancyRate: 0,
+            locationBreakdown: [],
         };
     }
 }

@@ -4,13 +4,12 @@
 //
 // Consolidates room count queries — accepts optional totalUnits
 // from caller to avoid duplicate SELECT nomor_kamar queries.
-// Uses lib/services/occupancy for trend and lib/services/location
-// for per-location breakdown.
+// Uses lib/services/occupancy for live occupancy, trend, and
+// location breakdown.
 // ============================================================
 
 import { createServerClient } from '@/lib/supabase/server';
-import { getDailyOccupancyTrend } from '@/lib/services/occupancy';
-import { getLocations } from '@/lib/services/location';
+import { getDailyOccupancyTrend, getLiveOccupancy } from '@/lib/services/occupancy';
 
 // ─── Helpers ────────────────────────────────────────────────
 
@@ -48,6 +47,7 @@ export interface OccupancySummaryResult {
  * Fetch occupancy summary: current rate, trend, and per-location
  * breakdown.
  *
+ * Uses centralized getLiveOccupancy() for active-stay occupancy.
  * Queries total rooms ONCE — pass `totalUnits` from the caller to
  * skip the room count query (avoids duplication across aggregation
  * functions).
@@ -68,28 +68,14 @@ export async function getOccupancySummary(params: {
     // ── Room count — use pre-fetched value if provided ───────
     const totalUnits = params.totalUnits ?? (await getTotalRoomCount());
 
-    // ── Current occupancy (point-in-time, stay-span overlap) ─
-    const nowISO = new Date().toISOString();
-
-    let occQuery = supabase
-        .from('transactions')
-        .select('room_number, apartment_location')
-        .lte('checkin_at', nowISO)
-        .or(`checkout_at.gte.${nowISO},checkout_at.is.null`);
-    if (params.location) occQuery = occQuery.eq('apartment_location', params.location);
-
-    // ── Fetch trend and locations in parallel with occupancy ─
-    const [occResult, trend, locations] = await Promise.all([
-        occQuery,
+    // ── Fetch live occupancy, trend, and locations in parallel ─
+    const [liveOccupancy, trend] = await Promise.all([
+        getLiveOccupancy(),
         getDailyOccupancyTrend(30),
-        getLocations(),
     ]);
 
-    // ── Compute current occupancy ────────────────────────────
-    const occupiedSet = new Set(
-        (occResult.data || []).map((t: any) => `${t.apartment_location}-${t.room_number}`),
-    );
-    const occupiedUnits = occupiedSet.size;
+    // ── Compute current occupancy from centralized function ──
+    const occupiedUnits = liveOccupancy.ditempati;
     const occupancyRate =
         totalUnits > 0 ? Math.round((occupiedUnits / totalUnits) * 10000) / 100 : 0;
 
@@ -99,23 +85,14 @@ export async function getOccupancySummary(params: {
         rate: t.occupancyRate,
     }));
 
-    // ── Build per-location breakdown ─────────────────────────
-    // Count occupied per location from the same occResult data
-    const occPerLocation = new Map<string, Set<string>>();
-    (occResult.data || []).forEach((t: any) => {
-        const loc = t.apartment_location;
-        if (!occPerLocation.has(loc)) occPerLocation.set(loc, new Set());
-        occPerLocation.get(loc)!.add(`${t.apartment_location}-${t.room_number}`);
-    });
-
-    // Use locations from service (avoids another nomor_kamar query)
-    const byLocation: OccupancyByLocation[] = locations
-        .map((loc) => {
-            const total = loc.totalRooms;
-            const occupied = occPerLocation.get(loc.name)?.size || 0;
-            const rate = total > 0 ? Math.round((occupied / total) * 10000) / 100 : 0;
-            return { location: loc.name, rate, occupied, total };
-        })
+    // ── Build per-location breakdown from liveOccupancy ──────
+    const byLocation: OccupancyByLocation[] = liveOccupancy.locationBreakdown
+        .map((loc) => ({
+            location: loc.name,
+            rate: loc.occupancyRate,
+            occupied: loc.occupiedRooms,
+            total: loc.totalRooms,
+        }))
         .sort((a, b) => b.rate - a.rate);
 
     return {

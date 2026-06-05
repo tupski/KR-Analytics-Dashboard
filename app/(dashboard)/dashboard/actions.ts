@@ -19,6 +19,7 @@ import { getOperationsSummary } from '@/lib/dashboard/operations';
 import { format, subDays, subWeeks, subMonths, subYears, startOfWeek, startOfMonth, startOfYear, parse } from 'date-fns';
 import { id as idLocale } from 'date-fns/locale';
 import { toZonedTime } from 'date-fns-tz';
+import { getNowWIB } from '@/lib/utils/format';
 import { computeDateRange, computeComparisonRange } from '@/lib/services/date-range';
 import type { DateFilterParams } from '@/lib/services/date-range';
 import type {
@@ -300,22 +301,11 @@ export async function fetchKPIData(
         ) || 0;
 
         // Occupancy & available — point-in-time (currently active)
-        // Overlap: checkin_at ≤ now AND (checkout_at ≥ now OR checkout_at IS NULL)
-        const nowIso = new Date().toISOString();
-        let currentlyOccupiedCount = 0;
-        let avgOccupancy = 0;
-        if (totalRoomsCount > 0) {
-            const { data: occData } = await supabase
-                .from('transactions')
-                .select('room_number, apartment_location')
-                .lte('checkin_at', nowIso)
-                .or(`checkout_at.gte.${nowIso},checkout_at.is.null`);
-            currentlyOccupiedCount = new Set(
-                (occData || []).map((t: any) => `${t.apartment_location}-${t.room_number}`),
-            ).size;
-            avgOccupancy = Math.round((currentlyOccupiedCount / totalRoomsCount) * 10000) / 100;
-        }
-        const availableUnits = Math.max(0, totalRoomsCount - currentlyOccupiedCount);
+        // Uses centralized getLiveOccupancy() for consistency across dashboard + unit pages.
+        const liveOccupancy = await getLiveOccupancy();
+        const currentlyOccupiedCount = liveOccupancy.ditempati;
+        const avgOccupancy = liveOccupancy.occupancyRate;
+        const availableUnits = liveOccupancy.tersedia;
 
         const result: KPIData = {
             bookingToday: bookingCount || 0,
@@ -680,7 +670,7 @@ export async function getSyncFreshness(): Promise<import('@/lib/analytics/sync-f
 export async function fetchLocationHealthData(): Promise<LocationHealthItem[]> {
     const supabase = createServerClient();
     const { start: periodStart, end: periodEnd } = await getTodayReportRange();
-    const nowIso = new Date().toISOString();
+    const nowIso = getNowWIB();
 
     try {
         // 1. Get all locations with room counts

@@ -4,12 +4,13 @@
 //
 // Consolidates room count queries — accepts optional totalUnits
 // from caller to avoid duplicate SELECT nomor_kamar queries.
-// Uses lib/services/* (revenue, expense) as data backends.
+// Uses lib/services/* (revenue, expense, occupancy) as data backends.
 // ============================================================
 
 import { createServerClient } from '@/lib/supabase/server';
 import { getRevenueSummary as getServiceRevenueSummary } from '@/lib/services/revenue';
 import { getExpenseSummary as getServiceExpenseSummary } from '@/lib/services/expense';
+import { getLiveOccupancy } from '@/lib/services/occupancy';
 import { getDateBoundariesISO } from '@/lib/dashboard/periods';
 
 // ─── Helpers ────────────────────────────────────────────────
@@ -44,6 +45,8 @@ export interface KPIDataResult {
  * skip the room count query (avoids duplication across aggregation
  * functions).
  *
+ * Uses centralized getLiveOccupancy() for active-stay occupancy.
+ *
  * @param params.startDate  Period start
  * @param params.endDate    Period end
  * @param params.location   Optional location filter
@@ -74,24 +77,16 @@ export async function getKPIData(params: {
     if (params.location) bookingsQuery = bookingsQuery.eq('apartment_location', params.location);
 
     // ── Fetch period-bound data in parallel ──────────────────
-    const [{ count: bookingCount }, revenueSummary, expenseSummary, todayBoundaries] =
+    const [{ count: bookingCount }, revenueSummary, expenseSummary, todayBoundaries, liveOccupancy] =
         await Promise.all([
             bookingsQuery,
             getServiceRevenueSummary(startStr, endStr),
             getServiceExpenseSummary(startStr, endStr),
             getDateBoundariesISO(new Date()),
+            getLiveOccupancy(),
         ]);
 
-    // ── Fetch today + point-in-time data in parallel ─────────
-    const nowISO = new Date().toISOString();
-
-    let activeQuery = supabase
-        .from('transactions')
-        .select('room_number, apartment_location')
-        .lte('checkin_at', nowISO)
-        .or(`checkout_at.gte.${nowISO},checkout_at.is.null`);
-    if (params.location) activeQuery = activeQuery.eq('apartment_location', params.location);
-
+    // ── Fetch today checkins/checkouts in parallel ───────────
     let checkinsQuery = supabase
         .from('transactions')
         .select('*', { count: 'exact', head: true })
@@ -106,13 +101,11 @@ export async function getKPIData(params: {
         .lte('checkout_at', todayBoundaries.endISO);
     if (params.location) checkoutsQuery = checkoutsQuery.eq('apartment_location', params.location);
 
-    const [{ data: activeData }, { count: checkinsToday }, { count: checkoutsToday }] =
-        await Promise.all([activeQuery, checkinsQuery, checkoutsQuery]);
+    const [{ count: checkinsToday }, { count: checkoutsToday }] =
+        await Promise.all([checkinsQuery, checkoutsQuery]);
 
     // ── Compute derived values ──────────────────────────────
-    const activeStays = new Set(
-        (activeData || []).map((t: any) => `${t.apartment_location}-${t.room_number}`),
-    ).size;
+    const activeStays = liveOccupancy.ditempati;
 
     const totalRevenue = revenueSummary.totalRevenue;
     const totalExpenses = expenseSummary.totalAmount;

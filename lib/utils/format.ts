@@ -146,6 +146,19 @@ export function formatDateCompact(date: Date | string): string {
  * Format datetime in Indonesian format with time.
  * @example "05 Juni 2026, 14:35"
  */
+/**
+ * Returns current time as ISO string in WIB (Asia/Jakarta, UTC+7).
+ * Use this instead of `new Date().toISOString()` for all WIB-aware queries.
+ * This ensures consistency across Dashboard, Unit, Booking, and AI pages.
+ */
+export function getNowWIB(): string {
+    const now = new Date();
+    // Convert to WIB by adding 7 hours
+    const wibOffset = 7 * 60; // 7 hours in minutes
+    const wibTime = new Date(now.getTime() + wibOffset * 60 * 1000);
+    return wibTime.toISOString();
+}
+
 export function formatDateTimeIndonesian(date: Date | string): string {
     const d = typeof date === 'string' ? new Date(date) : date;
     return d.toLocaleDateString('id-ID', {

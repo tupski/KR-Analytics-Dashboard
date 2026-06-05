@@ -5,6 +5,9 @@ import { getDateRange, computeDateRange } from '@/lib/services/date-range';
 import type { DateFilterParams } from '@/lib/services/date-range';
 import { getLocations } from '@/lib/services/location';
 import { getReportPeriodSetting } from '@/lib/get-report-period-setting';
+import { getNowWIB } from '@/lib/utils/format';
+import { getLiveOccupancy } from '@/lib/services/occupancy';
+import type { LiveOccupancyResult, LocationOccupancyItem } from '@/lib/services/occupancy';
 
 export type UnitDateFilter = 'today' | 'yesterday' | '7days' | 'month' | 'year';
 
@@ -37,8 +40,12 @@ export interface UnitPageData {
 
 /**
  * Fetch all units with their occupancy status for a given period.
- * - When filter = 'today': occupied = active right now (checkin <= now <= checkout).
+ * - When filter = 'today': occupied = active right now (uses centralized getLiveOccupancy()).
  * - Other filters: occupied = had any transaction in the period.
+ *
+ * Uses centralized getLiveOccupancy() for "today" occupancy counts and
+ * location breakdowns — ensures Dashboard KPI cards and Unit page
+ * compute the same live occupancy rate.
  *
  * Accepts either legacy dateFilter (today/yesterday/7days/month/year) or
  * unified DateFilterParams (rangePreset, startDate, endDate).
@@ -75,18 +82,24 @@ export async function fetchUnits(
             ? computeDateRange(dateParams.rangePreset, dateParams.startDate, dateParams.endDate, mode)
             : getDateRange(dateFilter, mode);
 
-        // For "today" filter, occupancy = active right now (existing behavior)
+        // For "today" filter, occupancy = active right now (centralized function)
         // For other filters, occupancy = had at least one transaction in period
         const occupiedMap = new Map<string, string>();
         const occupancyCountMap = new Map<string, number>();
 
+        // Get centralized live occupancy for "today" filter
+        let liveOccupancyData = null;
+
         if (dateFilter === 'today') {
-            const now = new Date().toISOString();
+            // Call centralized function for counts + location breakdown
+            liveOccupancyData = await getLiveOccupancy();
+
+            // Still need room-level detail (customer names) for individual unit display
             const { data: activeTransactions } = await supabase
                 .from('transactions')
                 .select('room_number, apartment_location, customer_name')
-                .lte('checkin_at', now)
-                .or(`checkout_at.gte.${now},checkout_at.is.null`);
+                .lte('checkin_at', getNowWIB())
+                .or(`checkout_at.gte.${getNowWIB()},checkout_at.is.null`);
 
             activeTransactions?.forEach((tx: any) => {
                 const key = `${tx.apartment_location}-${tx.room_number}`;
@@ -126,34 +139,57 @@ export async function fetchUnits(
             };
         });
 
-        // Calculate location summaries
-        const locationMap = new Map<string, { total: number; occupied: number }>();
-        units.forEach((unit) => {
-            const existing = locationMap.get(unit.lokasi) || { total: 0, occupied: 0 };
-            existing.total++;
-            if (unit.isOccupiedToday) existing.occupied++;
-            locationMap.set(unit.lokasi, existing);
-        });
+        // Location summaries: use centralized getLiveOccupancy() for "today" filter
+        // to ensure Dashboard + Unit page show identical location occupancy rates.
+        // For non-today filters, derive from room data as before.
+        let locationSummaries: LocationSummary[];
 
-        const locationSummaries: LocationSummary[] = Array.from(locationMap.entries())
-            .map(([name, data]) => ({
-                name,
-                totalRooms: data.total,
-                occupiedToday: data.occupied,
-                availableToday: data.total - data.occupied,
-                occupancyRate: data.total > 0 ? Math.round((data.occupied / data.total) * 10000) / 100 : 0,
-            }))
-            .sort((a, b) => b.occupancyRate - a.occupancyRate);
+        if (dateFilter === 'today' && liveOccupancyData) {
+            locationSummaries = liveOccupancyData.locationBreakdown
+                .filter(loc => !locationFilter || loc.name === locationFilter)
+                .map(loc => ({
+                    name: loc.name,
+                    totalRooms: loc.totalRooms,
+                    occupiedToday: loc.occupiedRooms,
+                    availableToday: loc.totalRooms - loc.occupiedRooms,
+                    occupancyRate: loc.occupancyRate,
+                }))
+                .sort((a, b) => b.occupancyRate - a.occupancyRate);
+        } else {
+            // Derive from room-level data for non-today filters
+            const locationMap = new Map<string, { total: number; occupied: number }>();
+            units.forEach((unit) => {
+                const existing = locationMap.get(unit.lokasi) || { total: 0, occupied: 0 };
+                existing.total++;
+                if (unit.isOccupiedToday) existing.occupied++;
+                locationMap.set(unit.lokasi, existing);
+            });
 
+            locationSummaries = Array.from(locationMap.entries())
+                .map(([name, data]) => ({
+                    name,
+                    totalRooms: data.total,
+                    occupiedToday: data.occupied,
+                    availableToday: data.total - data.occupied,
+                    occupancyRate: data.total > 0 ? Math.round((data.occupied / data.total) * 10000) / 100 : 0,
+                }))
+                .sort((a, b) => b.occupancyRate - a.occupancyRate);
+        }
+
+        // Use centralized counts for "today" filter, else derive from units
         const totalUnits = units.length;
-        const occupiedToday = units.filter((u) => u.isOccupiedToday).length;
+        const occupiedToday = dateFilter === 'today' && liveOccupancyData
+            ? liveOccupancyData.ditempati
+            : units.filter((u) => u.isOccupiedToday).length;
 
         return {
             units,
             locationSummaries,
-            totalUnits,
+            totalUnits: liveOccupancyData?.total ?? totalUnits,
             occupiedToday,
-            availableToday: totalUnits - occupiedToday,
+            availableToday: dateFilter === 'today' && liveOccupancyData
+                ? liveOccupancyData.tersedia
+                : totalUnits - occupiedToday,
             dateLabel: range.label,
         };
     } catch (error) {
