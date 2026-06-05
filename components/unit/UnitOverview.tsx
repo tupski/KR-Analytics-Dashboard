@@ -6,10 +6,16 @@ interface UnitOverviewProps {
     totalUnits: number;
     occupiedToday: number;
     availableToday: number;
+    /** Label for the current filter, e.g. "Hari Ini", "7 Hari" */
+    filterLabel?: string;
+    /** Number of rooms with activity in period (for non-today filters) */
+    roomsWithActivity?: number;
 }
 
-export default function UnitOverview({ totalUnits, occupiedToday, availableToday }: UnitOverviewProps) {
+export default function UnitOverview({ totalUnits, occupiedToday, availableToday, filterLabel, roomsWithActivity }: UnitOverviewProps) {
     const occupancyRate = totalUnits > 0 ? Math.round((occupiedToday / totalUnits) * 10000) / 100 : 0;
+
+    const isNonToday = filterLabel && filterLabel !== 'Hari Ini';
 
     const stats = [
         {
@@ -20,9 +26,9 @@ export default function UnitOverview({ totalUnits, occupiedToday, availableToday
             bg: 'bg-blue-50',
         },
         {
-            title: 'Terisi Hari Ini',
+            title: isNonToday ? 'Terisi (saat ini)' : 'Terisi Hari Ini',
             value: occupiedToday,
-            subtitle: `${occupancyRate}% okupansi`,
+            subtitle: isNonToday ? undefined : `${occupancyRate}% okupansi`,
             icon: User,
             color: 'text-orange-600',
             bg: 'bg-orange-50',
@@ -36,8 +42,21 @@ export default function UnitOverview({ totalUnits, occupiedToday, availableToday
         },
     ];
 
+    if (isNonToday && roomsWithActivity !== undefined) {
+        stats.push({
+            title: 'Ada transaksi',
+            value: roomsWithActivity,
+            subtitle: `periode ${filterLabel}`,
+            icon: User,
+            color: 'text-blue-600',
+            bg: 'bg-blue-50',
+        });
+    }
+
+    const cols = isNonToday ? 'grid-cols-4' : 'grid-cols-3';
+
     return (
-        <div className="grid grid-cols-3 gap-2 sm:gap-4">
+        <div className={`grid ${cols} gap-2 sm:gap-4`}>
             {stats.map((stat) => {
                 const Icon = stat.icon;
                 return (

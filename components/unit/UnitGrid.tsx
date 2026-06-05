@@ -70,7 +70,7 @@ export default function UnitGrid({ units, dateFilter }: UnitGridProps) {
                     {viewMode === 'grid' ? (
                         <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-8 gap-2 sm:gap-3">
                             {locationUnits.map((unit) => (
-                                <UnitCard key={unit.id} unit={unit} onClick={() => openDetail(unit)} />
+                                <UnitCard key={unit.id} unit={unit} dateFilter={dateFilter} onClick={() => openDetail(unit)} />
                             ))}
                         </div>
                     ) : (
@@ -99,6 +99,11 @@ export default function UnitGrid({ units, dateFilter }: UnitGridProps) {
                                                 ) : (
                                                     <span className="inline-flex items-center gap-1 text-xs font-medium text-green-700 bg-green-50 px-2 py-0.5 rounded-full">
                                                         <CheckCircle className="w-3 h-3" /> Tersedia
+                                                    </span>
+                                                )}
+                                                {dateFilter !== 'today' && !unit.isOccupiedToday && unit.hasActivityInPeriod && (
+                                                    <span className="ml-1.5 inline-flex items-center text-[10px] font-medium text-blue-700 bg-blue-50 px-1.5 py-0.5 rounded-full">
+                                                        Ada transaksi
                                                     </span>
                                                 )}
                                             </td>
@@ -143,7 +148,7 @@ export default function UnitGrid({ units, dateFilter }: UnitGridProps) {
     );
 }
 
-function UnitCard({ unit, onClick }: { unit: UnitItem; onClick: () => void }) {
+function UnitCard({ unit, dateFilter, onClick }: { unit: UnitItem; dateFilter: UnitDateFilter; onClick: () => void }) {
     const clickable = unit.isOccupiedToday;
     return (
         <button
@@ -164,6 +169,11 @@ function UnitCard({ unit, onClick }: { unit: UnitItem; onClick: () => void }) {
                 {unit.isOccupiedToday && unit.occupancyCount && unit.occupancyCount > 1 && (
                     <span className="text-[10px] font-bold text-orange-700 bg-orange-100 px-1.5 rounded-full">
                         {unit.occupancyCount}x
+                    </span>
+                )}
+                {dateFilter !== 'today' && !unit.isOccupiedToday && unit.hasActivityInPeriod && (
+                    <span className="text-[10px] font-medium text-blue-700 bg-blue-100 px-1.5 rounded-full">
+                        transaksi
                     </span>
                 )}
             </div>

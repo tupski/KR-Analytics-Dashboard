@@ -17,9 +17,13 @@ export interface UnitItem {
     lokasi: string;
     status: string;
     createdAt: string;
+    /** Point-in-time: room occupied right now (via getLiveOccupancy). Consistent across all filters. */
     isOccupiedToday: boolean;
     currentGuest?: string;
-    occupancyCount?: number; // number of transactions in selected period
+    /** Number of transactions overlapping the selected period. Used for period activity info, not labeled "occupancy". */
+    occupancyCount?: number;
+    /** True when room had ≥1 transaction overlapping the period. Only set for non-today filters. */
+    hasActivityInPeriod?: boolean;
 }
 
 export interface LocationSummary {
@@ -40,12 +44,14 @@ export interface UnitPageData {
 
 /**
  * Fetch all units with their occupancy status for a given period.
- * - When filter = 'today': occupied = active right now (uses centralized getLiveOccupancy()).
- * - Other filters: occupied = had any transaction in the period.
  *
- * Uses centralized getLiveOccupancy() for "today" occupancy counts and
- * location breakdowns — ensures Dashboard KPI cards and Unit page
- * compute the same live occupancy rate.
+ * KEY SEMANTICS:
+ * - `isOccupiedToday`: ALWAYS point-in-time live occupancy (via getLiveOccupancy()),
+ *   regardless of filter. Same as Dashboard KPI.
+ * - `hasActivityInPeriod` (non-today only): room had ≥1 transaction overlapping the period.
+ * - Location summaries and top-level counts: ALWAYS from getLiveOccupancy() point-in-time.
+ *
+ * Never label period-overlap counts as "occupancy" or "Terisi".
  *
  * Accepts either legacy dateFilter (today/yesterday/7days/month/year) or
  * unified DateFilterParams (rangePreset, startDate, endDate).
@@ -82,114 +88,89 @@ export async function fetchUnits(
             ? computeDateRange(dateParams.rangePreset, dateParams.startDate, dateParams.endDate, mode)
             : getDateRange(dateFilter, mode);
 
-        // For "today" filter, occupancy = active right now (centralized function)
-        // For other filters, occupancy = had at least one transaction in period
-        const occupiedMap = new Map<string, string>();
-        const occupancyCountMap = new Map<string, number>();
+        // ── Step 1: Always get point-in-time live occupancy ──
+        // Used for isOccupiedToday, location summaries, and top-level counts.
+        // Consistent with Dashboard KPI regardless of filter.
+        const liveOccupancyData = await getLiveOccupancy();
 
-        // Get centralized live occupancy for "today" filter
-        let liveOccupancyData = null;
+        // Build point-in-time occupied set from live data with customer names
+        const liveOccupiedSet = new Map<string, string>(); // key → customer_name
+        const { data: activeTransactions } = await supabase
+            .from('transactions')
+            .select('room_number, apartment_location, customer_name')
+            .lte('checkin_at', getNowWIB())
+            .or(`checkout_at.gte.${getNowWIB()},checkout_at.is.null`);
+
+        activeTransactions?.forEach((tx: any) => {
+            const key = `${tx.apartment_location}-${tx.room_number}`;
+            liveOccupiedSet.set(key, tx.customer_name);
+        });
+
+        // ── Step 2: Compute period activity (for hasActivityInPeriod / occupancyCount) ──
+        const periodActivityMap = new Map<string, number>();
 
         if (dateFilter === 'today') {
-            // Call centralized function for counts + location breakdown
-            liveOccupancyData = await getLiveOccupancy();
-
-            // Still need room-level detail (customer names) for individual unit display
-            const { data: activeTransactions } = await supabase
-                .from('transactions')
-                .select('room_number, apartment_location, customer_name')
-                .lte('checkin_at', getNowWIB())
-                .or(`checkout_at.gte.${getNowWIB()},checkout_at.is.null`);
-
+            // For today, period activity = currently active transactions
             activeTransactions?.forEach((tx: any) => {
                 const key = `${tx.apartment_location}-${tx.room_number}`;
-                occupiedMap.set(key, tx.customer_name);
-                occupancyCountMap.set(key, (occupancyCountMap.get(key) || 0) + 1);
+                periodActivityMap.set(key, (periodActivityMap.get(key) || 0) + 1);
             });
         } else {
-            // Use stay-span overlap logic: any stay that overlaps [range.start, range.end]
-            // matches as "occupied" — same logic as fetchRoomDetails and fetchUnits('today')
+            // Stay-span overlap: any transaction overlapping [range.start, range.end]
             const { data: periodTx } = await supabase
                 .from('transactions')
-                .select('room_number, apartment_location, customer_name, checkin_at')
+                .select('room_number, apartment_location')
                 .lte('checkin_at', range.end)
                 .or(`checkout_at.is.null,checkout_at.gte.${range.start}`)
                 .order('checkin_at', { ascending: false });
 
             periodTx?.forEach((tx: any) => {
                 const key = `${tx.apartment_location}-${tx.room_number}`;
-                if (!occupiedMap.has(key)) occupiedMap.set(key, tx.customer_name);
-                occupancyCountMap.set(key, (occupancyCountMap.get(key) || 0) + 1);
+                periodActivityMap.set(key, (periodActivityMap.get(key) || 0) + 1);
             });
         }
 
-        // Map units with occupancy info
+        // ── Step 3: Build units with consistent semantics ──
         const units: UnitItem[] = (rooms || []).map((room: any) => {
             const key = `${room.lokasi}-${room.name}`;
-            const isOccupied = occupiedMap.has(key);
-            return {
+            const isOccupied = liveOccupiedSet.has(key);
+            const periodCount = periodActivityMap.get(key) || 0;
+            const item: UnitItem = {
                 id: room.id,
                 name: room.name,
                 lokasi: room.lokasi,
                 status: room.status,
                 createdAt: room.created_at,
                 isOccupiedToday: isOccupied,
-                currentGuest: isOccupied ? occupiedMap.get(key) : undefined,
-                occupancyCount: occupancyCountMap.get(key) || 0,
+                currentGuest: isOccupied ? liveOccupiedSet.get(key) : undefined,
+                occupancyCount: periodCount,
             };
+            // Only non-today filters get hasActivityInPeriod; today uses isOccupiedToday directly
+            if (dateFilter !== 'today') {
+                item.hasActivityInPeriod = periodCount > 0;
+            }
+            return item;
         });
 
-        // Location summaries: use centralized getLiveOccupancy() for "today" filter
-        // to ensure Dashboard + Unit page show identical location occupancy rates.
-        // For non-today filters, derive from room data as before.
-        let locationSummaries: LocationSummary[];
+        // ── Step 4: Location summaries — ALWAYS from getLiveOccupancy() (point-in-time) ──
+        const locationSummaries: LocationSummary[] = liveOccupancyData.locationBreakdown
+            .filter(loc => !locationFilter || loc.name === locationFilter)
+            .map(loc => ({
+                name: loc.name,
+                totalRooms: loc.totalRooms,
+                occupiedToday: loc.occupiedRooms,
+                availableToday: loc.totalRooms - loc.occupiedRooms,
+                occupancyRate: loc.occupancyRate,
+            }))
+            .sort((a, b) => b.occupancyRate - a.occupancyRate);
 
-        if (dateFilter === 'today' && liveOccupancyData) {
-            locationSummaries = liveOccupancyData.locationBreakdown
-                .filter(loc => !locationFilter || loc.name === locationFilter)
-                .map(loc => ({
-                    name: loc.name,
-                    totalRooms: loc.totalRooms,
-                    occupiedToday: loc.occupiedRooms,
-                    availableToday: loc.totalRooms - loc.occupiedRooms,
-                    occupancyRate: loc.occupancyRate,
-                }))
-                .sort((a, b) => b.occupancyRate - a.occupancyRate);
-        } else {
-            // Derive from room-level data for non-today filters
-            const locationMap = new Map<string, { total: number; occupied: number }>();
-            units.forEach((unit) => {
-                const existing = locationMap.get(unit.lokasi) || { total: 0, occupied: 0 };
-                existing.total++;
-                if (unit.isOccupiedToday) existing.occupied++;
-                locationMap.set(unit.lokasi, existing);
-            });
-
-            locationSummaries = Array.from(locationMap.entries())
-                .map(([name, data]) => ({
-                    name,
-                    totalRooms: data.total,
-                    occupiedToday: data.occupied,
-                    availableToday: data.total - data.occupied,
-                    occupancyRate: data.total > 0 ? Math.round((data.occupied / data.total) * 10000) / 100 : 0,
-                }))
-                .sort((a, b) => b.occupancyRate - a.occupancyRate);
-        }
-
-        // Use centralized counts for "today" filter, else derive from units
-        const totalUnits = units.length;
-        const occupiedToday = dateFilter === 'today' && liveOccupancyData
-            ? liveOccupancyData.ditempati
-            : units.filter((u) => u.isOccupiedToday).length;
-
+        // ── Step 5: Top-level counts — ALWAYS from getLiveOccupancy() (point-in-time) ──
         return {
             units,
             locationSummaries,
-            totalUnits: liveOccupancyData?.total ?? totalUnits,
-            occupiedToday,
-            availableToday: dateFilter === 'today' && liveOccupancyData
-                ? liveOccupancyData.tersedia
-                : totalUnits - occupiedToday,
+            totalUnits: liveOccupancyData.total,
+            occupiedToday: liveOccupancyData.ditempati,
+            availableToday: liveOccupancyData.tersedia,
             dateLabel: range.label,
         };
     } catch (error) {

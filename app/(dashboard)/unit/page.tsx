@@ -41,12 +41,18 @@ export default async function UnitPage({
         ? Math.round((unitData.occupiedToday / unitData.totalUnits) * 10000) / 100
         : 0;
 
+    // For non-today filters, count rooms with period activity
+    const roomsWithActivity = dateFilter !== 'today'
+        ? unitData.units.filter(u => u.hasActivityInPeriod).length
+        : unitData.occupiedToday;
+
     // Build data summary for contextual AI insights
     const unitDataSummary = {
         totalUnits: unitData.totalUnits,
         occupiedToday: unitData.occupiedToday,
         availableToday: unitData.availableToday,
         occupancyRate,
+        roomsWithActivity,
         locationSummaries: unitData.locationSummaries.map(l => ({
             name: l.name,
             totalRooms: l.totalRooms,
@@ -63,6 +69,8 @@ export default async function UnitPage({
             .map(l => l.name),
         periodLabel: dateFilter || rangePreset || 'Hari Ini',
     };
+
+    const isNonToday = dateFilter !== 'today';
 
     return (
         <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50/30">
@@ -88,7 +96,7 @@ export default async function UnitPage({
                 />
 
                 {/* Metric Cards — replacing UnitOverview */}
-                <div className="grid grid-cols-3 gap-3 sm:gap-4">
+                <div className={`grid gap-3 sm:gap-4 ${isNonToday ? 'grid-cols-4' : 'grid-cols-3'}`}>
                     <MetricCardHorizontal
                         icon={<Building className="w-5 h-5" />}
                         title="Total Unit"
@@ -98,9 +106,9 @@ export default async function UnitPage({
                     />
                     <MetricCardHorizontal
                         icon={<User className="w-5 h-5" />}
-                        title="Terisi"
+                        title={isNonToday ? 'Terisi (saat ini)' : 'Terisi'}
                         value={unitData.occupiedToday}
-                        subtitle={`${occupancyRate}% okupansi`}
+                        subtitle={isNonToday ? undefined : `${occupancyRate}% okupansi`}
                         isComparisonActive={false}
                         semanticType="occupancy"
                     />
@@ -111,6 +119,16 @@ export default async function UnitPage({
                         isComparisonActive={false}
                         semanticType="neutral"
                     />
+                    {isNonToday && (
+                        <MetricCardHorizontal
+                            icon={<User className="w-5 h-5" />}
+                            title="Ada transaksi"
+                            subtitle={dateFilter === '7days' ? '7 hari terakhir' : `periode ${dateFilter}`}
+                            value={roomsWithActivity}
+                            isComparisonActive={false}
+                            semanticType="occupancy"
+                        />
+                    )}
                 </div>
 
                 {/* Filter Bar — StickyComparisonBar */}
