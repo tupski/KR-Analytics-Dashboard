@@ -43,6 +43,7 @@ import { createServerClient } from '@/lib/supabase/server';
 import { getReportPeriodSetting } from '@/lib/get-report-period-setting';
 import { getTodayReportRange } from '@/lib/get-report-period-setting';
 import { getReportPeriodRange } from '@/lib/reporting-period';
+import { getNowWIB } from '@/lib/utils/format';
 import type { ReportPeriodMode } from '@/lib/reporting-period';
 import { queryAnalytics, parseNumeric } from '@/lib/analytics/db';
 import { withCache, pickTTL } from '@/lib/analytics/cache';
@@ -371,7 +372,7 @@ async function fetchUnitInventory(location?: string) {
     if (location) q = q.eq('lokasi', location);
     const { count: totalRooms } = await q;
 
-    const now = new Date().toISOString();
+    const now = getNowWIB();
     let txQ = supabase
         .from('transactions')
         .select('room_number, apartment_location')
@@ -498,7 +499,7 @@ async function fetchLatestStatus(): Promise<LatestStatus> {
         .lte('checkin_at', dayEnd);
 
     // Active stays (currently checked-in)
-    const nowIso = now.toISOString();
+    const nowIso = getNowWIB();
     const { count: activeStays } = await supabase
         .from('transactions')
         .select('*', { count: 'exact', head: true })
@@ -564,7 +565,7 @@ async function fetchLiveCheckins(location?: string, limit: number = API_LIMITS.M
         p_limit: Math.min(limit, API_LIMITS.MAX_PAGE_SIZE),
     });
     if (error) throw error;
-    return { snapshot_time: new Date().toISOString(), location: location || 'Semua Lokasi', active_guests: data || [], total_count: data?.[0]?.total_count || 0 };
+    return { snapshot_time: getNowWIB(), location: location || 'Semua Lokasi', active_guests: data || [], total_count: data?.[0]?.total_count || 0 };
 }
 
 async function fetchIdleUnits(daysThreshold: number = IDLE_THRESHOLDS.DEFAULT_QUERY_DAYS, location?: string, limit: number = API_LIMITS.MAX_IDLE_UNITS): Promise<IdleUnitsResult> {
@@ -2099,6 +2100,12 @@ export async function executeTool(call: ToolCall): Promise<any> {
             case 'get_guest_stay_history':
                 return await getGuestStayHistory(
                     call.arguments.guestName,
+                    call.arguments.startDate,
+                    call.arguments.endDate,
+                    call.arguments.location,
+                    call.arguments.roomNumber,
+                    call.arguments.fuzzyMatch,
+                    call.arguments.limit,
                 );
 
             default:
