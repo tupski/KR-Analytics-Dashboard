@@ -5,7 +5,7 @@ import { getTodayReportRange } from '@/lib/get-report-period-setting';
 import { getReportPeriodRange } from '@/lib/reporting-period';
 import type { ReportPeriodMode } from '@/lib/reporting-period';
 import { getLiveOccupancy, getDailyOccupancyTrend } from '@/lib/services/occupancy';
-import { getRevenueTrend } from '@/lib/services/revenue';
+import { getRevenueTrend, getRevenueSummary as getServiceRevenueSummary } from '@/lib/services/revenue';
 import { getLocations } from '@/lib/services/location';
 import { applyLocationHealthStatuses } from '@/lib/dashboard/location-health';
 import { getIdleSeverity } from '@/lib/dashboard/unit-performance';
@@ -289,16 +289,8 @@ export async function fetchKPIData(
             .gte('checkin_at', actualDayStart)
             .lte('checkin_at', actualDayEnd);
 
-        const { data: revenueData } = await supabase
-            .from('transactions')
-            .select('cash_amount, transfer_amount')
-            .gte('checkin_at', actualDayStart)
-            .lte('checkin_at', actualDayEnd);
-
-        const periodRevenue = revenueData?.reduce(
-            (sum: number, t: any) => sum + (t.cash_amount || 0) + (t.transfer_amount || 0),
-            0,
-        ) || 0;
+        const revenueData = await getServiceRevenueSummary(actualDayStart, actualDayEnd);
+        const periodRevenue = revenueData.totalRevenue;
 
         // Occupancy & available — point-in-time (currently active)
         // Uses centralized getLiveOccupancy() for consistency across dashboard + unit pages.
@@ -340,16 +332,8 @@ export async function fetchKPIData(
                 .gte('checkin_at', compRange.start)
                 .lte('checkin_at', compRange.end);
 
-            const { data: prevRevenueData } = await supabase
-                .from('transactions')
-                .select('cash_amount, transfer_amount')
-                .gte('checkin_at', compRange.start)
-                .lte('checkin_at', compRange.end);
-
-            const prevRevenue = prevRevenueData?.reduce(
-                (sum: number, t: any) => sum + (t.cash_amount || 0) + (t.transfer_amount || 0),
-                0,
-            ) || 0;
+            const prevRevenueData = await getServiceRevenueSummary(compRange.start, compRange.end);
+            const prevRevenue = prevRevenueData.totalRevenue;
 
             result.prev = {
                 booking: prevBookingCount || 0,

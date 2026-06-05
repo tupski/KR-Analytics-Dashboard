@@ -1,6 +1,7 @@
 'use server';
 
 import { createServerClient } from '@/lib/supabase/server';
+import { getRevenueSummary as getServiceRevenueSummary } from '@/lib/services/revenue';
 import { getLocations } from '@/lib/services/location';
 import { format } from 'date-fns';
 import { toZonedTime } from 'date-fns-tz';
@@ -174,17 +175,9 @@ export async function fetchBookingStats(dateParams?: DateFilterParams) {
         .gte('checkin_at', range.start)
         .lte('checkin_at', range.end);
 
-    const { data: revenueData } = await supabase
-        .from('transactions')
-        .select('cash_amount, transfer_amount')
-        .gte('checkin_at', range.start)
-        .lte('checkin_at', range.end);
-
-    const totalRevenue = revenueData?.reduce(
-        (sum: number, t: any) => sum + (t.cash_amount || 0) + (t.transfer_amount || 0), 0
-    ) || 0;
-
-    const totalTransactions = revenueData?.length || 0;
+    const revenueData = await getServiceRevenueSummary(range.start, range.end);
+    const totalRevenue = revenueData.totalRevenue;
+    const totalTransactions = revenueData.transactionCount;
 
     // Average per day (for subtitle)
     const rangeStart = new Date(range.start);
@@ -214,15 +207,8 @@ export async function fetchBookingStats(dateParams?: DateFilterParams) {
                 .gte('checkin_at', cr.start)
                 .lte('checkin_at', cr.end);
 
-            const { data: prevRevData } = await supabase
-                .from('transactions')
-                .select('cash_amount, transfer_amount')
-                .gte('checkin_at', cr.start)
-                .lte('checkin_at', cr.end);
-
-            const prevRevenue = prevRevData?.reduce(
-                (sum: number, t: any) => sum + (t.cash_amount || 0) + (t.transfer_amount || 0), 0
-            ) || 0;
+            const prevRevData = await getServiceRevenueSummary(cr.start, cr.end);
+            const prevRevenue = prevRevData.totalRevenue;
 
             comparison = {
                 prevBookingCount: prevCount || 0,
