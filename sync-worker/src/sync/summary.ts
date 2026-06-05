@@ -400,22 +400,23 @@ export async function refreshExpenseSummary(pool: Pool, opts: RefreshOptions): P
 // 4. analytics_occupancy_daily
 // ═══════════════════════════════════════════════════════════════════════
 //
-// OCCUPANCY DEFINITION (conservative — Phase 1):
+// OCCUPANCY DEFINITION:
 //   A room is considered "occupied" on a given date (WIB) if there is
-//   at least 1 transaction recorded for that room on that date,
-//   based on (created_at AT TIME ZONE 'Asia/Jakarta')::DATE.
+//   at least 1 transaction with a stay spanning that date, based on
+//   checkin_at → checkout_at (exclusive) in WIB timezone.
 //
-// LIMITATIONS:
-//   - This uses created_at, NOT actual checkin/checkout dates.
-//   - A multi-night stay is only counted on the checkin/creation date,
-//     not for each night of the stay.
-//   - This represents "transaction date" occupancy, not "nightly stay"
-//     occupancy. For truer occupancy, would need checkin_at/checkout_at
-//     spanning logic.
+//   Uses generate_series() to produce 1 row per night of stay:
+//     checkin June 1, checkout June 4 → rows for June 1, 2, 3
+//
+// Edge cases:
+//   - Same-day stay (checkin = checkout at same date WIB) → 1 row
+//   - Active stay (checkout IS NULL) → from checkin to yesterday
+//   - Multiple transactions same room same date → latest wins (DISTINCT ON)
+//   - Window filter: transactions whose stay overlaps [cutoff, ∞)
 //
 // Source: local transactions mirror table
 // PK: (date_wib, apartment_location, room_number)
-// Filter: is_deleted = false, room_number IS NOT NULL
+// Filter: is_deleted = false, room_number IS NOT NULL, checkin_at IS NOT NULL
 //
 // ═══════════════════════════════════════════════════════════════════════
 
@@ -434,22 +435,73 @@ export async function refreshOccupancyDaily(pool: Pool, opts: RefreshOptions): P
         );
         console.log(`[summary:occupancy] Deleted ${delResult.rowCount} rows`);
 
-        // INSERT: One row per (date, location, room) that has ≥1 transaction.
-        // GROUP BY avoids PK conflict when room has multiple transactions same day.
+        // INSERT: One row per night of stay using generate_series from checkin to checkout-1.
+        // DISTINCT ON deduplicates when multiple transactions overlap same room+date.
+        // ON CONFLICT handles PK collision safety net (shouldn't trigger due to DISTINCT ON).
         const insResult = await pool.query(`
+            WITH stay_dates AS (
+                SELECT DISTINCT ON (gs.date_wib, gs.apartment_location, gs.room_number)
+                    gs.date_wib,
+                    gs.apartment_location,
+                    gs.room_number,
+                    gs.transaction_id,
+                    gs.customer_name,
+                    gs.checkin_at,
+                    gs.checkout_at
+                FROM (
+                    SELECT
+                        t.id AS transaction_id,
+                        COALESCE(t.apartment_location, 'Unknown') AS apartment_location,
+                        COALESCE(t.room_number, 'Unknown') AS room_number,
+                        t.customer_name,
+                        t.checkin_at,
+                        t.checkout_at,
+                        generate_series(
+                            GREATEST((t.checkin_at AT TIME ZONE 'Asia/Jakarta')::DATE, $1::date),
+                            CASE
+                                WHEN t.checkout_at IS NULL
+                                    THEN (NOW() AT TIME ZONE 'Asia/Jakarta')::DATE - 1
+                                WHEN (t.checkout_at AT TIME ZONE 'Asia/Jakarta')::DATE
+                                     <= (t.checkin_at AT TIME ZONE 'Asia/Jakarta')::DATE
+                                    THEN (t.checkin_at AT TIME ZONE 'Asia/Jakarta')::DATE
+                                ELSE (t.checkout_at AT TIME ZONE 'Asia/Jakarta')::DATE - 1
+                            END,
+                            '1 day'::interval
+                        )::DATE AS date_wib
+                    FROM transactions t
+                    WHERE t.is_deleted = false
+                      AND t.room_number IS NOT NULL
+                      AND t.checkin_at IS NOT NULL
+                      AND (
+                          t.checkout_at IS NULL
+                          OR (t.checkout_at AT TIME ZONE 'Asia/Jakarta')::DATE >= $1::date
+                          OR (t.checkin_at AT TIME ZONE 'Asia/Jakarta')::DATE >= $1::date
+                      )
+                ) gs
+                ORDER BY gs.date_wib, gs.apartment_location, gs.room_number, gs.transaction_id DESC
+            )
             INSERT INTO analytics_occupancy_daily
-                (date_wib, apartment_location, room_number, is_occupied)
+                (date_wib, apartment_location, room_number, is_occupied,
+                 transaction_id, customer_name, checkin_at, checkout_at)
             SELECT
-                (created_at AT TIME ZONE 'Asia/Jakarta')::DATE as date_wib,
-                COALESCE(apartment_location, 'Unknown') as apartment_location,
-                COALESCE(room_number, 'Unknown') as room_number,
-                TRUE as is_occupied
-            FROM transactions
-            WHERE is_deleted = false
-              AND room_number IS NOT NULL
-              AND (created_at AT TIME ZONE 'Asia/Jakarta')::DATE >= $1
-            GROUP BY date_wib, apartment_location, room_number
-            ORDER BY date_wib, apartment_location, room_number
+                sd.date_wib,
+                sd.apartment_location,
+                sd.room_number,
+                TRUE,
+                sd.transaction_id,
+                sd.customer_name,
+                sd.checkin_at,
+                sd.checkout_at
+            FROM stay_dates sd
+            ORDER BY sd.date_wib, sd.apartment_location, sd.room_number
+            ON CONFLICT (date_wib, apartment_location, room_number)
+            DO UPDATE SET
+                is_occupied = TRUE,
+                transaction_id = EXCLUDED.transaction_id,
+                customer_name = EXCLUDED.customer_name,
+                checkin_at = EXCLUDED.checkin_at,
+                checkout_at = EXCLUDED.checkout_at,
+                computed_at = NOW()
         `, [cutoffDate]);
 
         const rowsInserted = insResult.rowCount ?? 0;
