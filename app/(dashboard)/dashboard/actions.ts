@@ -2,11 +2,9 @@
 
 import { createServerClient } from '@/lib/supabase/server';
 import { getTodayReportRange } from '@/lib/get-report-period-setting';
-import { getReportPeriodRange as getReportPeriodRangeLegacy } from '@/lib/reporting-period';
 import type { ReportPeriodMode } from '@/lib/shared/report-period';
 import { getReportPeriodRange } from '@/lib/shared/report-period';
 import type { ReportPeriodRange } from '@/lib/shared/report-period';
-import { exclusiveRange, effectiveDate, calcRevenue } from '@/lib/dashboard/transaction-source';
 import { getLiveOccupancy, getDailyOccupancyTrend } from '@/lib/services/occupancy';
 import { getRevenueTrend, getRevenueSummary as getServiceRevenueSummary } from '@/lib/services/revenue';
 import { getLocations } from '@/lib/services/location';
@@ -22,7 +20,6 @@ import { getOperationsSummary } from '@/lib/dashboard/operations';
 import { format, addDays, subDays, subWeeks, subMonths, subYears, startOfWeek, startOfMonth, startOfYear, parse } from 'date-fns';
 import { id as idLocale } from 'date-fns/locale';
 import { toZonedTime } from 'date-fns-tz';
-import { getNowWIB } from '@/lib/utils/format';
 import { computeDateRange, computeComparisonRange } from '@/lib/services/date-range';
 import type { DateFilterParams } from '@/lib/services/date-range';
 import type {
@@ -103,12 +100,15 @@ export async function fetchTodayCheckins(dateParams?: DateFilterParams): Promise
 
     try {
         // Use COALESCE: checkin_at >= start OR (checkin IS NULL AND created_at >= start)
-        // Exclusive end: effective_date < (start + 1 day)
-        const exclusEnd = new Date(new Date(start).getTime() + 86400000).toISOString();
+        // Exclusive end: use the end parameter directly (report-period-aware)
+        const exclusEnd = end;
         const { data, error } = await supabase
             .from('transactions')
             .select('id, apartment_location, room_number, customer_name, checkin_at, created_at')
-            .or(`checkin_at.gte.${start},and(checkin_at.is.null,created_at.gte.${start})`)
+            .or(
+                `and(checkin_at.gte.${start},checkin_at.lt.${end}),` +
+                `and(checkin_at.is.null,created_at.gte.${start},created_at.lt.${end})`
+            )
             .order('checkin_at', { ascending: false })
             .limit(100);
 
@@ -174,11 +174,12 @@ export async function fetchTodayCheckouts(dateParams?: DateFilterParams): Promis
     }
 
     try {
-        const exclusEnd = new Date(new Date(start).getTime() + 86400000).toISOString();
+        const exclusEnd = end;
         const { data, error } = await supabase
             .from('transactions')
             .select('id, apartment_location, room_number, customer_name, checkout_at, checkin_at, created_at')
-            .or(`checkin_at.gte.${start},and(checkin_at.is.null,created_at.gte.${start})`)
+            .gte('checkout_at', start)
+            .lt('checkout_at', end)
             .order('checkout_at', { ascending: true })
             .limit(10);
 
@@ -190,8 +191,8 @@ export async function fetchTodayCheckouts(dateParams?: DateFilterParams): Promis
         if (!data) return [];
 
         const filtered = data.filter((item: any) => {
-            const effDate = item.checkin_at || item.created_at;
-            return effDate && effDate >= start && effDate < exclusEnd;
+            const checkoutDate = item.checkout_at;
+            return checkoutDate && checkoutDate >= start && checkoutDate < exclusEnd;
         });
 
         return filtered.map((item: {
@@ -333,7 +334,10 @@ export async function fetchKPIData(
         const { count: bookingCount } = await supabase
             .from('transactions')
             .select('*', { count: 'exact', head: true })
-            .or(`checkin_at.gte.${actualDayStart},and(checkin_at.is.null,created_at.gte.${actualDayStart})`);
+            .or(
+                `and(checkin_at.gte.${actualDayStart},checkin_at.lt.${actualDayEnd}),` +
+                `and(checkin_at.is.null,created_at.gte.${actualDayStart},created_at.lt.${actualDayEnd})`
+            );
 
         // Build ReportPeriodRange for the main period to pass to the service
         const mainPeriod = buildPeriodFromISO(actualDayStart, actualDayEnd);
@@ -377,7 +381,10 @@ export async function fetchKPIData(
             const { count: prevBookingCount } = await supabase
                 .from('transactions')
                 .select('*', { count: 'exact', head: true })
-                .or(`checkin_at.gte.${compRange.start},and(checkin_at.is.null,created_at.gte.${compRange.start})`);
+                .or(
+                    `and(checkin_at.gte.${compRange.start},checkin_at.lt.${compRange.end}),` +
+                    `and(checkin_at.is.null,created_at.gte.${compRange.start},created_at.lt.${compRange.end})`
+                );
 
             const prevPeriod = buildPeriodFromISO(compRange.start, compRange.end);
             const prevRevenueData = await getServiceRevenueSummary(prevPeriod);
@@ -739,43 +746,26 @@ export async function getSyncFreshness(): Promise<import('@/lib/analytics/sync-f
 export async function fetchLocationHealthData(): Promise<LocationHealthItem[]> {
     const supabase = createServerClient();
     const { start: periodStart, end: periodEnd } = await getTodayReportRange();
-    const nowIso = getNowWIB();
 
     try {
         // 1. Get all locations with room counts
         const locations = await getLocations();
         if (locations.length === 0) return [];
 
-        // 2. Get all rooms per location for mapping
-        const { data: allRooms } = await supabase
-            .from('nomor_kamar')
-            .select('name, lokasi');
+        // 2. Use centralized getLiveOccupancy() for occupancy per location
+        const liveOccupancy = await getLiveOccupancy();
+        const liveByLocation = new Map(
+            liveOccupancy.locationBreakdown.map(item => [item.name, item])
+        );
 
-        const roomsPerLocation: Record<string, number> = {};
-        allRooms?.forEach((r: any) => {
-            roomsPerLocation[r.lokasi] = (roomsPerLocation[r.lokasi] || 0) + 1;
-        });
-
-        // 3. Get active stays (occupancy) per location — stay-span overlap
-        // Overlap: checkin_at ≤ now AND (checkout_at ≥ now OR checkout_at IS NULL)
-        const { data: activeStays } = await supabase
-            .from('transactions')
-            .select('room_number, apartment_location')
-            .lte('checkin_at', nowIso)
-            .or(`checkout_at.gte.${nowIso},checkout_at.is.null`);
-
-        const occupiedPerLocation: Record<string, Set<string>> = {};
-        activeStays?.forEach((t: any) => {
-            const loc = t.apartment_location;
-            if (!occupiedPerLocation[loc]) occupiedPerLocation[loc] = new Set();
-            occupiedPerLocation[loc].add(`${t.apartment_location}-${t.room_number}`);
-        });
-
-        // 4. Get revenue per location within the report period — using COALESCE(checkin_at, created_at)
+        // 3. Get revenue per location within the report period — using COALESCE with start-end boundary
         const { data: revenueData } = await supabase
             .from('transactions')
             .select('apartment_location, cash_amount, transfer_amount, checkin_at, created_at')
-            .or(`checkin_at.gte.${periodStart},and(checkin_at.is.null,created_at.gte.${periodStart})`);
+            .or(
+                `and(checkin_at.gte.${periodStart},checkin_at.lt.${periodEnd}),` +
+                `and(checkin_at.is.null,created_at.gte.${periodStart},created_at.lt.${periodEnd})`
+            );
 
         const revenuePerLocation: Record<string, number> = {};
         revenueData?.forEach((t: any) => {
@@ -787,14 +777,13 @@ export async function fetchLocationHealthData(): Promise<LocationHealthItem[]> {
             }
         });
 
-        // 5. Build location health items
+        // 4. Build location health items
         const items: LocationHealthItem[] = locations.map((loc) => {
-            const totalUnits = roomsPerLocation[loc.name] || loc.totalRooms || 0;
-            const occupiedUnits = occupiedPerLocation[loc.name]?.size || 0;
+            const live = liveByLocation.get(loc.name);
+            const totalUnits = live?.totalRooms ?? loc.totalRooms ?? 0;
+            const occupiedUnits = live?.occupiedRooms ?? 0;
             const availableUnits = Math.max(0, totalUnits - occupiedUnits);
-            const occupancyRate = totalUnits > 0
-                ? Math.round((occupiedUnits / totalUnits) * 10000) / 100
-                : 0;
+            const occupancyRate = live?.occupancyRate ?? 0;
             const revenue = revenuePerLocation[loc.name] || 0;
             const revenuePerUnit = occupiedUnits > 0
                 ? Math.round(revenue / occupiedUnits)
@@ -812,7 +801,7 @@ export async function fetchLocationHealthData(): Promise<LocationHealthItem[]> {
             };
         });
 
-        // 6. Apply status computation
+        // 5. Apply status computation
         return applyLocationHealthStatuses(items);
     } catch (error) {
         console.error('Error in fetchLocationHealthData:', error);

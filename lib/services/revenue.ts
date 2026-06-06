@@ -3,8 +3,8 @@ import {
     getDailyRevenue as getDailyRevenueAnalytics,
     getRevenueSummary as getRevenueSummaryAnalytics,
 } from '@/lib/analytics/revenue';
-import { calcRevenue, effectiveDate } from '@/lib/dashboard/transaction-source';
-import { format, addDays, parse } from 'date-fns';
+import { effectiveDate } from '@/lib/dashboard/transaction-source';
+import { format, addDays } from 'date-fns';
 import { toZonedTime } from 'date-fns-tz';
 import type { ReportPeriodRange } from '@/lib/shared/report-period';
 
@@ -38,6 +38,21 @@ export interface RevenueTrendPoint {
 /** Check if analytics DB is configured. */
 function analyticsConfigured(): boolean {
     return !!process.env.ANALYTICS_DATABASE_URL;
+}
+
+/**
+ * Check whether a period represents a full calendar-day range.
+ * The analytics DB uses date_wib (calendar day) aggregation, so it is only
+ * safe to query when the period covers whole calendar days from 00:00:00
+ * to 23:59:59.  Hotel-day periods (e.g. 12:00–11:59 next day) and partial
+ * days would overcount/undercount against the analytics DB.
+ */
+function isFullCalendarDayPeriod(period: ReportPeriodRange): boolean {
+    return (
+        period.mode === 'calendar_day' &&
+        period.startISO.includes('T00:00:00') &&
+        period.endISO.includes('T23:59:59')
+    );
 }
 
 /**
@@ -88,7 +103,7 @@ export async function getRevenueSummary(period: ReportPeriodRange): Promise<Reve
     const endExclusive = format(addDays(endDateObj, 1), 'yyyy-MM-dd');
 
     // ── Analytics path (primary) ──────────────────────────────
-    if (analyticsConfigured()) {
+    if (analyticsConfigured() && isFullCalendarDayPeriod(period)) {
         try {
             const data = await getRevenueSummaryAnalytics(startStr, endExclusive);
             console.debug('[revenue] analytics summary:', { startStr, endExclusive, data });
@@ -116,7 +131,10 @@ async function getRevenueSummaryLegacy(period: ReportPeriodRange): Promise<Reven
         const { data, error } = await supabase
             .from('transactions')
             .select('cash_amount, transfer_amount, checkin_at, created_at')
-            .or(`checkin_at.gte.${period.startISO},and(checkin_at.is.null,created_at.gte.${period.startISO})`);
+            .or(
+                `and(checkin_at.gte.${period.startISO},checkin_at.lt.${period.endISO}),` +
+                `and(checkin_at.is.null,created_at.gte.${period.startISO},created_at.lt.${period.endISO})`
+            );
 
         if (error) {
             console.error('Error fetching revenue summary:', error);
@@ -135,7 +153,7 @@ async function getRevenueSummaryLegacy(period: ReportPeriodRange): Promise<Reven
         for (const t of data || []) {
             const effDate = effectiveDate(t);
             // Apply exclusive-end filter: period.startISO <= effectiveDate < period.endISO
-            if (effDate && effDate >= period.startISO && effDate <= period.endISO) {
+            if (effDate && effDate >= period.startISO && effDate < period.endISO) {
                 cashAmount += t.cash_amount ?? 0;
                 transferAmount += t.transfer_amount ?? 0;
                 count++;
@@ -176,7 +194,7 @@ export async function getRevenueTrend(
     const endExclusive = format(addDays(endDateObj, 1), 'yyyy-MM-dd');
 
     // ── Analytics path (primary) ──────────────────────────────
-    if (analyticsConfigured()) {
+    if (analyticsConfigured() && isFullCalendarDayPeriod(period)) {
         try {
             const dailyRows = await getDailyRevenueAnalytics(startStr, endExclusive);
 

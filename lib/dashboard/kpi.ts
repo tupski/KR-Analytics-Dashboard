@@ -13,7 +13,6 @@ import { getReportPeriodRange } from '@/lib/shared/report-period';
 import { getRevenueSummary as getServiceRevenueSummary } from '@/lib/services/revenue';
 import { getExpenseSummary as getServiceExpenseSummary } from '@/lib/services/expense';
 import { getLiveOccupancy } from '@/lib/services/occupancy';
-import { getNowWIB } from '@/lib/utils/format';
 import { calcRevenue, effectiveDate } from '@/lib/dashboard/transaction-source';
 
 // ─── Helpers ────────────────────────────────────────────────
@@ -72,8 +71,11 @@ export async function getKPIData(params: {
     let bookingsQuery = supabase
         .from('transactions')
         .select('*', { count: 'exact', head: true })
-        // COALESCE(checkin_at, created_at): wider filter via .or()
-        .or(`checkin_at.gte.${period.startISO},and(checkin_at.is.null,created_at.gte.${period.startISO})`);
+        // COALESCE(checkin_at, created_at): wider filter via .or() with start-end boundary
+        .or(
+            `and(checkin_at.gte.${period.startISO},checkin_at.lt.${period.endISO}),` +
+            `and(checkin_at.is.null,created_at.gte.${period.startISO},created_at.lt.${period.endISO})`
+        );
     if (params.location) bookingsQuery = bookingsQuery.eq('apartment_location', params.location);
 
     // ── Today boundaries for checkins/checkouts (separate from period) ──
@@ -92,7 +94,10 @@ export async function getKPIData(params: {
     let checkinsQuery = supabase
         .from('transactions')
         .select('*', { count: 'exact', head: true })
-        .or(`checkin_at.gte.${todayPeriod.startISO},and(checkin_at.is.null,created_at.gte.${todayPeriod.startISO})`);
+        .or(
+            `and(checkin_at.gte.${todayPeriod.startISO},checkin_at.lt.${todayPeriod.endISO}),` +
+            `and(checkin_at.is.null,created_at.gte.${todayPeriod.startISO},created_at.lt.${todayPeriod.endISO})`
+        );
     if (params.location) checkinsQuery = checkinsQuery.eq('apartment_location', params.location);
 
     let checkoutsQuery = supabase
@@ -139,7 +144,10 @@ export async function getKPIData(params: {
             const { data: todayTx, error: todayErr } = await supabase
                 .from('transactions')
                 .select('cash_amount, transfer_amount, checkin_at, created_at')
-                .or(`checkin_at.gte.${todayPeriod.startISO},and(checkin_at.is.null,created_at.gte.${todayPeriod.startISO})`);
+                .or(
+                    `and(checkin_at.gte.${todayPeriod.startISO},checkin_at.lt.${todayPeriod.endISO}),` +
+                    `and(checkin_at.is.null,created_at.gte.${todayPeriod.startISO},created_at.lt.${todayPeriod.endISO})`
+                );
 
             if (!todayErr && todayTx && todayTx.length > 0) {
                 let todayRevenue = 0;
@@ -147,7 +155,7 @@ export async function getKPIData(params: {
                 for (const tx of todayTx) {
                     const effDate = effectiveDate(tx);
                     // Apply exclusive-end: effective_date >= start AND effective_date < end
-                    if (effDate && effDate >= todayPeriod.startISO && effDate <= todayPeriod.endISO) {
+                    if (effDate && effDate >= todayPeriod.startISO && effDate < todayPeriod.endISO) {
                         todayRevenue += calcRevenue(tx);
                         todayCount++;
                     }

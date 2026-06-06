@@ -1,12 +1,9 @@
 import { format, subDays, eachDayOfInterval } from 'date-fns';
 import { createServerClient } from '@/lib/supabase/server';
-import { getNowWIB } from '@/lib/utils/format';
-import { getOccupancyWindow } from '@/lib/dashboard/periods';
 import { queryAnalytics } from '@/lib/analytics/db';
 import {
     getOccupancyDaily as getOccupancyDailyAnalytics,
     getOccupancyRate as getOccupancyRateAnalytics,
-    getOccupancySummary as getOccupancySummaryAnalytics,
 } from '@/lib/analytics/occupancy';
 
 // ============================================================
@@ -64,6 +61,31 @@ export interface RoomDayUtilizationItem {
 export interface DailyCheckinVolumePoint {
     date: string;
     count: number;
+}
+
+type OccupancyTx = {
+    room_number: string | null;
+    apartment_location: string | null;
+    checkin_at: string | null;
+    created_at: string | null;
+    checkout_at: string | null;
+    rental_duration: number | string | null;
+};
+
+function calcEndAt(tx: OccupancyTx): Date {
+    if (tx.checkout_at) return new Date(tx.checkout_at);
+
+    const start = new Date(tx.checkin_at || tx.created_at || new Date());
+    const hours = Number(tx.rental_duration || 1);
+
+    return new Date(start.getTime() + hours * 60 * 60 * 1000);
+}
+
+function isActiveNow(tx: OccupancyTx, nowDate = new Date()): boolean {
+    const start = new Date(tx.checkin_at || tx.created_at || new Date());
+    const end = calcEndAt(tx);
+
+    return nowDate >= start && nowDate < end;
 }
 
 // ─── Helpers ────────────────────────────────────────────────
@@ -135,24 +157,31 @@ export async function getLiveOccupancy(): Promise<LiveOccupancyResult> {
 
         const totalRooms = totalRoomCount || 0;
 
-        // Get distinct rooms currently occupied.
-        // Overlap: checkin_at <= now AND (checkout_at >= now OR checkout_at IS NULL).
-        // null checkout_at means guest is still staying (no checkout time recorded yet).
-        const now = getNowWIB();
+        // Ambil kandidat transaksi 3 hari terakhir + yang checkout_at null
+        const threeDaysAgo = new Date();
+        threeDaysAgo.setDate(threeDaysAgo.getDate() - 3);
+
         const { data: occupiedData, error: occError } = await supabase
             .from('transactions')
-            .select('room_number, apartment_location')
-            .lte('checkin_at', now)
-            .or(`checkout_at.gte.${now},checkout_at.is.null`);
+            .select('room_number, apartment_location, checkin_at, created_at, checkout_at, rental_duration')
+            .or(`checkin_at.gt.${threeDaysAgo.toISOString()},checkout_at.is.null`)
+            .order('checkin_at', { ascending: false, nullsFirst: false })
+            .order('created_at', { ascending: false });
 
         if (occError) {
             console.error('Error fetching occupied rooms:', occError);
         }
 
-        // Count unique occupied rooms globally
-        const occupiedSet = new Set<string>(
-            occupiedData?.map((t: any) => `${t.apartment_location}-${t.room_number}`) || []
-        );
+        // Count unique occupied rooms globally — filter inactive on JS side
+        const nowDate = new Date();
+        const occupiedSet = new Set<string>();
+
+        for (const tx of occupiedData || []) {
+            if (!tx.apartment_location || !tx.room_number) continue;
+            if (!isActiveNow(tx, nowDate)) continue;
+
+            occupiedSet.add(`${tx.apartment_location}-${tx.room_number}`);
+        }
         const occupiedRooms = Math.min(occupiedSet.size, totalRooms);
         const occupancyRate = totalRooms > 0
             ? Math.min(Math.round((occupiedRooms / totalRooms) * 10000) / 100, 100)
@@ -164,15 +193,18 @@ export async function getLiveOccupancy(): Promise<LiveOccupancyResult> {
             roomsPerLocation.set(r.lokasi, (roomsPerLocation.get(r.lokasi) || 0) + 1);
         });
 
-        // Build per-location occupied count
+        // Build per-location occupied count — apply same isActiveNow filter
         const occupiedPerLocation = new Map<string, Set<string>>();
-        occupiedData?.forEach((t: any) => {
-            const loc = t.apartment_location;
+        for (const tx of occupiedData || []) {
+            if (!tx.apartment_location || !tx.room_number) continue;
+            if (!isActiveNow(tx, nowDate)) continue;
+
+            const loc = tx.apartment_location;
             if (!occupiedPerLocation.has(loc)) {
                 occupiedPerLocation.set(loc, new Set());
             }
-            occupiedPerLocation.get(loc)!.add(`${t.apartment_location}-${t.room_number}`);
-        });
+            occupiedPerLocation.get(loc)!.add(`${tx.apartment_location}-${tx.room_number}`);
+        }
 
         // Build location breakdown
         const locationBreakdown: LocationOccupancyItem[] = Array.from(roomsPerLocation.entries())
