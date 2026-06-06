@@ -16,6 +16,45 @@
  * Do NOT use ad-hoc JSON parsing in individual components.
  */
 
+// ─── Banned terms — Indonesian post-process validation ────────────────────
+
+/**
+ * Terms that must NEVER appear in KRAI insight output.
+ * These are AI hallucinations, literal translations, or gibberish.
+ */
+export const BANNED_TERMS: string[] = [
+    'pengorbanan berterusan',
+    'perjanjian',
+    'revesti',
+    'satuatan',
+    'pengukuran rampa',
+    'rampa',
+    'sustained sacrifice',
+    'sacrifice',
+    'agreement',
+];
+
+/**
+ * English metric labels that leak through when AI fails to use Indonesian.
+ * These are stripped and replaced with their Indonesian equivalents.
+ */
+const ENGLISH_METRIC_PATTERNS: [RegExp, string][] = [
+    [/\brevenue\b/gi, 'pendapatan'],
+    [/\boccupancy\b/gi, 'okupansi'],
+    [/\bbooking\b/gi, 'pemesanan'],
+    [/\bguest\b/gi, 'tamu'],
+    [/\bexpense\b/gi, 'pengeluaran'],
+    [/\btransaction\b/gi, 'transaksi'],
+    [/\bcustomer\b/gi, 'pelanggan'],
+    [/\bunit\b/gi, 'unit'],
+    [/\bprofit\b/gi, 'laba'],
+    [/\btrend\b/gi, 'tren'],
+    [/\bperformance\b/gi, 'performa'],
+    [/\bpeak hour\b/gi, 'jam sibuk'],
+    [/\bcheck-in\b/gi, 'check-in'],
+    [/\bcheck-out\b/gi, 'check-out'],
+];
+
 // ─── Priority-ordered fields to extract from a parsed JSON object ──────────
 
 const TEXT_FIELDS_PRIORITY: string[] = [
@@ -49,6 +88,36 @@ function looksLikeJson(input: string): boolean {
     const trimmed = input.trim();
     return (trimmed.startsWith('{') && trimmed.endsWith('}'))
         || (trimmed.startsWith('[') && trimmed.endsWith(']'));
+}
+
+// ─── Post-process: banned term detection ──────────────────────────────────
+
+/**
+ * Check if text contains any banned Indonesian terms.
+ * Returns the first banned term found, or null if clean.
+ */
+export function hasBadInsightLanguage(text: string): string | null {
+    if (!text) return null;
+    const lower = text.toLowerCase();
+    for (const term of BANNED_TERMS) {
+        if (lower.includes(term.toLowerCase())) return term;
+    }
+    return null;
+}
+
+// ─── Post-process: strip leaked English metric labels ─────────────────────
+
+/**
+ * Replace leaked English metric labels with proper Indonesian equivalents.
+ * Only replaces standalone English words, not parts of other words.
+ */
+export function stripEnglishMetricLabels(text: string): string {
+    if (!text) return text;
+    let result = text;
+    for (const [pattern, replacement] of ENGLISH_METRIC_PATTERNS) {
+        result = result.replace(pattern, replacement);
+    }
+    return result;
 }
 
 // ─── Core recursive normalizer ────────────────────────────────────────────
@@ -247,6 +316,7 @@ function extractText(input: unknown, depth: number = 0): string | null {
  *
  * - Accepts raw API response (any type)
  * - Returns plain text string
+ * - Strips leaked English metric labels
  * - Never returns JSON, objects, or [object Object]
  * - Never throws — always returns a string
  *
@@ -263,21 +333,22 @@ export function normalizeAiText(input: unknown): string {
     try {
         const result = extractText(input);
         if (result && result.trim().length > 0) {
-            return result.trim();
+            // Post-process: strip leaked English labels
+            return stripEnglishMetricLabels(result.trim());
         }
     } catch {
         // Silent fallback — never throw
     }
 
     // Ultimate fallback: convert to string safely
-    if (typeof input === 'string') return input;
+    if (typeof input === 'string') return stripEnglishMetricLabels(input);
     if (typeof input === 'number' || typeof input === 'boolean') return String(input);
     if (Array.isArray(input)) return input.map(String).join('\n');
     if (typeof input === 'object') {
         try {
             const str = JSON.stringify(input);
             // Only return if it's useful text
-            if (str && str.length > 2 && str.length < 200) return str;
+            if (str && str.length > 2 && str.length < 200) return stripEnglishMetricLabels(str);
         } catch {
             // Ignore
         }

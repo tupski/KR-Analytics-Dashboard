@@ -15,7 +15,7 @@ import {
 } from '@/lib/ai/providerAdapter';
 import { parseAIResponse } from '@/lib/ai/responseParser';
 import { buildInsightSystemPrompt } from '@/lib/ai/krai-system-prompt';
-import { normalizeAiText } from '@/lib/ai/normalizeAiText';
+import { normalizeAiText, hasBadInsightLanguage } from '@/lib/ai/normalizeAiText';
 import { createNDJSONResponse, type NDJSONStreamWriter } from '@/lib/ai/streamHelpers';
 import { parseKraiResponse, extractAnswerFromThinking, getContextualFallback } from '@/lib/ai/kraiResponseParser';
 
@@ -232,11 +232,18 @@ export async function POST(request: NextRequest) {
 
             // Normalize AI text — strips JSON wrapping, extracts content recursively
             const message = result.message || '';
-            const finalMessage = normalizeAiText(message);
+            let finalMessage = normalizeAiText(message);
 
             // If AI returned empty or unusable, fallback
             if (!finalMessage || finalMessage.length < 10) {
                 throw new Error('AI returned empty response');
+            }
+
+            // Post-process: check for banned Indonesian terms
+            const badTerm = hasBadInsightLanguage(finalMessage);
+            if (badTerm) {
+                console.warn(`[ai/insight] Banned term detected: "${badTerm}". Falling back to deterministic insight.`);
+                throw new Error(`Banned term detected: ${badTerm}`);
             }
 
             const responseData = {
@@ -488,6 +495,25 @@ async function streamInsight(
 
     // Normalize the accumulated text
     const normalizedAnswer = normalizeAiText(answerAccumulator);
+
+    // Post-process: check for banned Indonesian terms in streaming output
+    const badTerm = hasBadInsightLanguage(normalizedAnswer);
+    if (badTerm) {
+        console.warn(`[ai/insight] Banned term detected in stream: "${badTerm}". Falling back to deterministic insight.`);
+        const fallbackText = generateFallbackInsight(page, {
+            revenue: 0,
+            revenueToday: 0,
+            revenueChange: 0,
+            bookingCount: 0,
+            occupancyRate: 0,
+            availableUnits: 0,
+            totalUnits: 0,
+            periodLabel: '',
+        });
+        writer.writeAnswer(fallbackText || 'Insight tidak tersedia.');
+        writer.writeDone('stop');
+        return;
+    }
 
     // If answer is empty/unusable, use parseKraiResponse for structured extraction
     // This handles: reasoning-only responses, truncated content, etc.

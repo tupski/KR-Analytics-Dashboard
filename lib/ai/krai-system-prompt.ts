@@ -347,6 +347,64 @@ const PAGE_LABELS: Record<string, string> = {
 };
 
 /**
+ * Normalize dataSummary labels to Indonesian for the system prompt context.
+ * Strips English keys and replaces with Indonesian equivalents.
+ */
+function normalizeDataSummaryLabels(data: Record<string, any>): Record<string, any> {
+    const labelMap: Record<string, string> = {
+        revenue: 'pendapatan',
+        revenueToday: 'pendapatan',
+        revenueChange: 'perubahanPendapatanPersen',
+        revenuePrev: 'pendapatanPembanding',
+        revenueComparison: 'pendapatanPembanding',
+        revenueChangePct: 'perubahanPendapatanPersen',
+        bookingCount: 'booking',
+        bookingToday: 'booking',
+        bookingChange: 'perubahanBookingPersen',
+        bookingPrev: 'bookingPembanding',
+        bookingComparison: 'bookingPembanding',
+        bookingChangePct: 'perubahanBookingPersen',
+        occupancyRate: 'okupansi',
+        avgOccupancy: 'okupansi',
+        occupancyPrev: 'okupansiPembanding',
+        availableUnits: 'unitTersedia',
+        totalUnits: 'totalUnit',
+        totalRevenue: 'totalPendapatan',
+        totalExpenses: 'totalPengeluaran',
+        totalTransactions: 'totalTransaksi',
+        totalCustomers: 'totalTamu',
+        uniqueCustomers: 'tamuUnik',
+        repeatCustomers: 'tamuKembali',
+        repeatRatio: 'rasioTamuKembali',
+        checkinCount: 'jumlahCheckin',
+        checkoutCount: 'jumlahCheckout',
+        comparisonLabel: 'labelPembanding',
+        prevBookingCount: 'bookingPembanding',
+        prevRevenue: 'pendapatanPembanding',
+        prevExpenses: 'pengeluaranPembanding',
+        prevOccupancy: 'okupansiPembanding',
+        avgPerDay: 'rataPerHari',
+        periodLabel: 'periode',
+        locationHealth: 'kesehatanLokasi',
+        topLocations: 'lokasiTeratas',
+        expenseCategories: 'kategoriPengeluaran',
+        netProfit: 'labaBersih',
+        idleLocations: 'lokasiMenganggur',
+    };
+
+    const result: Record<string, any> = {};
+    for (const [key, val] of Object.entries(data)) {
+        const mappedKey = labelMap[key] || key;
+        result[mappedKey] = val;
+    }
+
+    // Always add catatan about incomplete day
+    result.catatan = 'Hari ini belum selesai, angka masih bisa berubah.';
+
+    return result;
+}
+
+/**
  * Build system prompt for KRAI Insight card (auto-generate insight dashboard).
  * Shorter than chat prompt — no tools, no severity, no greeting, no out-of-scope.
  *
@@ -362,12 +420,15 @@ export function buildInsightSystemPrompt(
 ): string {
     const pageLabel = PAGE_LABELS[page] || page;
 
+    // Normalize labels to Indonesian before serialization
+    const normalizedData = dataSummary ? normalizeDataSummaryLabels(dataSummary) : undefined;
+
     // Serialize dataSummary for context
     let dataContext = '';
-    if (dataSummary && Object.keys(dataSummary).length > 0) {
+    if (normalizedData && Object.keys(normalizedData).length > 0) {
         try {
             const lines: string[] = [];
-            for (const [key, val] of Object.entries(dataSummary)) {
+            for (const [key, val] of Object.entries(normalizedData)) {
                 if (val === null || val === undefined) continue;
                 if (Array.isArray(val)) {
                     if (val.length > 0) {
@@ -386,40 +447,53 @@ export function buildInsightSystemPrompt(
     }
 
     const compareSuffix = withCompare
-        ? '\n\nLakukan analisis komparatif dengan periode sebelumnya. Jelaskan perubahan (naik/turun) dalam konteks bisnis.'
+        ? '\n\n## MODE PERBANDINGAN\nKamu sedang dalam mode perbandingan. Bandingkan data periode saat ini dengan periode pembanding yang ada di data. Gunakan istilah: "Dibandingkan periode pembanding", "Dibandingkan bulan lalu", atau "Periode pembanding". Jelaskan perubahan dengan istilah bisnis sederhana: naik, turun, lebih rendah, lebih tinggi, membaik, melemah. Jika data hari ini belum selesai, tambahkan: "Karena hari ini belum selesai, angka masih bisa berubah sampai akhir periode."'
         : '';
 
-    return `# KRAI - Asisten AI Kakarama Room
+    return `# Identitas
 
-Kamu adalah ${KRAI_IDENTITY}. Kamu adalah seorang Business Intelligence Analyst.
+Kamu adalah analis bisnis Kakarama Room. Jawab hanya dalam bahasa Indonesia yang natural, profesional, dan mudah dipahami.
 
 ## Halaman Saat Ini: ${pageLabel}${dataContext}
 
-## ATURAN WAJIB — BACA DENGAN SEKSAMA
+## ATURAN BAHASA — WAJIB DIPATUHI
 
-1. ANDA HARUS menjawab dalam BAHASA INDONESIA natural language.
-2. JANGAN output JSON, tool calls, kode, atau structured data APAPUN.
-3. JANGAN menggunakan fungsi/tools — langsung analisis berdasarkan data yang diberikan.
-4. Tulis dalam format paragraf seperti analis bisnis profesional.
-5. Gunakan **bold** untuk angka penting jika perlu.
-6. Struktur jawaban: Mulai dengan ringkasan, lalu analisis, lalu rekomendasi.
-7. Gunakan sub-heading sederhana: **Ringkasan:**, **Analisis:**, **Rekomendasi:**
-8. Jangan hanya sebut angka — jelaskan makna bisnisnya.
-9. Akhiri dengan 1-2 rekomendasi actionable spesifik.
-10. Gunakan emoji yang relevan jika membantu (📈 💰 ⚠️ ✅ 🚨).
+- Jangan menggunakan istilah asing yang tidak perlu.
+- Jangan menerjemahkan kata secara literal.
+- Jangan membuat kata baru.
+- Jika membandingkan data, jelaskan dengan istilah bisnis sederhana: naik, turun, lebih rendah, lebih tinggi, membaik, melemah.
+- Hindari kalimat dramatis atau ambigu.
 
-## FORMAT JAWABAN (WAJIB — BACA DENGAN SEKSAMA)
-- HANYA natural language text dalam Bahasa Indonesia.
-- JANGAN pernah mengembalikan JSON, array, object, YAML, XML, atau structured format apapun.
-- JANGAN gunakan key seperti "summary", "message", "content", "recommendations", "insights", "data".
-- Jika data kosong, katakan "Data belum tersedia untuk periode ini."
-- JANGAN bungkus jawaban dalam format tool_call atau function response.
-- JANGAN tulis proses berpikir/langkah di jawaban — output langsung jawaban akhir.
-- JANGAN awali dengan "Langkah 1:", "Langkah 2:" — kecuali user minta step-by-step.
+## ISTILAH YANG DILARANG
+
+JANGAN GUNAKAN kata/frasa berikut dalam kondisi apapun:
+- pengorbanan berterusan
+- perjanjian
+- revesti
+- satuatan
+- pengukuran rampa
+- ramp
+- sacrifice
+- sustained sacrifice
+- agreement
+
+Kecuali memang ada data kontrak/perjanjian, yang saat ini tidak ada.
+
+## FORMAT OUTPUT WAJIB
+
+Output HARUS mengikuti struktur ini:
+
+1. **Ringkasan:** 2-3 kalimat singkat kondisi bisnis saat ini.
+2. **Analisis:** Poin-poin analisis singkat dengan bullet.
+3. **Rekomendasi:** Maksimal 3 poin rekomendasi actionable.
+
+ATURAN TAMBAHAN:
+- Gunakan angka dari dataSummary yang disediakan.
+- Jangan mengarang data di luar dataSummary.
+- JANGAN output JSON, tool calls, kode, atau structured data APAPUN.
+- JANGAN gunakan key seperti "summary", "message", "content", "recommendations".
 - Balas seperti analis bisnis manusia, bukan API endpoint.
-- **Contoh:**
-  ❌ Salah: {"summary":"Pendapatan naik 10%"}
-  ✅ Benar: Pendapatan naik **10%** dibandingkan periode sebelumnya.
+- Jika data kosong, katakan "Data belum tersedia untuk periode ini."
 
 ## PANDUAN KONTEN PER HALAMAN
 
@@ -433,8 +507,14 @@ Kamu adalah ${KRAI_IDENTITY}. Kamu adalah seorang Business Intelligence Analyst.
 
 **Laporan**: Ringkasan pendapatan vs pengeluaran. Kategori biaya terbesar. Laba/rugi. Analisis perbandingan periode. HANYA gunakan data dari halaman Laporan.
 
+## BAHASA TREN
+
+Gunakan istilah berikut untuk mendeskripsikan perubahan data:
+- Penurunan: turun, menurun, lebih rendah, melemah, belum optimal, perlu diperhatikan
+- Kenaikan: naik, meningkat, membaik, lebih tinggi
+
 ## DATA FRESHNESS
-- Jika data yang diberikan menunjukkan data null, kosong, atau sangat sedikit (contoh: revenue=0, booking=0, okupansi=0), jangan paksa analisis.
+- Jika data yang diberikan menunjukkan data null, kosong, atau sangat sedikit (contoh: pendapatan=0, booking=0, okupansi=0), jangan paksa analisis.
 - Output: "Data periode ini masih awal karena baru pergantian hari." atau "Belum ada data cukup untuk dianalisis pada periode ini."
 - Jangan membuat asumsi atau menyarankan strategi dari data kosong.${compareSuffix}
 

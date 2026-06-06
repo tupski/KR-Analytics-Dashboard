@@ -165,6 +165,7 @@ export default function KraiInsightCard({
     const [followUps, setFollowUps] = useState<string[]>([]);
     const [expandedSugg, setExpandedSugg] = useState<Record<string, boolean>>({});
     const [isSegarkanLoading, setIsSegarkanLoading] = useState(false);
+    const [contentExpanded, setContentExpanded] = useState(false);
     const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const abortRef = useRef<AbortController | null>(null);
     const streamStateRef = useRef<InsightStreamState>('idle');
@@ -262,7 +263,7 @@ export default function KraiInsightCard({
             if (!gotAnswer) {
                 streamStateRef.current = 'timeout';
                 setStreamState('timeout');
-                setError('Waktu tunggu jawaban habis (30 detik). Coba regenerate.');
+                setError('Waktu tunggu habis. Insight sedang dibuat ulang, coba tunggu sebentar.');
                 setMainStreaming(false);
                 setLoading(false);
                 setIsSegarkanLoading(false);
@@ -362,7 +363,7 @@ export default function KraiInsightCard({
                         setStreamState('complete');
                     } else {
                         setStreamState('error');
-                        setError('Stream berakhir tanpa jawaban lengkap. Coba regenerate.');
+                        setError('Insight belum selesai dibuat. Coba segarkan kembali.');
                     }
                     setMainStreaming(false);
                     setLoading(false);
@@ -531,7 +532,7 @@ export default function KraiInsightCard({
                                     fa.id === followUpId
                                         ? {
                                             ...fa,
-                                            answer: normalizeAiText(accumulatedAnswer || 'KRAI belum menerima jawaban...'),
+                                            answer: normalizeAiText(accumulatedAnswer || 'Insight sedang dibuat...'),
                                             thinking: accumulatedThinking,
                                             thinkingSteps: splitThinkingSteps(accumulatedThinking),
                                             isStreaming: false,
@@ -654,7 +655,20 @@ export default function KraiInsightCard({
                     {/* Insight content */}
                     {(insight || mainStreaming) && !error && (
                         <>
-                            <MarkdownRenderer content={insight || ''} className="text-sm text-gray-800 leading-relaxed" />
+                            <div className={`relative ${!contentExpanded ? 'max-h-[260px] overflow-hidden' : ''}`}>
+                                <MarkdownRenderer content={insight || ''} className="text-sm text-gray-800 leading-relaxed" />
+                                {!contentExpanded && insight && insight.length > 400 && (
+                                    <div className="absolute bottom-0 left-0 right-0 h-16 bg-gradient-to-t from-white to-transparent pointer-events-none" />
+                                )}
+                            </div>
+                            {insight && insight.length > 400 && (
+                                <button
+                                    onClick={() => setContentExpanded(!contentExpanded)}
+                                    className="text-xs text-blue-600 hover:text-blue-700 font-medium mt-1"
+                                >
+                                    {contentExpanded ? 'Ringkas' : 'Lihat selengkapnya'}
+                                </button>
+                            )}
 
                             {/* Segarkan button at bottom */}
                             <div className="mt-3 flex justify-end">
