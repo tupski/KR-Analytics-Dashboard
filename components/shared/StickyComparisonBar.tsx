@@ -158,17 +158,16 @@ export default function StickyComparisonBar({
         <div
             ref={barRef}
             className={`
-                z-[51] bg-white/95 backdrop-blur-sm border-b border-gray-200
-                sm:sticky sm:top-[56px] sm:z-30
-                fixed bottom-0 left-0 right-0 sm:relative
-                pb-safe-or-0 sm:pb-0
-                shadow-[0_-2px_8px_rgba(0,0,0,0.06)] sm:shadow-none
+                sticky top-0 z-30
+                bg-white/95 backdrop-blur-sm border-b border-gray-200
+                shadow-sm
                 ${className}
             `}
         >
             {/* ── Compact bar ── */}
             <div className="flex items-center justify-between gap-2 px-3 sm:px-4 py-2.5 sm:py-2">
                 <button
+                    type="button"
                     onClick={() => setExpanded(!expanded)}
                     className="flex items-center gap-2 min-w-0 flex-1 text-left"
                     aria-label="Toggle filter panel"
@@ -179,14 +178,15 @@ export default function StickyComparisonBar({
                         {activeLabel}
                     </span>
                     {expanded ? (
-                        <ChevronDown className="w-4 h-4 text-gray-400 shrink-0" />
-                    ) : (
                         <ChevronUp className="w-4 h-4 text-gray-400 shrink-0" />
+                    ) : (
+                        <ChevronDown className="w-4 h-4 text-gray-400 shrink-0" />
                     )}
                 </button>
 
                 {/* Mobile: expand/collapse toggle */}
                 <button
+                    type="button"
                     onClick={() => setExpanded(!expanded)}
                     className="sm:hidden text-xs text-blue-600 font-medium shrink-0"
                     aria-label={expanded ? 'Tutup filter' : 'Buka filter'}
@@ -197,7 +197,7 @@ export default function StickyComparisonBar({
 
             {/* ── Expanded filter panel ── */}
             {expanded && (
-                <div className="px-3 sm:px-4 pb-3 sm:pb-4 space-y-2 border-t border-gray-100 pt-2" role="region" aria-label="Panel filter">
+                <div className="px-3 sm:px-4 pb-3 sm:pb-4 space-y-2 border-t border-gray-100 pt-2 overflow-visible" role="region" aria-label="Panel filter">
                     <div className="flex flex-wrap items-start gap-2">
                         <div aria-label="Pilih rentang tanggal">
                             <DateRangePicker

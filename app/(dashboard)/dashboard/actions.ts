@@ -354,7 +354,38 @@ export async function fetchKPIData(
         // Build ReportPeriodRange for the main period to pass to the service
         const mainPeriod = buildPeriodFromISO(actualDayStart, actualDayEnd);
         const revenueData = await getServiceRevenueSummary(mainPeriod);
-        const periodRevenue = revenueData.totalRevenue;
+        let periodRevenue = revenueData.totalRevenue;
+
+        // Today fallback: if revenue is 0 from service, query Supabase directly
+        if (periodRevenue === 0 && mainPeriod) {
+            try {
+                const { data: txFallback } = await supabase
+                    .from('transactions')
+                    .select('cash_amount, transfer_amount, checkin_at, created_at')
+                    .or(
+                        `and(checkin_at.gte.${mainPeriod.startISO},checkin_at.lt.${mainPeriod.endExclusiveISO}),` +
+                        `and(checkin_at.is.null,created_at.gte.${mainPeriod.startISO},created_at.lt.${mainPeriod.endExclusiveISO})`
+                    );
+
+                if (txFallback && txFallback.length > 0) {
+                    let fallbackRevenue = 0;
+                    let fallbackCount = 0;
+                    for (const t of txFallback) {
+                        const effDate = t.checkin_at ?? t.created_at;
+                        if (effDate && effDate >= mainPeriod.startISO && effDate < mainPeriod.endExclusiveISO) {
+                            fallbackRevenue += (t.cash_amount ?? 0) + (t.transfer_amount ?? 0);
+                            fallbackCount++;
+                        }
+                    }
+                    if (fallbackRevenue > 0) {
+                        periodRevenue = fallbackRevenue;
+                        console.debug('[Dashboard fetchKPIData] Used today fallback:', { fallbackRevenue, fallbackCount });
+                    }
+                }
+            } catch (fbErr) {
+                console.warn('[Dashboard fetchKPIData] Today fallback failed:', fbErr);
+            }
+        }
 
         // Occupancy & available — point-in-time (currently active)
         // Uses centralized getLiveOccupancy() for consistency across dashboard + unit pages.
@@ -418,6 +449,14 @@ export async function fetchKPIData(
                 availableChangePct: null,
             };
         }
+
+        console.debug('[Dashboard fetchKPIData] Revenue debug:', {
+            periodStart: mainPeriod?.startISO,
+            periodEndExclusive: mainPeriod?.endExclusiveISO,
+            revenueToday: periodRevenue,
+            revenueFromService: revenueData,
+            periodRevenue,
+        });
 
         return result;
     } catch (error) {
@@ -596,13 +635,12 @@ async function fetchRevenueDataLegacy(filter: RevenueFilter): Promise<RevenueDat
  * Avoids importing pg-dependent modules in client components.
  */
 export async function getExpenseTrendAction(
-    startDate: string,
-    endDate: string,
+    period: ReportPeriodRange,
     groupBy: 'day' | 'month' = 'day'
 ): Promise<{ date: string; amount: number }[]> {
     try {
         const { getExpenseTrend } = await import('@/lib/services/expense');
-        const expenses = await getExpenseTrend(startDate, endDate, groupBy);
+        const expenses = await getExpenseTrend(undefined, undefined, groupBy, period);
         return expenses.map(e => ({ date: e.date, amount: e.total_amount }));
     } catch {
         return [];

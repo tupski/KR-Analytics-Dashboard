@@ -240,6 +240,7 @@ function MiniCalendar({ selected, onSelect, onClose }: MiniCalendarProps) {
             {/* Header */}
             <div className="flex items-center justify-between mb-3">
                 <button
+                    type="button"
                     onClick={() => setViewDate(new Date(year, month - 1, 1))}
                     className="p-1 hover:bg-gray-100 rounded"
                 >
@@ -249,6 +250,7 @@ function MiniCalendar({ selected, onSelect, onClose }: MiniCalendarProps) {
                     {format(viewDate, 'MMMM yyyy', { locale: localeId })}
                 </span>
                 <button
+                    type="button"
                     onClick={() => setViewDate(new Date(year, month + 1, 1))}
                     className="p-1 hover:bg-gray-100 rounded"
                 >
@@ -277,6 +279,7 @@ function MiniCalendar({ selected, onSelect, onClose }: MiniCalendarProps) {
 
                     return (
                         <button
+                            type="button"
                             key={i}
                             onClick={() => onSelect(date)}
                             className={`
@@ -372,12 +375,13 @@ export default function DateRangePicker({
     }, []);
 
     return (
-        <div className={`relative ${className}`}>
+        <div className={`relative overflow-visible ${className}`}>
             {/* Trigger Button */}
             <div className="flex items-center gap-2">
                 <button
+                    type="button"
                     onClick={() => setOpenDropdown(!openDropdown)}
-                    className="inline-flex items-center gap-2 px-3 py-2 bg-white border border-gray-300 rounded-lg text-sm text-gray-700 hover:bg-gray-50 transition-colors"
+                    className="inline-flex items-center gap-2 px-3 py-2 bg-white border border-gray-300 rounded-lg text-sm text-gray-700 hover:bg-gray-50 transition-colors pointer-events-auto"
                 >
                     <Calendar className="w-4 h-4 text-gray-500" />
                     <span className="hidden sm:inline font-medium">{formatRangeDisplay(value)}</span>
@@ -386,6 +390,7 @@ export default function DateRangePicker({
 
                 {showCalendar && (
                     <button
+                        type="button"
                         onClick={openCalendarPicker}
                         className="p-2 bg-white border border-gray-300 rounded-lg text-gray-500 hover:bg-gray-50 transition-colors"
                         title="Pilih tanggal custom"
@@ -403,6 +408,7 @@ export default function DateRangePicker({
                 >
                     {(Object.keys(PRESET_LABELS) as DatePreset[]).map(p => (
                         <button
+                            type="button"
                             key={p}
                             onClick={() => handlePresetClick(p)}
                             className={`
@@ -417,6 +423,7 @@ export default function DateRangePicker({
                         <>
                             <div className="border-t border-gray-100 my-1" />
                             <button
+                                type="button"
                                 onClick={openCalendarPicker}
                                 className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-blue-50 transition-colors"
                             >

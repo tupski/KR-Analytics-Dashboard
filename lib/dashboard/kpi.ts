@@ -86,7 +86,7 @@ export async function getKPIData(params: {
         await Promise.all([
             bookingsQuery,
             getServiceRevenueSummary(period),
-            getServiceExpenseSummary(period.startDate, period.endDate),
+            getServiceExpenseSummary(undefined, undefined, period),
             getLiveOccupancy(),
         ]);
 

@@ -62,8 +62,11 @@ function normalizeExpenseDate(d: unknown): string {
 }
 
 /**
- * Resolve start/end from an optional ReportPeriodRange or raw date strings.
+ * Resolve start/endExclusive from a ReportPeriodRange or raw date strings.
  * Falls back to last 30 days via the shared report period helper.
+ *
+ * ALL analytics DB expense queries use `WHERE date_wib >= $1 AND date_wib < $2`,
+ * so the second value MUST be the exclusive-end date (the day after the period ends).
  */
 function resolveRange(
     startDate?: string,
@@ -71,8 +74,8 @@ function resolveRange(
     period?: ReportPeriodRange,
 ): { startDate: string; endDate: string } {
     if (period) {
-        console.debug('[expense] resolveRange using shared period:', { startDate: period.startDate, endDate: period.endDate });
-        return { startDate: period.startDate, endDate: period.endDate };
+        console.debug('[expense] resolveRange using shared period:', { startDate: period.startDate, endExclusiveDate: period.endExclusiveDate });
+        return { startDate: period.startDate, endDate: period.endExclusiveDate };
     }
     if (startDate) {
         return {
@@ -82,8 +85,8 @@ function resolveRange(
     }
     // Default: last 30 days via shared helper
     const range = getReportPeriodRange({ preset: 'last_30_days' });
-    console.debug('[expense] resolveRange defaulting to last_30_days:', { startDate: range.startDate, endDate: range.endDate });
-    return { startDate: range.startDate, endDate: range.endDate };
+    console.debug('[expense] resolveRange defaulting to last_30_days:', { startDate: range.startDate, endExclusiveDate: range.endExclusiveDate });
+    return { startDate: range.startDate, endDate: range.endExclusiveDate };
 }
 
 // ─── Functions ─────────────────────────────────────────

@@ -141,37 +141,49 @@ export async function fetchLaporanData(
 
     const txList = transactions || [];
 
-    // ── REVENUE (analytics-first via getRevenueSummary, Supabase txList fallback) ──
+    // ── REVENUE (computed from Supabase txList, analytics fallback) ──
     const period = buildPeriodFromISO(start, end);
-    let totalRevenue = 0, totalCash = 0, totalTransfer = 0, totalTransactions = txList.length;
 
-    // hotel_day: skip analytics aggregate to preserve ISO time boundaries
+    // Fetch analytics summary for fallback
+    let revenueSummary: { totalRevenue: number; transactionCount: number } | null = null;
     if (mode !== 'hotel_day') {
         try {
-            const revSummary = await getRevenueSummary(period);
-            totalRevenue = revSummary.totalRevenue;
-            totalCash = revSummary.cashAmount;
-            totalTransfer = revSummary.transferAmount;
-            totalTransactions = revSummary.transactionCount;
+            revenueSummary = await getRevenueSummary(period);
         } catch (e) {
-            console.warn('[laporan] getRevenueSummary failed, falling back to Supabase txList:', e);
+            console.warn('[Laporan] Analytics revenue check failed:', e);
         }
     }
 
-    // Always compute from local txList using exclusive-end COALESCE filter
+    // Always compute from local txList using numeric epoch comparison
+    // (avoids string-based ISO comparison bug between UTC PostgREST timestamps and WIB period bounds)
     const filtered = txList.filter((t: any) => {
         const effDate = t.checkin_at ?? t.created_at;
-        return effDate && effDate >= period.startISO && effDate < period.endExclusiveISO;
+        if (!effDate) return false;
+        const eff = new Date(effDate).getTime();
+        const s = new Date(period.startISO).getTime();
+        const e = new Date(period.endExclusiveISO).getTime();
+        return eff >= s && eff < e;
     });
-    totalRevenue = filtered.reduce((s: number, t: any) => s + (t.cash_amount || 0) + (t.transfer_amount || 0), 0);
-    totalCash = filtered.reduce((s: number, t: any) => s + (t.cash_amount || 0), 0);
-    totalTransfer = filtered.reduce((s: number, t: any) => s + (t.transfer_amount || 0), 0);
-    totalTransactions = filtered.length;
+    const rawRevenue = filtered.reduce((s: number, t: any) => s + (t.cash_amount || 0) + (t.transfer_amount || 0), 0);
+    const rawCash = filtered.reduce((s: number, t: any) => s + (t.cash_amount || 0), 0);
+    const rawTransfer = filtered.reduce((s: number, t: any) => s + (t.transfer_amount || 0), 0);
+    const rawTransactions = filtered.length;
 
-    console.debug('[Laporan Revenue Debug]', {
-        period: { startISO: period.startISO, endExclusiveISO: period.endExclusiveISO },
-        transactionCount: totalTransactions,
-        totalRevenue,
+    // Use raw computation first; fall back to analytics if raw is empty
+    let totalRevenue = rawRevenue > 0 ? rawRevenue : (revenueSummary?.totalRevenue ?? 0);
+    let totalCash = rawCash;
+    let totalTransfer = rawTransfer;
+    let totalTransactions = rawTransactions > 0 ? rawTransactions : (revenueSummary?.transactionCount ?? 0);
+
+    console.debug('[Laporan Trace]', {
+        filter,
+        periodStartISO: period.startISO,
+        periodEndExclusiveISO: period.endExclusiveISO,
+        revenueSummary,
+        txListLength: filtered.length,
+        txListRevenue: { totalRevenue: rawRevenue, totalCash: rawCash, totalTransfer: rawTransfer, totalTransactions: rawTransactions },
+        finalTotalRevenue: totalRevenue,
+        finalTotalTransactions: totalTransactions,
     });
 
     // Get rooms per location
@@ -182,12 +194,8 @@ export async function fetchLaporanData(
         roomsByLocation[r.lokasi].push(r.name);
     });
 
-    // Group by location and room
-    // Use exclusive-end COALESCE filtered list for location grouping
-    const groupedTxList = txList.filter((t: any) => {
-        const effDate = t.checkin_at ?? t.created_at;
-        return effDate && effDate >= period.startISO && effDate < period.endExclusiveISO;
-    });
+    // Group by location and room — reuse already-filtered transactions
+    const groupedTxList = filtered;
 
     const locMap: Record<string, { transactions: number; revenue: number; rooms: Record<string, { tx: number; rev: number }> }> = {};
     groupedTxList.forEach((t: any) => {
@@ -233,10 +241,7 @@ export async function fetchLaporanData(
     if (mode !== 'hotel_day') {
         try {
             if (process.env.ANALYTICS_DATABASE_URL) {
-                const startDateStr = period.startDate;
-                const endDateStr = period.endExclusiveDate;
-
-                const expSummary = await getExpenseSummary(startDateStr, endDateStr);
+                const expSummary = await getExpenseSummary(undefined, undefined, period);
                 totalExpenses = expSummary.totalAmount;
                 expenses = expSummary.byCategory
                     .map(c => ({ category: c.category, total: c.total_amount, count: c.expense_count }))
@@ -427,7 +432,7 @@ export async function fetchLaporanData(
         };
     }
 
-    // ── COMPARISON (analytics-first, legacy Supabase fallback) ──
+    // ── COMPARISON (computed from Supabase) ──
     // Use unified comparison range if provided, else fall back to legacy
     let prevRange: { start: string; end: string; label: string };
 
@@ -448,24 +453,7 @@ export async function fetchLaporanData(
     const prevPeriod = buildPeriodFromISO(prevRange.start, prevRange.end);
     let prevRevenue = 0, prevTransactions = 0, prevExpenses = 0;
 
-    // hotel_day: skip analytics aggregate to preserve ISO time boundaries
-    if (mode !== 'hotel_day') {
-        try {
-            const prevRevSummary = await getRevenueSummary(prevPeriod);
-            prevRevenue = prevRevSummary.totalRevenue;
-            prevTransactions = prevRevSummary.transactionCount;
-
-            const prevExpSummary = await getExpenseSummary(
-                prevPeriod.startDate,
-                prevPeriod.endExclusiveDate
-            );
-            prevExpenses = prevExpSummary.totalAmount;
-        } catch (e) {
-            console.warn('[laporan] getRevenueSummary/getExpenseSummary failed for comparison, falling back to Supabase:', e);
-        }
-    }
-
-    // Always compute comparison from local Supabase using exclusive-end COALESCE filter
+    // Compute comparison from local Supabase using exclusive-end COALESCE filter
     {
         const [prevTxResult, prevExpResult] = await Promise.all([
             supabase
@@ -481,7 +469,11 @@ export async function fetchLaporanData(
 
         const prevFiltered = (prevTxResult.data || []).filter((t: any) => {
             const effDate = t.checkin_at ?? t.created_at;
-            return effDate && effDate >= prevPeriod.startISO && effDate < prevPeriod.endExclusiveISO;
+            if (!effDate) return false;
+            const eff = new Date(effDate).getTime();
+            const s = new Date(prevPeriod.startISO).getTime();
+            const e = new Date(prevPeriod.endExclusiveISO).getTime();
+            return eff >= s && eff < e;
         });
         prevRevenue = prevFiltered.reduce((s: number, t: any) => s + (t.cash_amount || 0) + (t.transfer_amount || 0), 0) || 0;
         prevTransactions = prevFiltered.length;

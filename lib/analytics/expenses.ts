@@ -5,13 +5,13 @@ import type { ReportPeriodRange } from '@/lib/shared/report-period';
 
 function resolveRange(startDate?: string, endDate?: string, period?: ReportPeriodRange) {
     if (period) {
-        console.debug('[analytics.expenses] resolveRange using shared period:', { startDate: period.startDate, endDate: period.endDate });
-        return { startDate: period.startDate, endDate: period.endDate };
+        console.debug('[analytics.expenses] resolveRange using shared period:', { startDate: period.startDate, endExclusiveDate: period.endExclusiveDate });
+        return { startDate: period.startDate, endDate: period.endExclusiveDate };
     }
     if (startDate) return { startDate, endDate: endDate ?? startDate };
     const range = getReportPeriodRange({ preset: 'last_30_days' });
-    console.debug('[analytics.expenses] resolveRange defaulting to last_30_days:', { startDate: range.startDate, endDate: range.endDate });
-    return { startDate: range.startDate, endDate: range.endDate };
+    console.debug('[analytics.expenses] resolveRange defaulting to last_30_days:', { startDate: range.startDate, endExclusiveDate: range.endExclusiveDate });
+    return { startDate: range.startDate, endDate: range.endExclusiveDate };
 }
 
 /**

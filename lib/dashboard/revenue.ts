@@ -46,7 +46,7 @@ export async function getRevenueSummary(params: {
     // ── Fetch all data sources in parallel ───────────────────
     const [revenueSummary, expenseSummary, revenueTrend] = await Promise.all([
         getServiceRevenueSummary(params.period),
-        getServiceExpenseSummary(params.period.startDate, params.period.endDate),
+        getServiceExpenseSummary(undefined, undefined, params.period),
         getRevenueTrend(params.period, params.location ?? null),
     ]);
 

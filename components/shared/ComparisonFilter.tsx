@@ -198,9 +198,10 @@ export default function ComparisonFilter({
     const comparisonRange = getComparisonRange(mode, currentRange, customRange);
 
     return (
-        <div className="relative" ref={dropdownRef}>
+        <div className="relative overflow-visible" ref={dropdownRef}>
             {/* Trigger Button */}
             <button
+                type="button"
                 onClick={() => setOpenDropdown(!openDropdown)}
                 className={`
                     inline-flex items-center gap-2 px-3 py-2 border rounded-lg text-sm transition-colors
@@ -222,6 +223,7 @@ export default function ComparisonFilter({
                 <div className="absolute z-[60] mt-2 bg-white border border-gray-200 rounded-xl shadow-xl py-1 min-w-[220px]">
                     {(Object.keys(MODE_LABELS) as ComparisonMode[]).map(m => (
                         <button
+                            type="button"
                             key={m}
                             onClick={() => handleModeChange(m)}
                             className={`
@@ -261,12 +263,14 @@ export default function ComparisonFilter({
                         </div>
                         <div className="flex gap-2">
                             <button
+                                type="button"
                                 onClick={() => { setShowCustomPicker(false); onChange('none'); }}
                                 className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-700 hover:bg-gray-50"
                             >
                                 Batal
                             </button>
                             <button
+                                type="button"
                                 onClick={handleCustomApply}
                                 disabled={!customFrom || !customTo}
                                 className="flex-1 px-3 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
