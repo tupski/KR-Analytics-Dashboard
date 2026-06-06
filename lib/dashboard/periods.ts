@@ -1,26 +1,36 @@
-import { getReportPeriodRange } from '@/lib/reporting-period';
+/**
+ * @deprecated Import from `@/lib/shared/report-period` instead.
+ *
+ * This file is kept for backward compatibility only.
+ * All new code should use the single source of truth:
+ *
+ *   import { getReportPeriodRange } from '@/lib/shared/report-period';
+ *   import type { ReportPeriodInput, ReportPeriodRange } from '@/lib/shared/report-period';
+ *
+ * The original async DB-backed helpers (getTodayBoundaries, getDateBoundariesISO, etc.)
+ * continue to work but delegate to the shared utility internally.
+ */
+
+// ─── Re-export types and the main function from the new shared location ────
+export {
+    getReportPeriodRange,
+} from '@/lib/shared/report-period';
+
+export type {
+    PeriodPreset,
+    ReportPeriodMode,
+    ReportPeriodInput,
+    ReportPeriodRange,
+} from '@/lib/shared/report-period';
+
+// ─── Existing async DB-backed helpers (unchanged, for backward compat) ────
+
+import { getReportPeriodRange as getSharedRange } from '@/lib/shared/report-period';
 import { getReportPeriodSetting as getReportPeriodSettingFn } from '@/lib/get-report-period-setting';
-import type { ReportPeriodMode } from '@/lib/reporting-period';
-import { subDays } from 'date-fns';
+import { subDays, format } from 'date-fns';
+import type { ReportPeriodMode } from '@/lib/shared/report-period';
 
-// ============================================================
-// lib/dashboard/periods.ts
-// Single Source of Truth for report period date boundaries.
-//
-// All dashboard/action files MUST use these functions instead of
-// constructing inline date strings like `${today}T00:00:00`.
-//
-// Delegates to:
-//   - lib/reporting-period.ts     (getReportPeriodRange)
-//   - lib/get-report-period-setting.ts (getReportPeriodSetting)
-//
-// All calculations use Asia/Jakarta (WIB, UTC+7) timezone.
-// ============================================================
-
-// ─── Request-scoped dedup cache ────────────────────────────
-// Module-level variable caches report_period_mode per request.
-// Next.js server components/actions get fresh module scope per request,
-// so this is effectively request-scoped without explicit clearing.
+// Request-scoped dedup cache
 let _cachedMode: ReportPeriodMode | null = null;
 
 async function getMode(): Promise<ReportPeriodMode> {
@@ -38,34 +48,37 @@ export function resetCachedMode(): void {
     _cachedMode = null;
 }
 
-// ─── Public boundary functions ─────────────────────────────
-
 /**
  * Get today's report period boundaries as Date objects.
  * Respects report_period_mode (calendar_day or hotel_day).
  *
  * calendar_day: dayStart=00:00 WIB, dayEnd=23:59 WIB
  * hotel_day:    dayStart=12:00 WIB today, dayEnd=11:59 WIB next day
+ *
+ * @deprecated Prefer using getReportPeriodRange() directly from @/lib/shared/report-period.
  */
 export async function getTodayBoundaries(): Promise<{ dayStart: Date; dayEnd: Date }> {
     const mode = await getMode();
-    const range = getReportPeriodRange(new Date(), mode);
+    const range = getSharedRange({ preset: 'today', mode });
     return {
-        dayStart: new Date(range.start),
-        dayEnd: new Date(range.end),
+        dayStart: range.start,
+        dayEnd: range.end,
     };
 }
 
 /**
  * Get report period boundaries for any date as Date objects.
  * Respects report_period_mode.
+ *
+ * @deprecated Prefer using getReportPeriodRange() directly from @/lib/shared/report-period.
  */
 export async function getDateBoundaries(date: Date): Promise<{ dayStart: Date; dayEnd: Date }> {
     const mode = await getMode();
-    const range = getReportPeriodRange(date, mode);
+    const dateStr = format(date, 'yyyy-MM-dd');
+    const range = getSharedRange({ preset: 'custom', startDate: dateStr, endDate: dateStr, mode });
     return {
-        dayStart: new Date(range.start),
-        dayEnd: new Date(range.end),
+        dayStart: range.start,
+        dayEnd: range.end,
     };
 }
 
@@ -76,13 +89,16 @@ export async function getDateBoundaries(date: Date): Promise<{ dayStart: Date; d
  *
  * Example return (calendar_day):
  *   { startISO: "2026-05-30T00:00:00.000+07:00", endISO: "2026-05-30T23:59:59.999+07:00" }
+ *
+ * @deprecated Prefer using getReportPeriodRange() directly from @/lib/shared/report-period.
  */
 export async function getDateBoundariesISO(date: Date): Promise<{ startISO: string; endISO: string }> {
     const mode = await getMode();
-    const range = getReportPeriodRange(date, mode);
+    const dateStr = format(date, 'yyyy-MM-dd');
+    const range = getSharedRange({ preset: 'custom', startDate: dateStr, endDate: dateStr, mode });
     return {
-        startISO: range.start,
-        endISO: range.end,
+        startISO: range.startISO,
+        endISO: range.endISO,
     };
 }
 
@@ -105,23 +121,27 @@ export function getOccupancyNowWindow(): { now: Date } {
  */
 export async function getOccupancyWindow(date: Date): Promise<{ dayStart: Date; dayEnd: Date }> {
     // Intentional: occupancy always uses full calendar day
-    const range = getReportPeriodRange(date, 'calendar_day');
+    const dateStr = format(date, 'yyyy-MM-dd');
+    const range = getSharedRange({ preset: 'custom', startDate: dateStr, endDate: dateStr, mode: 'calendar_day' });
     return {
-        dayStart: new Date(range.start),
-        dayEnd: new Date(range.end),
+        dayStart: range.start,
+        dayEnd: range.end,
     };
 }
 
 /**
  * Get ISO boundaries for a comparison date (N days before today).
  * Respects report_period_mode.
+ *
+ * @deprecated Prefer using getReportPeriodRange() directly from @/lib/shared/report-period.
  */
 export async function getComparisonRange(daysOffset: number): Promise<{ startISO: string; endISO: string }> {
     const mode = await getMode();
     const date = subDays(new Date(), daysOffset);
-    const range = getReportPeriodRange(date, mode);
+    const dateStr = format(date, 'yyyy-MM-dd');
+    const range = getSharedRange({ preset: 'custom', startDate: dateStr, endDate: dateStr, mode });
     return {
-        startISO: range.start,
-        endISO: range.end,
+        startISO: range.startISO,
+        endISO: range.endISO,
     };
 }

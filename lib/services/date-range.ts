@@ -212,7 +212,7 @@ export function computeDateRange(
     endDate?: string,
     mode: ReportPeriodMode = DEFAULT_REPORT_PERIOD,
 ): DateRangeResult {
-    const preset = rangePreset || 'last30days';
+    const preset = rangePreset || 'today';
 
     switch (preset) {
         case 'today':

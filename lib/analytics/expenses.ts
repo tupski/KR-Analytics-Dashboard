@@ -1,28 +1,17 @@
 import { queryAnalytics, parseNumeric } from './db';
 import type { ExpenseSummary, ExpenseByDateRange } from './types';
+import { getReportPeriodRange } from '@/lib/shared/report-period';
+import type { ReportPeriodRange } from '@/lib/shared/report-period';
 
-function getDefaultDateRange(): { startDate: string; endDate: string } {
-    const now = new Date();
-    const wib = new Date(now.getTime() + 7 * 60 * 60 * 1000);
-    const end = new Date(wib);
-    end.setDate(end.getDate() + 1);
-    const start = new Date(wib);
-    start.setDate(start.getDate() - 30);
-    return {
-        startDate: start.toISOString().split('T')[0],
-        endDate: end.toISOString().split('T')[0],
-    };
-}
-
-function nextDay(dateStr: string): string {
-    const d = new Date(dateStr + 'T00:00:00+07:00');
-    d.setDate(d.getDate() + 1);
-    return d.toISOString().split('T')[0];
-}
-
-function resolveRange(startDate?: string, endDate?: string) {
-    if (startDate) return { startDate, endDate: endDate ?? nextDay(startDate) };
-    return getDefaultDateRange();
+function resolveRange(startDate?: string, endDate?: string, period?: ReportPeriodRange) {
+    if (period) {
+        console.debug('[analytics.expenses] resolveRange using shared period:', { startDate: period.startDate, endDate: period.endDate });
+        return { startDate: period.startDate, endDate: period.endDate };
+    }
+    if (startDate) return { startDate, endDate: endDate ?? startDate };
+    const range = getReportPeriodRange({ preset: 'last_30_days' });
+    console.debug('[analytics.expenses] resolveRange defaulting to last_30_days:', { startDate: range.startDate, endDate: range.endDate });
+    return { startDate: range.startDate, endDate: range.endDate };
 }
 
 /**
@@ -31,9 +20,10 @@ function resolveRange(startDate?: string, endDate?: string) {
  */
 export async function getExpenses(
     startDate?: string,
-    endDate?: string
+    endDate?: string,
+    period?: ReportPeriodRange,
 ): Promise<ExpenseSummary[]> {
-    const { startDate: sd, endDate: ed } = resolveRange(startDate, endDate);
+    const { startDate: sd, endDate: ed } = resolveRange(startDate, endDate, period);
     const rows = await queryAnalytics<ExpenseSummary>(
         `SELECT *
      FROM analytics_expense_summary
@@ -54,9 +44,10 @@ export async function getExpenses(
  */
 export async function getExpenseSummary(
     startDate?: string,
-    endDate?: string
+    endDate?: string,
+    period?: ReportPeriodRange,
 ): Promise<ExpenseByDateRange> {
-    const { startDate: sd, endDate: ed } = resolveRange(startDate, endDate);
+    const { startDate: sd, endDate: ed } = resolveRange(startDate, endDate, period);
 
     const totals = await queryAnalytics<{
         total_amount: string;

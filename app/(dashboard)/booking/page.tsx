@@ -157,7 +157,7 @@ export default async function BookingPage({
                 <div className="flex flex-wrap items-center justify-between gap-3">
                     <FilterBarWrapper
                         basePath="/booking"
-                        rangePreset={rangePreset || 'last30days'}
+                        rangePreset={rangePreset || 'today'}
                         startDate={startDate}
                         endDate={endDate}
                         comparisonMode={comparisonMode || 'none'}

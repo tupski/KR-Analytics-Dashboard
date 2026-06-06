@@ -93,7 +93,7 @@ export default function FilterBarWrapper({
 
     return (
         <StickyComparisonBar
-            rangePreset={(rangePreset || 'last30days') as DatePreset}
+            rangePreset={(rangePreset || 'today') as DatePreset}
             startDate={startDate || ''}
             endDate={endDate || ''}
             comparisonMode={(comparisonMode || 'none') as ComparisonMode}

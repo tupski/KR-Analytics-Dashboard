@@ -7,6 +7,7 @@
 // Uses lib/services/* as data backends.
 // ============================================================
 
+import type { ReportPeriodRange } from '@/lib/shared/report-period';
 import {
     getRevenueSummary as getServiceRevenueSummary,
     getRevenueTrend,
@@ -34,24 +35,19 @@ export interface RevenueSummaryResult {
  * expenses from lib/services/expense (analytics-first).
  * Trend contains revenue only — chart shows Pendapatan only.
  *
- * @param params.startDate  Period start
- * @param params.endDate    Period end
- * @param params.location   Optional location filter (applied to revenue only;
- *                          expense service does not support location filter)
+ * @param params.period    Report period range from shared helper
+ * @param params.location  Optional location filter (applied to revenue only;
+ *                         expense service does not support location filter)
  */
 export async function getRevenueSummary(params: {
-    startDate: Date;
-    endDate: Date;
+    period: ReportPeriodRange;
     location?: string;
 }): Promise<RevenueSummaryResult> {
-    const startStr = params.startDate.toISOString().split('T')[0];
-    const endStr = params.endDate.toISOString().split('T')[0];
-
     // ── Fetch all data sources in parallel ───────────────────
     const [revenueSummary, expenseSummary, revenueTrend] = await Promise.all([
-        getServiceRevenueSummary(startStr, endStr),
-        getServiceExpenseSummary(startStr, endStr),
-        getRevenueTrend(startStr, endStr, params.location ?? null),
+        getServiceRevenueSummary(params.period),
+        getServiceExpenseSummary(params.period.startDate, params.period.endDate),
+        getRevenueTrend(params.period, params.location ?? null),
     ]);
 
     const trend: RevenueTrendPoint[] = revenueTrend

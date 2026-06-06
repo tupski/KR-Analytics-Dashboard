@@ -5,6 +5,7 @@ import { getRevenueTrend } from '@/lib/services/revenue';
 import { getDailyOccupancyTrend } from '@/lib/services/occupancy';
 import { format } from 'date-fns';
 import { safeSerialize, formatRupiah } from '@/lib/export/xlsx';
+import { getReportPeriodRange } from '@/lib/shared/report-period';
 
 export async function GET(request: Request) {
     try {
@@ -12,12 +13,11 @@ export async function GET(request: Request) {
         const { searchParams } = new URL(request.url);
 
         // Fetch revenue data (last 30 days daily)
+        const revenuePeriod = getReportPeriodRange({ preset: 'last_30_days', timezone: 'Asia/Jakarta' });
         const now = new Date();
-        const startDate = format(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 29), 'yyyy-MM-dd');
-        const endDate = format(now, 'yyyy-MM-dd');
 
         const [revenueTrend, occupancyTrend] = await Promise.all([
-            getRevenueTrend(startDate, endDate),
+            getRevenueTrend(revenuePeriod),
             getDailyOccupancyTrend(30),
         ]);
 

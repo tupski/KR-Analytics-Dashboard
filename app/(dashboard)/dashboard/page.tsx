@@ -129,7 +129,7 @@ export default async function DashboardPage({
                     <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
                         <FilterBarWrapper
                             basePath="/dashboard"
-                            rangePreset={rangePreset || 'last30days'}
+                            rangePreset={rangePreset || 'today'}
                             startDate={startDate}
                             endDate={endDate}
                             comparisonMode={comparisonMode || 'none'}

@@ -98,7 +98,7 @@ export async function fetchUnits(
         const { data: activeTransactions } = await supabase
             .from('transactions')
             .select('room_number, apartment_location, customer_name')
-            .or(`checkin_at.lte.${getNowWIB()},and(checkin_at.is.null,created_at.lte.${getNowWIB()})`)
+            .lte('checkin_at', getNowWIB())
             .or(`checkout_at.gte.${getNowWIB()},checkout_at.is.null`);
 
         activeTransactions?.forEach((tx: any) => {

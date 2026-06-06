@@ -6,10 +6,14 @@
 // from caller to avoid duplicate SELECT nomor_kamar queries.
 // Uses lib/services/occupancy for live occupancy, trend, and
 // location breakdown.
+//
+// Now accepts ReportPeriodRange for trend period range instead
+// of raw Date objects.
 // ============================================================
 
 import { createServerClient } from '@/lib/supabase/server';
 import { getDailyOccupancyTrend, getLiveOccupancy } from '@/lib/services/occupancy';
+import type { ReportPeriodRange } from '@/lib/shared/report-period';
 
 // ─── Helpers ────────────────────────────────────────────────
 
@@ -52,26 +56,38 @@ export interface OccupancySummaryResult {
  * skip the room count query (avoids duplication across aggregation
  * functions).
  *
- * @param params.startDate  Period start (for trend range start)
- * @param params.endDate    Period end (for trend range end)
- * @param params.location   Optional location filter
- * @param params.totalUnits Pre-fetched room count (skip query)
+ * @param params.period      ReportPeriodRange for trend range; also accepts legacy {startDate, endDate}
+ * @param params.startDate   Legacy: period start (for trend range start) — use `period` instead
+ * @param params.endDate     Legacy: period end (for trend range end) — use `period` instead
+ * @param params.location    Optional location filter
+ * @param params.totalUnits  Pre-fetched room count (skip query)
  */
 export async function getOccupancySummary(params: {
-    startDate: Date;
-    endDate: Date;
+    // Preferred: pass a ReportPeriodRange
+    period?: ReportPeriodRange;
+    // Legacy: raw Date objects (still supported for backward compat)
+    startDate?: Date;
+    endDate?: Date;
     location?: string;
     totalUnits?: number;
 }): Promise<OccupancySummaryResult> {
-    const supabase = createServerClient();
-
     // ── Room count — use pre-fetched value if provided ───────
     const totalUnits = params.totalUnits ?? (await getTotalRoomCount());
+
+    // Compute trend days from period or legacy dates
+    let trendDays = 30;
+    if (params.period) {
+        const diffMs = params.period.end.getTime() - params.period.start.getTime();
+        trendDays = Math.max(1, Math.round(diffMs / 86400000) + 1);
+    } else if (params.startDate && params.endDate) {
+        const diffMs = params.endDate.getTime() - params.startDate.getTime();
+        trendDays = Math.max(1, Math.round(diffMs / 86400000) + 1);
+    }
 
     // ── Fetch live occupancy, trend, and locations in parallel ─
     const [liveOccupancy, trend] = await Promise.all([
         getLiveOccupancy(),
-        getDailyOccupancyTrend(30),
+        getDailyOccupancyTrend(trendDays),
     ]);
 
     // ── Compute current occupancy from centralized function ──

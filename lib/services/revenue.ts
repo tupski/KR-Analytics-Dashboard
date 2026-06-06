@@ -4,8 +4,9 @@ import {
     getRevenueSummary as getRevenueSummaryAnalytics,
 } from '@/lib/analytics/revenue';
 import { calcRevenue, effectiveDate } from '@/lib/dashboard/transaction-source';
-import { format } from 'date-fns';
+import { format, addDays, parse } from 'date-fns';
 import { toZonedTime } from 'date-fns-tz';
+import type { ReportPeriodRange } from '@/lib/shared/report-period';
 
 // ============================================================
 // lib/services/revenue.ts
@@ -78,11 +79,19 @@ function normalizeDate(d: unknown): string {
 // Aggregate revenue = SUM(cash_amount + transfer_amount) for a
 // given period.
 // ============================================================
-export async function getRevenueSummary(start: string, end: string): Promise<RevenueSummary> {
+export async function getRevenueSummary(period: ReportPeriodRange): Promise<RevenueSummary> {
+    // Use date strings (YYYY-MM-DD) for analytics query
+    const startStr = period.startDate;
+    // Exclusive end: analytics uses date_wib >= start AND date_wib < endExclusive
+    // where endExclusive should be the day AFTER period.end
+    const endDateObj = new Date(period.endISO);
+    const endExclusive = format(addDays(endDateObj, 1), 'yyyy-MM-dd');
+
     // ── Analytics path (primary) ──────────────────────────────
     if (analyticsConfigured()) {
         try {
-            const data = await getRevenueSummaryAnalytics(start, end);
+            const data = await getRevenueSummaryAnalytics(startStr, endExclusive);
+            console.debug('[revenue] analytics summary:', { startStr, endExclusive, data });
             return toRevenueSummary(data);
         } catch (error) {
             console.warn('[revenue] Analytics DB unavailable, falling back to Supabase:', error);
@@ -90,7 +99,7 @@ export async function getRevenueSummary(start: string, end: string): Promise<Rev
     }
 
     // ── Supabase fallback ────────────────────────────────────
-    return getRevenueSummaryLegacy(start, end);
+    return getRevenueSummaryLegacy(period);
 }
 
 /**
@@ -98,16 +107,16 @@ export async function getRevenueSummary(start: string, end: string): Promise<Rev
  * Uses COALESCE(checkin_at, created_at) via .or() filter + JS filtering
  * to match canonical effective-date logic. Excludes nominal field.
  */
-async function getRevenueSummaryLegacy(start: string, end: string): Promise<RevenueSummary> {
+async function getRevenueSummaryLegacy(period: ReportPeriodRange): Promise<RevenueSummary> {
     const supabase = createServerClient();
 
     try {
-        // Widen Supabase filter: checkin_at >= start OR (checkin_at IS NULL AND created_at >= start)
+        // Widen Supabase filter: checkin_at >= period.startISO OR (checkin_at IS NULL AND created_at >= period.startISO)
         // JS filter then applies exclusive-end and COALESCE logic
         const { data, error } = await supabase
             .from('transactions')
             .select('cash_amount, transfer_amount, checkin_at, created_at')
-            .or(`checkin_at.gte.${start},and(checkin_at.is.null,created_at.gte.${start})`);
+            .or(`checkin_at.gte.${period.startISO},and(checkin_at.is.null,created_at.gte.${period.startISO})`);
 
         if (error) {
             console.error('Error fetching revenue summary:', error);
@@ -125,8 +134,8 @@ async function getRevenueSummaryLegacy(start: string, end: string): Promise<Reve
 
         for (const t of data || []) {
             const effDate = effectiveDate(t);
-            // Apply exclusive-end filter: start <= effectiveDate < end
-            if (effDate && effDate >= start && effDate < end) {
+            // Apply exclusive-end filter: period.startISO <= effectiveDate < period.endISO
+            if (effDate && effDate >= period.startISO && effDate <= period.endISO) {
                 cashAmount += t.cash_amount ?? 0;
                 transferAmount += t.transfer_amount ?? 0;
                 count++;
@@ -151,7 +160,7 @@ async function getRevenueSummaryLegacy(start: string, end: string): Promise<Reve
 }
 
 // ============================================================
-// getRevenueTrend(startDate, endDate, location?)
+// getRevenueTrend(period, location?)
 //
 // Get revenue trend using the get_daily_revenue_trend RPC.
 // Falls back gracefully if RPC fails.
@@ -159,14 +168,17 @@ async function getRevenueSummaryLegacy(start: string, end: string): Promise<Reve
 // Mirrors fetchRevenueData() in dashboard/actions.ts:466-514
 // ============================================================
 export async function getRevenueTrend(
-    startDate: string,
-    endDate: string,
+    period: ReportPeriodRange,
     location?: string | null
 ): Promise<RevenueTrendPoint[]> {
+    const startStr = period.startDate;
+    const endDateObj = new Date(period.endISO);
+    const endExclusive = format(addDays(endDateObj, 1), 'yyyy-MM-dd');
+
     // ── Analytics path (primary) ──────────────────────────────
     if (analyticsConfigured()) {
         try {
-            const dailyRows = await getDailyRevenueAnalytics(startDate, endDate);
+            const dailyRows = await getDailyRevenueAnalytics(startStr, endExclusive);
 
             // Aggregate per date (analytics returns per-location rows)
             const byDate = new Map<string, { revenue: number; count: number }>();
@@ -195,7 +207,7 @@ export async function getRevenueTrend(
     }
 
     // ── Supabase fallback ────────────────────────────────────
-    return getRevenueTrendLegacy(startDate, endDate, location);
+    return getRevenueTrendLegacy(startStr, endExclusive, location);
 }
 
 /** Supabase-only fallback (unchanged from original). */

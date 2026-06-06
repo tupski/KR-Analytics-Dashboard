@@ -1,4 +1,5 @@
 import { createServerClient } from '@/lib/supabase/server';
+import { getNowWIB } from '@/lib/utils/format';
 
 export interface UnitAvailabilityResult {
     totalUnits: number
@@ -28,6 +29,9 @@ export interface UnitAvailabilityResult {
  *
  * Deduplicates by apartment_location + room_number — a room with 2 overlapping
  * stays counts as 1 occupied unit.
+ *
+ * Uses timezone-aware WIB date via getNowWIB() — consistent with getLiveOccupancy().
+ * Total room count uses ALL nomor_kamar (no is_active filter) to match getLiveOccupancy().
  */
 export async function getUnitAvailability(
     options?: {
@@ -38,16 +42,16 @@ export async function getUnitAvailability(
 ): Promise<UnitAvailabilityResult> {
     const supabase = createServerClient()
 
-    // Default to today if no period specified
-    const now = new Date()
-    const periodStart = options?.periodStart ?? new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString()
-    const periodEnd = options?.periodEnd ?? new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59).toISOString()
+    // Default to today if no period specified — use timezone-aware WIB
+    const nowWIB = getNowWIB()
+    const todayWIB = nowWIB.split('T')[0] // "YYYY-MM-DD"
+    const periodStart = options?.periodStart ?? `${todayWIB}T00:00:00.000+07:00`
+    const periodEnd = options?.periodEnd ?? `${todayWIB}T23:59:59.999+07:00`
 
-    // Get total active units
+    // Get total units — same as getLiveOccupancy: count ALL nomor_kamar rows
     let roomsQuery = supabase
         .from('nomor_kamar')
         .select('id', { count: 'exact', head: true })
-        .eq('is_active', true)
 
     if (options?.locationFilter) {
         roomsQuery = roomsQuery.eq('lokasi', options.locationFilter)
@@ -58,7 +62,8 @@ export async function getUnitAvailability(
     if (totalError) throw totalError
 
     // Get occupied rooms in period.
-    // A room is occupied if checkin_at ≤ periodEnd AND (checkout_at ≥ periodStart OR checkout_at IS NULL)
+    // Overlap: checkin_at ≤ periodEnd AND (checkout_at ≥ periodStart OR checkout_at IS NULL)
+    // Uses .lte() + .or() (correct: .lte() is a filter that ANDs, not a second .or())
     let occupiedQuery = supabase
         .from('transactions')
         .select('room_number, apartment_location')

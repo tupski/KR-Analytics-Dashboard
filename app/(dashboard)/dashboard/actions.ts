@@ -2,8 +2,10 @@
 
 import { createServerClient } from '@/lib/supabase/server';
 import { getTodayReportRange } from '@/lib/get-report-period-setting';
-import { getReportPeriodRange } from '@/lib/reporting-period';
-import type { ReportPeriodMode } from '@/lib/reporting-period';
+import { getReportPeriodRange as getReportPeriodRangeLegacy } from '@/lib/reporting-period';
+import type { ReportPeriodMode } from '@/lib/shared/report-period';
+import { getReportPeriodRange } from '@/lib/shared/report-period';
+import type { ReportPeriodRange } from '@/lib/shared/report-period';
 import { exclusiveRange, effectiveDate, calcRevenue } from '@/lib/dashboard/transaction-source';
 import { getLiveOccupancy, getDailyOccupancyTrend } from '@/lib/services/occupancy';
 import { getRevenueTrend, getRevenueSummary as getServiceRevenueSummary } from '@/lib/services/revenue';
@@ -33,6 +35,31 @@ import type {
     RevenueFilter,
     OccupancyDataPoint
 } from '@/types/dashboard';
+
+/**
+ * Helper: build a ReportPeriodRange from start/end ISO datetime strings.
+ * Used to bridge existing date-flow code with the new shared period type.
+ */
+function buildPeriodFromISO(startISO: string, endISO: string): ReportPeriodRange {
+    // Extract YYYY-MM-DD from ISO strings like "2026-06-07T00:00:00.000+07:00"
+    const startDate = startISO.substring(0, 10);
+    const endDateISO = new Date(endISO);
+    const endDate = endISO.substring(0, 10);
+    // Try to detect the mode from the hour (12:00 = hotel_day)
+    const mode: ReportPeriodRange['mode'] = startISO.includes('T12:') ? 'hotel_day' : 'calendar_day';
+    return {
+        preset: 'custom',
+        mode,
+        timezone: 'Asia/Jakarta',
+        start: new Date(startISO),
+        end: new Date(endISO),
+        startISO,
+        endISO,
+        startDate,
+        endDate,
+        label: `${startDate} – ${endDate}`,
+    };
+}
 
 /**
  * Fetches unit status summary via the occupancy service.
@@ -203,11 +230,9 @@ async function fetchDailyKPISnapshot(
     mode?: ReportPeriodMode,
 ): Promise<{ bookingCount: number; revenue: number; distinctRoomsOccupied: number; avgOccupancy: number; availableUnits: number }> {
     // Use period-aware boundaries (calendar_day or hotel_day) when mode provided
-    const range = mode
-        ? getReportPeriodRange(targetDay, mode)
-        : getReportPeriodRange(targetDay);
-    const dayStart = range.start;
-    const dayEnd = range.end;
+    const range = getReportPeriodRange({ preset: 'custom', startDate: targetDay, endDate: targetDay, mode: mode ?? 'calendar_day', timezone: 'Asia/Jakarta' });
+    const dayStart = range.startISO;
+    const dayEnd = range.endISO;
 
     // Use COALESCE(checkin_at, created_at) with exclusive end
     // Widen filter: checkin_at >= start OR (checkin IS NULL AND created_at >= start)
@@ -310,7 +335,9 @@ export async function fetchKPIData(
             .select('*', { count: 'exact', head: true })
             .or(`checkin_at.gte.${actualDayStart},and(checkin_at.is.null,created_at.gte.${actualDayStart})`);
 
-        const revenueData = await getServiceRevenueSummary(actualDayStart, actualDayEnd);
+        // Build ReportPeriodRange for the main period to pass to the service
+        const mainPeriod = buildPeriodFromISO(actualDayStart, actualDayEnd);
+        const revenueData = await getServiceRevenueSummary(mainPeriod);
         const periodRevenue = revenueData.totalRevenue;
 
         // Occupancy & available — point-in-time (currently active)
@@ -342,8 +369,8 @@ export async function fetchKPIData(
             if (cr) compRange = cr;
         } else if (compareMode) {
             const { day: prevDay, label: prevLabel } = getCompareDay(today, compareMode);
-            const snap = getReportPeriodRange(prevDay, mode);
-            compRange = { start: snap.start, end: snap.end, label: prevLabel };
+            const snap = getReportPeriodRange({ preset: 'custom', startDate: prevDay, endDate: prevDay, mode, timezone: 'Asia/Jakarta' });
+            compRange = { start: snap.startISO, end: snap.endISO, label: prevLabel };
         }
 
         if (compRange) {
@@ -352,7 +379,8 @@ export async function fetchKPIData(
                 .select('*', { count: 'exact', head: true })
                 .or(`checkin_at.gte.${compRange.start},and(checkin_at.is.null,created_at.gte.${compRange.start})`);
 
-            const prevRevenueData = await getServiceRevenueSummary(compRange.start, compRange.end);
+            const prevPeriod = buildPeriodFromISO(compRange.start, compRange.end);
+            const prevRevenueData = await getServiceRevenueSummary(prevPeriod);
             const prevRevenue = prevRevenueData.totalRevenue;
 
             result.prev = {
@@ -611,7 +639,9 @@ export async function fetchRevenueData(filter: RevenueFilter): Promise<RevenueDa
     const todayWIB = format(toZonedTime(addDays(today, 1), 'Asia/Jakarta'), 'yyyy-MM-dd');
 
     try {
-        const trendPoints = await getRevenueTrend(startWIB, todayWIB);
+        // Build chart period explicitly: last 30 days
+        const chartPeriod = getReportPeriodRange({ preset: 'last_30_days', timezone: 'Asia/Jakarta' });
+        const trendPoints = await getRevenueTrend(chartPeriod);
 
         if (!trendPoints || trendPoints.length === 0) {
             return [];
@@ -1071,10 +1101,8 @@ export async function fetchMarketingPerformanceData(): Promise<{
  */
 export async function fetchRevenueDataForExport() {
     try {
-        const now = new Date();
-        const startDate = format(subDays(now, 29), 'yyyy-MM-dd');
-        const endDate = format(now, 'yyyy-MM-dd');
-        const revenueTrend = await getRevenueTrend(startDate, endDate);
+        const exportPeriod = getReportPeriodRange({ preset: 'last_30_days', timezone: 'Asia/Jakarta' });
+        const revenueTrend = await getRevenueTrend(exportPeriod);
         return revenueTrend.map((point) => ({
             date: format(new Date(point.date), 'dd MMM yyyy'),
             grossRevenue: point.revenue || 0,
@@ -1141,27 +1169,33 @@ export async function fetchDashboardSnapshot(params: {
     endDate?: string;
     location?: string;
 }): Promise<DashboardSnapshot> {
-    const { getDateBoundaries } = await import('@/lib/dashboard/periods');
-    const boundaries = await getDateBoundaries(new Date());
-    const dayStart = params.startDate ? new Date(params.startDate) : boundaries.dayStart;
-    const dayEnd = params.endDate ? new Date(params.endDate) : boundaries.dayEnd;
+    const { getReportPeriodSetting } = await import('@/lib/get-report-period-setting');
+    const mode = await getReportPeriodSetting();
+
+    // Build the period from params or fall back to today
+    let period: ReportPeriodRange;
+    if (params.startDate && params.endDate) {
+        period = getReportPeriodRange({
+            preset: 'custom',
+            startDate: params.startDate,
+            endDate: params.endDate,
+            mode,
+            timezone: 'Asia/Jakarta',
+        });
+    } else {
+        period = getReportPeriodRange({ preset: 'today', mode, timezone: 'Asia/Jakarta' });
+    }
 
     // Fetch total room count once — pass to downstream functions
     const { count: totalUnits } = await createServerClient()
         .from('nomor_kamar')
         .select('id', { count: 'exact', head: true });
 
-    const sharedParams = {
-        startDate: dayStart,
-        endDate: dayEnd,
-        location: params.location,
-    };
-
     const [kpi, revenue, occupancy, operations] = await Promise.all([
-        getKPIData({ ...sharedParams, totalUnits: totalUnits || 0 }),
-        getRevenueSummary(sharedParams),
-        getOccupancySummary({ ...sharedParams, totalUnits: totalUnits || 0 }),
-        getOperationsSummary(sharedParams),
+        getKPIData({ period, location: params.location, totalUnits: totalUnits || 0 }),
+        getRevenueSummary({ period, location: params.location }),
+        getOccupancySummary({ period, location: params.location, totalUnits: totalUnits || 0 }),
+        getOperationsSummary({ startDate: new Date(period.startISO), endDate: new Date(period.endISO), location: params.location }),
     ]);
 
     return { kpi, revenue, occupancy, operations };

@@ -142,7 +142,7 @@ export async function getLiveOccupancy(): Promise<LiveOccupancyResult> {
         const { data: occupiedData, error: occError } = await supabase
             .from('transactions')
             .select('room_number, apartment_location')
-            .or(`checkin_at.lte.${now},and(checkin_at.is.null,created_at.lte.${now})`)
+            .lte('checkin_at', now)
             .or(`checkout_at.gte.${now},checkout_at.is.null`);
 
         if (occError) {
@@ -591,4 +591,44 @@ export async function getDailyCheckinVolume(days: number = 30): Promise<DailyChe
         console.error('Error in getDailyCheckinVolume:', error);
         return [];
     }
+}
+
+// ============================================================
+// Shared helpers
+// ============================================================
+
+/**
+ * Build a Supabase filter condition string for stay-span overlap with a period.
+ *
+ * A booking overlaps the period [periodStart, periodEnd] if:
+ *   checkin_at < periodEnd AND (checkout_at > periodStart OR checkout_at IS NULL)
+ *
+ * This helper produces the condition string for use with .or() or .filter().
+ * It is the SINGLE SOURCE OF TRUTH for stay-span overlap logic across
+ * occupancy, unit availability, and related queries.
+ *
+ * @param periodStart ISO datetime string marking the start of the period (inclusive)
+ * @param periodEnd   ISO datetime string marking the end of the period (inclusive)
+ * @returns A Supabase filter condition string, e.g.:
+ *          "and(checkin_at.lt.2026-06-06T23:59:59.999+07:00,or(checkout_at.gt.2026-06-06T00:00:00.000+07:00,checkout_at.is.null))"
+ *
+ * @example
+ *   // For a day: [2026-06-06T00:00:00, 2026-06-06T23:59:59]
+ *   const cond = buildOverlapCondition('2026-06-06T00:00:00.000+07:00', '2026-06-06T23:59:59.999+07:00');
+ *   // Use with: .or(cond)
+ */
+export function buildOverlapCondition(periodStart: string, periodEnd: string): string {
+    return `and(checkin_at.lt.${periodEnd},or(checkout_at.gt.${periodStart},checkout_at.is.null))`;
+}
+
+/**
+ * Get the standard date columns used in booking/occupancy queries.
+ * Centralized so all queries use the same field references.
+ */
+export function getBookingDateColumns() {
+    return {
+        checkin: 'checkin_at',
+        checkout: 'checkout_at',
+        created: 'created_at',
+    } as const;
 }

@@ -3,6 +3,8 @@ import {
     getExpenseSummary as getExpenseSummaryAnalytics,
 } from '@/lib/analytics/expenses';
 import type { ExpenseByDateRange } from '@/lib/analytics/types';
+import { getReportPeriodRange } from '@/lib/shared/report-period';
+import type { ReportPeriodRange } from '@/lib/shared/report-period';
 
 // ============================================================
 // lib/services/expense.ts
@@ -47,20 +49,6 @@ function analyticsConfigured(): boolean {
     return !!process.env.ANALYTICS_DATABASE_URL;
 }
 
-/** Get a default 30-day date range in WIB (Asia/Jakarta). */
-function getDefaultDateRange(days = 30): { startDate: string; endDate: string } {
-    const now = new Date();
-    const wib = new Date(now.getTime() + 7 * 60 * 60 * 1000);
-    const end = new Date(wib);
-    end.setDate(end.getDate() + 1);
-    const start = new Date(wib);
-    start.setDate(start.getDate() - days);
-    return {
-        startDate: start.toISOString().split('T')[0],
-        endDate: end.toISOString().split('T')[0],
-    };
-}
-
 /** Normalize date_wib: pg returns DATE columns as Date objects; cast to YYYY-MM-DD string. */
 function normalizeExpenseDate(d: unknown): string {
     if (d instanceof Date) {
@@ -73,15 +61,29 @@ function normalizeExpenseDate(d: unknown): string {
     return String(d);
 }
 
-/** Resolve start/end with defaults, ensuring endDate is set. */
-function resolveRange(startDate?: string, endDate?: string): { startDate: string; endDate: string } {
+/**
+ * Resolve start/end from an optional ReportPeriodRange or raw date strings.
+ * Falls back to last 30 days via the shared report period helper.
+ */
+function resolveRange(
+    startDate?: string,
+    endDate?: string,
+    period?: ReportPeriodRange,
+): { startDate: string; endDate: string } {
+    if (period) {
+        console.debug('[expense] resolveRange using shared period:', { startDate: period.startDate, endDate: period.endDate });
+        return { startDate: period.startDate, endDate: period.endDate };
+    }
     if (startDate) {
         return {
             startDate,
             endDate: endDate ?? new Date().toISOString().split('T')[0],
         };
     }
-    return getDefaultDateRange();
+    // Default: last 30 days via shared helper
+    const range = getReportPeriodRange({ preset: 'last_30_days' });
+    console.debug('[expense] resolveRange defaulting to last_30_days:', { startDate: range.startDate, endDate: range.endDate });
+    return { startDate: range.startDate, endDate: range.endDate };
 }
 
 // ─── Functions ─────────────────────────────────────────
@@ -94,9 +96,10 @@ function resolveRange(startDate?: string, endDate?: string): { startDate: string
  */
 export async function getExpenseSummary(
     startDate?: string,
-    endDate?: string
+    endDate?: string,
+    period?: ReportPeriodRange,
 ): Promise<ExpenseSummary> {
-    const { startDate: sd, endDate: ed } = resolveRange(startDate, endDate);
+    const { startDate: sd, endDate: ed } = resolveRange(startDate, endDate, period);
 
     if (analyticsConfigured()) {
         try {
@@ -139,9 +142,10 @@ export async function getExpenseSummary(
  */
 export async function getExpensesByCategory(
     startDate?: string,
-    endDate?: string
+    endDate?: string,
+    period?: ReportPeriodRange,
 ): Promise<CategoryBreakdown[]> {
-    const summary = await getExpenseSummary(startDate, endDate);
+    const summary = await getExpenseSummary(startDate, endDate, period);
     const total = summary.totalAmount;
 
     return summary.byCategory
@@ -160,9 +164,10 @@ export async function getExpensesByCategory(
  */
 export async function getExpensesByLocation(
     startDate?: string,
-    endDate?: string
+    endDate?: string,
+    period?: ReportPeriodRange,
 ): Promise<ExpenseSummary['byLocation']> {
-    const summary = await getExpenseSummary(startDate, endDate);
+    const summary = await getExpenseSummary(startDate, endDate, period);
     return summary.byLocation.sort((a, b) => b.total_amount - a.total_amount);
 }
 
@@ -175,9 +180,10 @@ export async function getExpensesByLocation(
 export async function getExpenseTrend(
     startDate?: string,
     endDate?: string,
-    groupBy: 'day' | 'month' = 'day'
+    groupBy: 'day' | 'month' = 'day',
+    period?: ReportPeriodRange,
 ): Promise<ExpenseTrendPoint[]> {
-    const { startDate: sd, endDate: ed } = resolveRange(startDate, endDate);
+    const { startDate: sd, endDate: ed } = resolveRange(startDate, endDate, period);
 
     if (analyticsConfigured()) {
         try {

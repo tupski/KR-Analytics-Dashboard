@@ -41,10 +41,9 @@
 
 import { createServerClient } from '@/lib/supabase/server';
 import { getReportPeriodSetting } from '@/lib/get-report-period-setting';
-import { getTodayReportRange } from '@/lib/get-report-period-setting';
-import { getReportPeriodRange } from '@/lib/reporting-period';
+import { getReportPeriodRange } from '@/lib/shared/report-period';
+import type { ReportPeriodMode, ReportPeriodRange } from '@/lib/shared/report-period';
 import { getNowWIB } from '@/lib/utils/format';
-import type { ReportPeriodMode } from '@/lib/reporting-period';
 import { queryAnalytics, parseNumeric } from '@/lib/analytics/db';
 import { withCache, pickTTL } from '@/lib/analytics/cache';
 import { getGuestStayHistory } from '@/lib/ai/tools/guest-history';
@@ -219,13 +218,14 @@ async function fetchPeriodSummary(
 ): Promise<PeriodSummary> {
     const supabase = createServerClient();
 
-    // Type B: period-aware boundaries via helper
+    // Type B: period-aware boundaries via shared helper
     let checkinStart: string;
     let checkinEnd: string;
     if (mode) {
-        const range = getReportPeriodRange(start, mode);
-        checkinStart = range.start;
-        checkinEnd = range.end;
+        const range = getReportPeriodRange({ preset: 'custom', startDate: start, endDate: end, mode });
+        checkinStart = range.startISO;
+        checkinEnd = range.endISO;
+        console.debug('[tools] fetchPeriodSummary using shared period helper:', { start: range.startISO, end: range.endISO, mode });
     } else {
         // Type A: user-explicit calendar-day boundaries
         const { startIso, endIso } = validateDateRange(start, end);
@@ -446,8 +446,10 @@ async function fetchRevenueTrend(start: string, end: string, location?: string):
 
     // Fetch mode for period-aware boundaries
     const mode = await getReportPeriodSetting();
-    const rangeStart = getReportPeriodRange(start, mode).start;
-    const rangeEnd = getReportPeriodRange(end, mode).end;
+    const range = getReportPeriodRange({ preset: 'custom', startDate: start, endDate: end, mode });
+    const rangeStart = range.startISO;
+    const rangeEnd = range.endISO;
+    console.debug('[tools] fetchRevenueTrend using shared period helper:', { start: rangeStart, end: rangeEnd, mode });
 
     // Get distinct dates with revenue aggregated per day
     let q = supabase
@@ -501,8 +503,12 @@ async function fetchLatestStatus(): Promise<LatestStatus> {
 
     const supabase = createServerClient();
 
-    // Type B: use mode-aware today boundaries
-    const { start: dayStart, end: dayEnd } = await getTodayReportRange();
+    // Type B: use mode-aware today boundaries via shared helper
+    const mode = await getReportPeriodSetting();
+    const todayRange = getReportPeriodRange({ preset: 'today', mode });
+    const dayStart = todayRange.startISO;
+    const dayEnd = todayRange.endISO;
+    console.debug('[tools] fetchLatestStatus using shared period helper:', { start: dayStart, end: dayEnd, mode });
 
     // Today's transactions — use COALESCE(checkin_at, created_at) wide filter
     const { data: todayTx, count: txCount } = await supabase

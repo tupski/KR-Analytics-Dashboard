@@ -9,6 +9,7 @@ import { getReportPeriodSetting, getTodayReportRange } from '@/lib/get-report-pe
 import { getReportPeriodRange } from '@/lib/reporting-period';
 import { computeDateRange, computeComparisonRange } from '@/lib/services/date-range';
 import type { DateFilterParams } from '@/lib/services/date-range';
+import type { ReportPeriodRange } from '@/lib/shared/report-period';
 
 export interface BookingItem {
     id: number;
@@ -159,6 +160,25 @@ export async function fetchLocations(): Promise<string[]> {
 }
 
 /**
+ * Build a minimal ReportPeriodRange from ISO datetime strings.
+ * Used as a bridge for callers that still work with string-based ranges.
+ */
+function buildPeriodFromISO(startISO: string, endISO: string): ReportPeriodRange {
+    return {
+        preset: 'custom',
+        mode: 'calendar_day',
+        timezone: 'Asia/Jakarta',
+        start: new Date(startISO),
+        end: new Date(endISO),
+        startISO,
+        endISO,
+        startDate: startISO.split('T')[0],
+        endDate: endISO.split('T')[0],
+        label: `${startISO} – ${endISO}`,
+    };
+}
+
+/**
  * Fetch booking statistics summary — supports unified date params + comparison.
  */
 export async function fetchBookingStats(dateParams?: DateFilterParams) {
@@ -176,7 +196,8 @@ export async function fetchBookingStats(dateParams?: DateFilterParams) {
         .select('id', { count: 'exact', head: true })
         .or(`checkin_at.gte.${range.start},and(checkin_at.is.null,created_at.gte.${range.start})`);
 
-    const revenueData = await getServiceRevenueSummary(range.start, range.end);
+    const mainPeriod = buildPeriodFromISO(range.start, range.end);
+    const revenueData = await getServiceRevenueSummary(mainPeriod);
     const totalRevenue = revenueData.totalRevenue;
     const totalTransactions = revenueData.transactionCount;
 
@@ -207,7 +228,8 @@ export async function fetchBookingStats(dateParams?: DateFilterParams) {
                 .select('id', { count: 'exact', head: true })
                 .or(`checkin_at.gte.${cr.start},and(checkin_at.is.null,created_at.gte.${cr.start})`);
 
-            const prevRevData = await getServiceRevenueSummary(cr.start, cr.end);
+            const prevPeriod = buildPeriodFromISO(cr.start, cr.end);
+            const prevRevData = await getServiceRevenueSummary(prevPeriod);
             const prevRevenue = prevRevData.totalRevenue;
 
             comparison = {

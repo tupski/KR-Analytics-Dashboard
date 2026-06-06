@@ -8,8 +8,28 @@ import { getReportPeriodSetting } from '@/lib/get-report-period-setting';
 import { getRevenueSummary } from '@/lib/services/revenue';
 import { getExpenseSummary } from '@/lib/services/expense';
 import { getMonthlySummaries } from '@/lib/analytics/monthly';
+import type { ReportPeriodRange } from '@/lib/shared/report-period';
 
 export type { DateFilter };
+
+/**
+ * Build a minimal ReportPeriodRange from ISO datetime strings.
+ * Used as a bridge for callers that still work with string-based ranges.
+ */
+function buildPeriodFromISO(startISO: string, endISO: string): ReportPeriodRange {
+    return {
+        preset: 'custom',
+        mode: 'calendar_day',
+        timezone: 'Asia/Jakarta',
+        start: new Date(startISO),
+        end: new Date(endISO),
+        startISO,
+        endISO,
+        startDate: startISO.split('T')[0],
+        endDate: endISO.split('T')[0],
+        label: `${startISO} – ${endISO}`,
+    };
+}
 
 export interface LocationReport {
     name: string;
@@ -119,12 +139,7 @@ export async function fetchLaporanData(
     if (mode !== 'hotel_day') {
         try {
             if (process.env.ANALYTICS_DATABASE_URL) {
-                const startDateStr = start.split('T')[0];
-                const endDateExcl = new Date(end);
-                endDateExcl.setDate(endDateExcl.getDate() + 1);
-                const endDateStr = endDateExcl.toISOString().split('T')[0];
-
-                const revSummary = await getRevenueSummary(startDateStr, endDateStr);
+                const revSummary = await getRevenueSummary(buildPeriodFromISO(start, end));
                 totalRevenue = revSummary.totalRevenue;
                 totalCash = revSummary.cashAmount;
                 totalTransfer = revSummary.transferAmount;
@@ -429,16 +444,14 @@ export async function fetchLaporanData(
     if (mode !== 'hotel_day') {
         try {
             if (process.env.ANALYTICS_DATABASE_URL) {
-                const prevStartStr = prevRange.start.split('T')[0];
-                const prevEndExcl = new Date(prevRange.end);
-                prevEndExcl.setDate(prevEndExcl.getDate() + 1);
-                const prevEndStr = prevEndExcl.toISOString().split('T')[0];
-
-                const prevRevSummary = await getRevenueSummary(prevStartStr, prevEndStr);
+                const prevRevSummary = await getRevenueSummary(buildPeriodFromISO(prevRange.start, prevRange.end));
                 prevRevenue = prevRevSummary.totalRevenue;
                 prevTransactions = prevRevSummary.transactionCount;
 
-                const prevExpSummary = await getExpenseSummary(prevStartStr, prevEndStr);
+                const prevExpSummary = await getExpenseSummary(
+                    prevRange.start.split('T')[0],
+                    prevRange.end.split('T')[0]
+                );
                 prevExpenses = prevExpSummary.totalAmount;
                 analyticsComparisonUsed = true;
             }

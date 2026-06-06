@@ -46,7 +46,7 @@ function dateToInputValue(d: Date): string {
 // ─── Component ───────────────────────────────────────────────────
 export default function DateFilterBar({
     basePath,
-    defaultPreset = 'last30days',
+    defaultPreset = 'today',
     defaultStartDate,
     defaultEndDate,
     defaultComparisonMode = 'none',
