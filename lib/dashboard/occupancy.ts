@@ -75,9 +75,10 @@ export async function getOccupancySummary(params: {
     ]);
 
     // ── Compute current occupancy from centralized function ──
-    const occupiedUnits = liveOccupancy.ditempati;
+    // Cap occupiedUnits at totalUnits to prevent >100% occupancy (safety net)
+    const occupiedUnits = Math.min(liveOccupancy.ditempati, totalUnits);
     const occupancyRate =
-        totalUnits > 0 ? Math.round((occupiedUnits / totalUnits) * 10000) / 100 : 0;
+        totalUnits > 0 ? Math.min(Math.round((occupiedUnits / totalUnits) * 10000) / 100, 100) : 0;
 
     // ── Format trend ─────────────────────────────────────────
     const trendFormatted: OccupancyTrendPoint[] = trend.map((t) => ({

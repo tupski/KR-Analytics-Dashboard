@@ -80,7 +80,7 @@ export async function fetchTodayCheckins(dateParams?: DateFilterParams): Promise
             .gte('checkin_at', start)
             .lte('checkin_at', end)
             .order('checkin_at', { ascending: false })
-            .limit(10);
+            .limit(100);
 
         if (error) {
             console.error('Error fetching check-ins:', error);

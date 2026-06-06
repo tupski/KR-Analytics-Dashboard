@@ -152,9 +152,9 @@ export async function getLiveOccupancy(): Promise<LiveOccupancyResult> {
         const occupiedSet = new Set<string>(
             occupiedData?.map((t: any) => `${t.apartment_location}-${t.room_number}`) || []
         );
-        const occupiedRooms = occupiedSet.size;
+        const occupiedRooms = Math.min(occupiedSet.size, totalRooms);
         const occupancyRate = totalRooms > 0
-            ? Math.round((occupiedRooms / totalRooms) * 10000) / 100
+            ? Math.min(Math.round((occupiedRooms / totalRooms) * 10000) / 100, 100)
             : 0;
 
         // Build per-location room count
@@ -176,9 +176,9 @@ export async function getLiveOccupancy(): Promise<LiveOccupancyResult> {
         // Build location breakdown
         const locationBreakdown: LocationOccupancyItem[] = Array.from(roomsPerLocation.entries())
             .map(([name, locTotalRooms]) => {
-                const locOccupied = occupiedPerLocation.get(name)?.size || 0;
+                const locOccupied = Math.min(occupiedPerLocation.get(name)?.size || 0, locTotalRooms);
                 const locRate = locTotalRooms > 0
-                    ? Math.round((locOccupied / locTotalRooms) * 10000) / 100
+                    ? Math.min(Math.round((locOccupied / locTotalRooms) * 10000) / 100, 100)
                     : 0;
                 return { name, totalRooms: locTotalRooms, occupiedRooms: locOccupied, occupancyRate: locRate };
             })
@@ -254,9 +254,9 @@ export async function getDailyOccupancyTrend(days: number = 30): Promise<DailyOc
             const allDays: Date[] = eachDayOfInterval({ start: startDate, end: today });
             const result: DailyOccupancyTrendPoint[] = allDays.map((d) => {
                 const dateKey = format(d, 'yyyy-MM-dd');
-                const occupiedUnits = byDate.get(dateKey)?.size || 0;
+                const occupiedUnits = Math.min(byDate.get(dateKey)?.size || 0, totalRooms);
                 const occupancyRate = totalRooms > 0
-                    ? Math.round((occupiedUnits / totalRooms) * 10000) / 100
+                    ? Math.min(Math.round((occupiedUnits / totalRooms) * 10000) / 100, 100)
                     : 0;
                 return {
                     date: dateKey,
@@ -344,9 +344,9 @@ async function getDailyOccupancyTrendLegacy(days: number = 30): Promise<DailyOcc
                 }
             }
 
-            const occupiedUnits = occupiedOnDay.size;
+            const occupiedUnits = Math.min(occupiedOnDay.size, totalRooms);
             const occupancyRate = totalRooms > 0
-                ? Math.round((occupiedUnits / totalRooms) * 10000) / 100
+                ? Math.min(Math.round((occupiedUnits / totalRooms) * 10000) / 100, 100)
                 : 0;
 
             return {

@@ -39,23 +39,41 @@ function getCardTitle(base: string, rangePreset?: string): string {
     }
 }
 
-// ─── Busy-hour helper — per-aggregate, filter 0, range label ──
+// ─── Busy-hour helper — pad all 24 buckets, show zero-count hours ──
 
-function computeBusyHours(items: any[]): { hour: string; count: number }[] {
-    const buckets: Record<string, number> = {};
-    for (const item of items) {
-        // Try time from formatted time field first, then checkinAt
-        const timeStr = item.time || '';
-        const hour = timeStr.split(':')[0] || '00';
-        buckets[hour] = (buckets[hour] || 0) + 1;
+interface BusyHour {
+    hour: number;
+    label: string;
+    count: number;
+}
+
+function computeBusyHours(items: any[]): BusyHour[] {
+    // Init all 24 hours with count 0
+    const buckets: Record<number, number> = {};
+    for (let i = 0; i < 24; i++) {
+        buckets[i] = 0;
     }
+
+    for (const item of items) {
+        // Try formatted time string first, then checkinAt Date
+        const timeStr = item.time || '';
+        let hour = parseInt(timeStr.split(':')[0], 10);
+        if (isNaN(hour) && item.checkinAt) {
+            const d = item.checkinAt instanceof Date ? item.checkinAt : new Date(item.checkinAt);
+            hour = d.getHours();
+        }
+        if (!isNaN(hour) && hour >= 0 && hour <= 23) {
+            buckets[hour] = (buckets[hour] || 0) + 1;
+        }
+    }
+
     return Object.entries(buckets)
-        .filter(([, count]) => count > 0) // hide 0-checkin hours
         .map(([hour, count]) => ({
-            hour: `${hour.padStart(2, '0')}:00 - ${hour.padStart(2, '0')}:59`,
+            hour: Number(hour),
+            label: `${String(hour).padStart(2, '0')}:00 - ${String(hour).padStart(2, '0')}:59`,
             count,
         }))
-        .sort((a, b) => a.hour.localeCompare(b.hour));
+        .sort((a, b) => a.hour - b.hour);
 }
 
 // ─── Props ──────────────────────────────────────────────────────
@@ -238,14 +256,14 @@ export default function TabContent({
                                 </p>
                             ) : (
                                 <>
-                                    {/* Simple bar chart */}
-                                    <div className="space-y-2 mb-4">
+                                    {/* Simple bar chart — scrollable for 24 hours */}
+                                    <div className="space-y-1 mb-4 max-h-80 overflow-y-auto">
                                         {busyHours.map((bh) => {
                                             const maxCount = Math.max(...busyHours.map((b) => b.count));
                                             const barWidth = maxCount > 0 ? (bh.count / maxCount) * 100 : 0;
                                             return (
                                                 <div key={bh.hour} className="flex items-center gap-2">
-                                                    <span className="text-xs text-gray-500 w-12 shrink-0">{bh.hour}</span>
+                                                    <span className="text-xs text-gray-500 w-24 shrink-0">{bh.label}</span>
                                                     <div className="flex-1 bg-gray-100 rounded-full h-5 overflow-hidden">
                                                         <div
                                                             className="bg-blue-500 h-full rounded-full transition-all"
@@ -260,7 +278,7 @@ export default function TabContent({
                                     <CollapsibleChartTable
                                         title="Distribusi Check-in per Jam"
                                         columns={[
-                                            { key: 'hour', label: 'Jam', format: 'text' },
+                                            { key: 'label', label: 'Jam', format: 'text' },
                                             { key: 'count', label: 'Check-in', format: 'number' },
                                         ]}
                                         rows={busyHours}

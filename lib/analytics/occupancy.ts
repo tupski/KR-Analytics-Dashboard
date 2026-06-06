@@ -125,13 +125,18 @@ export async function getOccupancyRate(
      ORDER BY date_wib, apartment_location`,
         [sd, ed]
     );
-    return rows.map(r => ({
-        date_wib: r.date_wib,
-        apartment_location: r.apartment_location,
-        total_rooms: parseNumeric(r.total_rooms),
-        occupied_rooms: parseNumeric(r.occupied_rooms),
-        occupancy_rate: parseNumeric(r.occupancy_rate),
-    }));
+    return rows.map(r => {
+        const total = parseNumeric(r.total_rooms);
+        const occupied = Math.min(parseNumeric(r.occupied_rooms), total);
+        const rate = total > 0 ? Math.min(parseNumeric(r.occupancy_rate), 1.0) : 0;
+        return {
+            date_wib: r.date_wib,
+            apartment_location: r.apartment_location,
+            total_rooms: total,
+            occupied_rooms: occupied,
+            occupancy_rate: rate,
+        };
+    });
 }
 
 /**
@@ -165,11 +170,14 @@ export async function getOccupancySummary(
         [sd, ed]
     );
     const row = rows[0];
+    const totalRoomDays = parseNumeric(row.total_room_days);
+    const totalOccupiedRoomDays = Math.min(parseNumeric(row.total_occupied), totalRoomDays);
+    const avgRate = totalRoomDays > 0 ? Math.min(parseNumeric(row.avg_occupancy), 1.0) : 0;
     return {
         startDate: sd,
         endDate: ed,
-        averageOccupancyRate: parseNumeric(row.avg_occupancy),
-        totalRoomDays: parseNumeric(row.total_room_days),
-        totalOccupiedRoomDays: parseNumeric(row.total_occupied),
+        averageOccupancyRate: avgRate,
+        totalRoomDays,
+        totalOccupiedRoomDays,
     };
 }
