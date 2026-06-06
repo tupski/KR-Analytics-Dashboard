@@ -3,6 +3,7 @@ import {
     getDailyRevenue as getDailyRevenueAnalytics,
     getRevenueSummary as getRevenueSummaryAnalytics,
 } from '@/lib/analytics/revenue';
+import { calcRevenue, effectiveDate } from '@/lib/dashboard/transaction-source';
 import { format } from 'date-fns';
 import { toZonedTime } from 'date-fns-tz';
 
@@ -92,16 +93,21 @@ export async function getRevenueSummary(start: string, end: string): Promise<Rev
     return getRevenueSummaryLegacy(start, end);
 }
 
-/** Supabase-only fallback (unchanged from original). */
+/**
+ * Supabase-only fallback.
+ * Uses COALESCE(checkin_at, created_at) via .or() filter + JS filtering
+ * to match canonical effective-date logic. Excludes nominal field.
+ */
 async function getRevenueSummaryLegacy(start: string, end: string): Promise<RevenueSummary> {
     const supabase = createServerClient();
 
     try {
+        // Widen Supabase filter: checkin_at >= start OR (checkin_at IS NULL AND created_at >= start)
+        // JS filter then applies exclusive-end and COALESCE logic
         const { data, error } = await supabase
             .from('transactions')
-            .select('cash_amount, transfer_amount')
-            .gte('checkin_at', start)
-            .lte('checkin_at', end);
+            .select('cash_amount, transfer_amount, checkin_at, created_at')
+            .or(`checkin_at.gte.${start},and(checkin_at.is.null,created_at.gte.${start})`);
 
         if (error) {
             console.error('Error fetching revenue summary:', error);
@@ -115,20 +121,23 @@ async function getRevenueSummaryLegacy(start: string, end: string): Promise<Reve
 
         let cashAmount = 0;
         let transferAmount = 0;
+        let count = 0;
 
-        (data || []).forEach((t: any) => {
-            cashAmount += t.cash_amount || 0;
-            transferAmount += t.transfer_amount || 0;
-        });
-
-        const totalRevenue = cashAmount + transferAmount;
-        const transactionCount = (data || []).length;
+        for (const t of data || []) {
+            const effDate = effectiveDate(t);
+            // Apply exclusive-end filter: start <= effectiveDate < end
+            if (effDate && effDate >= start && effDate < end) {
+                cashAmount += t.cash_amount ?? 0;
+                transferAmount += t.transfer_amount ?? 0;
+                count++;
+            }
+        }
 
         return {
-            totalRevenue,
+            totalRevenue: cashAmount + transferAmount,
             cashAmount,
             transferAmount,
-            transactionCount,
+            transactionCount: count,
         };
     } catch (error) {
         console.error('Error in getRevenueSummary:', error);

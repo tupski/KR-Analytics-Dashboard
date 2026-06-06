@@ -4,6 +4,7 @@ import { createServerClient } from '@/lib/supabase/server';
 import { getTodayReportRange } from '@/lib/get-report-period-setting';
 import { getReportPeriodRange } from '@/lib/reporting-period';
 import type { ReportPeriodMode } from '@/lib/reporting-period';
+import { exclusiveRange, effectiveDate, calcRevenue } from '@/lib/dashboard/transaction-source';
 import { getLiveOccupancy, getDailyOccupancyTrend } from '@/lib/services/occupancy';
 import { getRevenueTrend, getRevenueSummary as getServiceRevenueSummary } from '@/lib/services/revenue';
 import { getLocations } from '@/lib/services/location';
@@ -16,7 +17,7 @@ import { getKPIData } from '@/lib/dashboard/kpi';
 import { getRevenueSummary } from '@/lib/dashboard/revenue';
 import { getOccupancySummary } from '@/lib/dashboard/occupancy';
 import { getOperationsSummary } from '@/lib/dashboard/operations';
-import { format, subDays, subWeeks, subMonths, subYears, startOfWeek, startOfMonth, startOfYear, parse } from 'date-fns';
+import { format, addDays, subDays, subWeeks, subMonths, subYears, startOfWeek, startOfMonth, startOfYear, parse } from 'date-fns';
 import { id as idLocale } from 'date-fns/locale';
 import { toZonedTime } from 'date-fns-tz';
 import { getNowWIB } from '@/lib/utils/format';
@@ -74,11 +75,13 @@ export async function fetchTodayCheckins(dateParams?: DateFilterParams): Promise
     }
 
     try {
+        // Use COALESCE: checkin_at >= start OR (checkin IS NULL AND created_at >= start)
+        // Exclusive end: effective_date < (start + 1 day)
+        const exclusEnd = new Date(new Date(start).getTime() + 86400000).toISOString();
         const { data, error } = await supabase
             .from('transactions')
-            .select('id, apartment_location, room_number, customer_name, checkin_at')
-            .gte('checkin_at', start)
-            .lte('checkin_at', end)
+            .select('id, apartment_location, room_number, customer_name, checkin_at, created_at')
+            .or(`checkin_at.gte.${start},and(checkin_at.is.null,created_at.gte.${start})`)
             .order('checkin_at', { ascending: false })
             .limit(100);
 
@@ -89,19 +92,26 @@ export async function fetchTodayCheckins(dateParams?: DateFilterParams): Promise
 
         if (!data) return [];
 
-        return data.map((item: {
+        // JS filter: keep only where effective_date < exclusive end
+        const filtered = data.filter((item: any) => {
+            const effDate = item.checkin_at || item.created_at;
+            return effDate && effDate >= start && effDate < exclusEnd;
+        });
+
+        return filtered.map((item: {
             id: string;
             apartment_location: string;
             room_number: string;
             customer_name: string;
             checkin_at: string;
+            created_at: string;
         }) => ({
             id: item.id,
             apartmentLocation: item.apartment_location,
             roomNumber: item.room_number,
             customerName: item.customer_name,
-            time: format(new Date(item.checkin_at), 'HH:mm'),
-            checkinAt: new Date(item.checkin_at)
+            time: format(new Date(item.checkin_at || item.created_at), 'HH:mm'),
+            checkinAt: new Date(item.checkin_at || item.created_at)
         }));
     } catch (error) {
         console.error('Error in fetchTodayCheckins:', error);
@@ -137,11 +147,11 @@ export async function fetchTodayCheckouts(dateParams?: DateFilterParams): Promis
     }
 
     try {
+        const exclusEnd = new Date(new Date(start).getTime() + 86400000).toISOString();
         const { data, error } = await supabase
             .from('transactions')
-            .select('id, apartment_location, room_number, customer_name, checkout_at')
-            .gte('checkout_at', start)
-            .lte('checkout_at', end)
+            .select('id, apartment_location, room_number, customer_name, checkout_at, checkin_at, created_at')
+            .or(`checkin_at.gte.${start},and(checkin_at.is.null,created_at.gte.${start})`)
             .order('checkout_at', { ascending: true })
             .limit(10);
 
@@ -152,7 +162,12 @@ export async function fetchTodayCheckouts(dateParams?: DateFilterParams): Promis
 
         if (!data) return [];
 
-        return data.map((item: {
+        const filtered = data.filter((item: any) => {
+            const effDate = item.checkin_at || item.created_at;
+            return effDate && effDate >= start && effDate < exclusEnd;
+        });
+
+        return filtered.map((item: {
             id: string;
             apartment_location: string;
             room_number: string;
@@ -194,26 +209,33 @@ async function fetchDailyKPISnapshot(
     const dayStart = range.start;
     const dayEnd = range.end;
 
+    // Use COALESCE(checkin_at, created_at) with exclusive end
+    // Widen filter: checkin_at >= start OR (checkin IS NULL AND created_at >= start)
+    // Then JS-filter for exclusive end
     const [{ count: bookingCount }, { data: txData }] = await Promise.all([
         supabase
             .from('transactions')
             .select('*', { count: 'exact', head: true })
-            .gte('checkin_at', dayStart)
-            .lte('checkin_at', dayEnd),
+            .or(`checkin_at.gte.${dayStart},and(checkin_at.is.null,created_at.gte.${dayStart})`),
         supabase
             .from('transactions')
-            .select('cash_amount, transfer_amount, room_number, apartment_location')
-            .gte('checkin_at', dayStart)
-            .lte('checkin_at', dayEnd),
+            .select('cash_amount, transfer_amount, room_number, apartment_location, checkin_at, created_at')
+            .or(`checkin_at.gte.${dayStart},and(checkin_at.is.null,created_at.gte.${dayStart})`),
     ]);
 
-    const revenue = txData?.reduce(
+    // JS filter: effective_date < dayEnd (exclusive)
+    const filtered = (txData || []).filter((t: any) => {
+        const effDate = t.checkin_at || t.created_at;
+        return effDate && effDate >= dayStart && effDate < dayEnd;
+    });
+
+    const revenue = filtered.reduce(
         (sum: number, t: any) => sum + (t.cash_amount || 0) + (t.transfer_amount || 0),
         0,
     ) || 0;
 
     const distinctRoomsOccupied = new Set(
-        (txData || []).map((t: any) => `${t.apartment_location}-${t.room_number}`),
+        filtered.map((t: any) => `${t.apartment_location}-${t.room_number}`),
     ).size;
 
     const avgOccupancy = totalRoomsCount > 0
@@ -286,8 +308,7 @@ export async function fetchKPIData(
         const { count: bookingCount } = await supabase
             .from('transactions')
             .select('*', { count: 'exact', head: true })
-            .gte('checkin_at', actualDayStart)
-            .lte('checkin_at', actualDayEnd);
+            .or(`checkin_at.gte.${actualDayStart},and(checkin_at.is.null,created_at.gte.${actualDayStart})`);
 
         const revenueData = await getServiceRevenueSummary(actualDayStart, actualDayEnd);
         const periodRevenue = revenueData.totalRevenue;
@@ -329,8 +350,7 @@ export async function fetchKPIData(
             const { count: prevBookingCount } = await supabase
                 .from('transactions')
                 .select('*', { count: 'exact', head: true })
-                .gte('checkin_at', compRange.start)
-                .lte('checkin_at', compRange.end);
+                .or(`checkin_at.gte.${compRange.start},and(checkin_at.is.null,created_at.gte.${compRange.start})`);
 
             const prevRevenueData = await getServiceRevenueSummary(compRange.start, compRange.end);
             const prevRevenue = prevRevenueData.totalRevenue;
@@ -488,9 +508,10 @@ async function fetchRevenueDataLegacy(filter: RevenueFilter): Promise<RevenueDat
     }
 
     try {
+        const todayPlus1 = addDays(today, 1);
         const { data, error } = await supabase.rpc('get_daily_revenue_trend', {
             p_start_date: format(startDate, 'yyyy-MM-dd'),
-            p_end_date: format(today, 'yyyy-MM-dd'),
+            p_end_date: format(todayPlus1, 'yyyy-MM-dd'),
             p_location: null,
             p_limit: 1000,
             p_offset: 0
@@ -586,7 +607,8 @@ export async function fetchRevenueData(filter: RevenueFilter): Promise<RevenueDa
 
     // Convert to WIB-aware date strings
     const startWIB = format(toZonedTime(startDate, 'Asia/Jakarta'), 'yyyy-MM-dd');
-    const todayWIB = format(toZonedTime(today, 'Asia/Jakarta'), 'yyyy-MM-dd');
+    // Use exclusive end: today+1 so end date is exclusive (< tomorrow)
+    const todayWIB = format(toZonedTime(addDays(today, 1), 'Asia/Jakarta'), 'yyyy-MM-dd');
 
     try {
         const trendPoints = await getRevenueTrend(startWIB, todayWIB);
@@ -719,18 +741,20 @@ export async function fetchLocationHealthData(): Promise<LocationHealthItem[]> {
             occupiedPerLocation[loc].add(`${t.apartment_location}-${t.room_number}`);
         });
 
-        // 4. Get revenue per location within the report period
+        // 4. Get revenue per location within the report period — using COALESCE(checkin_at, created_at)
         const { data: revenueData } = await supabase
             .from('transactions')
-            .select('apartment_location, cash_amount, transfer_amount')
-            .gte('checkin_at', periodStart)
-            .lte('checkin_at', periodEnd);
+            .select('apartment_location, cash_amount, transfer_amount, checkin_at, created_at')
+            .or(`checkin_at.gte.${periodStart},and(checkin_at.is.null,created_at.gte.${periodStart})`);
 
         const revenuePerLocation: Record<string, number> = {};
         revenueData?.forEach((t: any) => {
-            const loc = t.apartment_location;
-            revenuePerLocation[loc] = (revenuePerLocation[loc] || 0)
-                + (t.cash_amount || 0) + (t.transfer_amount || 0);
+            const effDate = t.checkin_at || t.created_at;
+            if (effDate && effDate >= periodStart && effDate < periodEnd) {
+                const loc = t.apartment_location;
+                revenuePerLocation[loc] = (revenuePerLocation[loc] || 0)
+                    + (t.cash_amount || 0) + (t.transfer_amount || 0);
+            }
         });
 
         // 5. Build location health items
@@ -856,21 +880,22 @@ export async function fetchUnitPerformanceData(): Promise<UnitPerformanceData> {
         const monthEnd = new Date(nowWib.getFullYear(), nowWib.getMonth() + 1, 0, 23, 59, 59, 999);
         const monthEndIso = monthEnd.toISOString();
 
-        // Batch fetch: get revenue per room for current month (calendar-aligned)
+        // Batch fetch: get revenue per room for current month (calendar-aligned) — using COALESCE pattern
         const { data: monthTx, error: monthTxError } = await supabase
             .from('transactions')
-            .select('room_number, apartment_location, cash_amount, transfer_amount')
-            .gte('checkin_at', monthStartIso)
-            .lte('checkin_at', monthEndIso);
+            .select('room_number, apartment_location, cash_amount, transfer_amount, checkin_at, created_at')
+            .or(`checkin_at.gte.${monthStartIso},and(checkin_at.is.null,created_at.gte.${monthStartIso})`);
 
         if (monthTxError) {
             console.error('Error fetching month transactions:', monthTxError);
         }
 
-        // Build revenue map per room
+        // Build revenue map per room — apply exclusive-end filter
         const revenueMap = new Map<string, number>();
         const bookingCountMap = new Map<string, number>();
         (monthTx || []).forEach((tx: any) => {
+            const effDate = tx.checkin_at || tx.created_at;
+            if (!effDate || effDate < monthStartIso || effDate >= monthEndIso) return;
             const key = `${tx.apartment_location}-${tx.room_number}`;
             const rev = (tx.cash_amount || 0) + (tx.transfer_amount || 0);
             revenueMap.set(key, (revenueMap.get(key) || 0) + rev);
@@ -977,11 +1002,11 @@ export async function fetchMarketingPerformanceData(): Promise<{
     const { start, end } = await getTodayReportRange();
 
     try {
+        const exclusEnd = new Date(new Date(start).getTime() + 86400000).toISOString();
         const { data, error } = await supabase
             .from('transactions')
-            .select('marketing_name, cash_amount, transfer_amount')
-            .gte('checkin_at', start)
-            .lte('checkin_at', end);
+            .select('marketing_name, cash_amount, transfer_amount, checkin_at, created_at')
+            .or(`checkin_at.gte.${start},and(checkin_at.is.null,created_at.gte.${start})`);
 
         if (error) {
             console.error('Error fetching marketing performance:', error);
@@ -992,12 +1017,14 @@ export async function fetchMarketingPerformanceData(): Promise<{
             return { items: [], totalRevenue: 0, totalTransactions: 0, activeChannels: 0 };
         }
 
-        // Aggregate in JS
+        // Aggregate in JS — apply exclusive-end filter
         const channelMap = new Map<string, { count: number; revenue: number }>();
         let totalRevenue = 0;
         let totalTx = 0;
 
-        data.forEach((tx: { marketing_name: string | null; cash_amount: number | null; transfer_amount: number | null }) => {
+        data.forEach((tx: { marketing_name: string | null; cash_amount: number | null; transfer_amount: number | null; checkin_at: string; created_at: string }) => {
+            const effDate = tx.checkin_at || tx.created_at;
+            if (!effDate || effDate < start || effDate >= exclusEnd) return;
             const channel = normalizeMarketingName(tx.marketing_name);
             const revenue = (tx.cash_amount || 0) + (tx.transfer_amount || 0);
             const existing = channelMap.get(channel) || { count: 0, revenue: 0 };

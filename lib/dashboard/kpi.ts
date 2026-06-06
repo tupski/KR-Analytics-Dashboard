@@ -77,8 +77,8 @@ export async function getKPIData(params: {
     let bookingsQuery = supabase
         .from('transactions')
         .select('*', { count: 'exact', head: true })
-        .gte('checkin_at', startISO)
-        .lte('checkin_at', endISO);
+        // COALESCE(checkin_at, created_at): wider filter via .or()
+        .or(`checkin_at.gte.${startISO},and(checkin_at.is.null,created_at.gte.${startISO})`);
     if (params.location) bookingsQuery = bookingsQuery.eq('apartment_location', params.location);
 
     // ── Fetch period-bound data in parallel ──────────────────
@@ -95,15 +95,14 @@ export async function getKPIData(params: {
     let checkinsQuery = supabase
         .from('transactions')
         .select('*', { count: 'exact', head: true })
-        .gte('checkin_at', todayBoundaries.startISO)
-        .lte('checkin_at', todayBoundaries.endISO);
+        .or(`checkin_at.gte.${todayBoundaries.startISO},and(checkin_at.is.null,created_at.gte.${todayBoundaries.startISO})`);
     if (params.location) checkinsQuery = checkinsQuery.eq('apartment_location', params.location);
 
     let checkoutsQuery = supabase
         .from('transactions')
         .select('*', { count: 'exact', head: true })
         .gte('checkout_at', todayBoundaries.startISO)
-        .lte('checkout_at', todayBoundaries.endISO);
+        .lt('checkout_at', todayBoundaries.endISO);
     if (params.location) checkoutsQuery = checkoutsQuery.eq('apartment_location', params.location);
 
     const [{ count: checkinsToday }, { count: checkoutsToday }] =
@@ -126,18 +125,25 @@ export async function getKPIData(params: {
 
     // Only run fallback when the range includes today
     if (todayWIB >= startStr && todayWIB <= endStr) {
+        // Use COALESCE(checkin_at, created_at) via .or() filter: checkin_at >= start OR (checkin IS NULL AND created_at >= start)
         const { data: todayTx, error: todayErr } = await supabase
             .from('transactions')
-            .select('cash_amount, transfer_amount, nominal')
-            .gte('checkin_at', todayStartStr)
-            .lte('checkin_at', todayEndStr);
+            .select('cash_amount, transfer_amount, checkin_at, created_at')
+            .or(`checkin_at.gte.${todayStartStr},and(checkin_at.is.null,created_at.gte.${todayStartStr})`)
+            .lt('checkin_at', todayEndStr);  // exclusive end
 
         if (!todayErr && todayTx && todayTx.length > 0) {
-            const todayRevenue = todayTx.reduce((sum, tx) => {
-                return sum + (tx.cash_amount || 0) + (tx.transfer_amount || 0) + (tx.nominal || 0);
-            }, 0);
+            let todayRevenue = 0;
+            let todayCount = 0;
+            for (const tx of todayTx) {
+                const effDate = tx.checkin_at || tx.created_at;
+                if (effDate && effDate >= todayStartStr && effDate < todayEndStr) {
+                    todayRevenue += (tx.cash_amount || 0) + (tx.transfer_amount || 0);
+                    todayCount++;
+                }
+            }
 
-            console.log('[Dashboard KPI] today raw transaction count:', todayTx.length);
+            console.log('[Dashboard KPI] today raw transaction count:', todayCount);
             console.log('[Dashboard KPI] today raw revenue sum:', todayRevenue);
 
             // Override period revenue if service returned 0 but we have real data

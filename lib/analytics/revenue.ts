@@ -64,6 +64,10 @@ export async function getDailyRevenue(
 /**
  * Get aggregated revenue summary for a date range.
  * Returns totals, averages, per-day/per-transaction metrics.
+ *
+ * NOTE: This queries analytics_daily_revenue which uses COALESCE(checkin_at, created_at)
+ * in the sync worker. Today's data may be delayed ~1-2 min behind sync.
+ * Callers should fall back to raw transactions for today if needed.
  */
 export async function getRevenueSummary(
     startDate?: string,

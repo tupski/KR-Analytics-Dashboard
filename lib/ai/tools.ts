@@ -48,6 +48,7 @@ import type { ReportPeriodMode } from '@/lib/reporting-period';
 import { queryAnalytics, parseNumeric } from '@/lib/analytics/db';
 import { withCache, pickTTL } from '@/lib/analytics/cache';
 import { getGuestStayHistory } from '@/lib/ai/tools/guest-history';
+import { effectiveDate } from '@/lib/dashboard/transaction-source';
 import { DATE_RANGE, API_LIMITS, IDLE_THRESHOLDS, TIME, LOCATION_HEALTH } from '@/lib/config/constants';
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -234,9 +235,9 @@ async function fetchPeriodSummary(
 
     let txQuery = supabase
         .from('transactions')
-        .select('cash_amount, transfer_amount, customer_name, room_number, apartment_location, marketing_name, marketing_fee', { count: 'exact' })
-        .gte('checkin_at', checkinStart)
-        .lte('checkin_at', checkinEnd);
+        .select('cash_amount, transfer_amount, customer_name, room_number, apartment_location, marketing_name, marketing_fee, checkin_at, created_at', { count: 'exact' })
+        // COALESCE(checkin_at, created_at): wider filter via .or() — catches null-checkin rows
+        .or(`checkin_at.gte.${checkinStart},and(checkin_at.is.null,created_at.gte.${checkinStart})`);
 
     // pengeluaran.tanggal is date-only — always calendar-aligned
     let expQuery = supabase
@@ -250,21 +251,27 @@ async function fetchPeriodSummary(
         expQuery = expQuery.eq('apartment_location', location);
     }
 
-    const [{ data: txData, count: txCount }, { data: expData }] = await Promise.all([
+    const [{ data: txRaw, count: txCount }, { data: expData }] = await Promise.all([
         txQuery,
         expQuery,
     ]);
 
-    const revenue = (txData || []).reduce(
+    // Apply JS-side COALESCE filter: effectiveDate in [checkinStart, checkinEnd)
+    const txData = (txRaw || []).filter((t: TransactionRecord) => {
+        const effDate = effectiveDate(t);
+        return effDate && effDate >= checkinStart && effDate < checkinEnd;
+    });
+
+    const revenue = txData.reduce(
         (s: number, t: TransactionRecord) => s + (t.cash_amount || 0) + (t.transfer_amount || 0),
         0,
     );
-    const cash = (txData || []).reduce((s: number, t: TransactionRecord) => s + (t.cash_amount || 0), 0);
-    const transfer = (txData || []).reduce((s: number, t: TransactionRecord) => s + (t.transfer_amount || 0), 0);
-    const marketingFeeTotal = (txData || []).reduce((s: number, t: TransactionRecord) => s + (t.marketing_fee || 0), 0);
+    const cash = txData.reduce((s: number, t: TransactionRecord) => s + (t.cash_amount || 0), 0);
+    const transfer = txData.reduce((s: number, t: TransactionRecord) => s + (t.transfer_amount || 0), 0);
+    const marketingFeeTotal = txData.reduce((s: number, t: TransactionRecord) => s + (t.marketing_fee || 0), 0);
 
     const distinctCustomers = new Set(
-        (txData || [])
+        txData
             .filter((t: TransactionRecord) => t.customer_name)
             .map((t: TransactionRecord) => String(t.customer_name).toLowerCase().trim()),
     ).size;
@@ -318,13 +325,16 @@ async function fetchTopCustomers(start: string, end: string, limit: number) {
 
     const { data } = await supabase
         .from('transactions')
-        .select('customer_name, cash_amount, transfer_amount')
-        .gte('checkin_at', startIso)
-        .lte('checkin_at', endIso);
+        .select('customer_name, cash_amount, transfer_amount, checkin_at, created_at')
+        // COALESCE(checkin_at, created_at): wider filter catches null-checkin rows
+        .or(`checkin_at.gte.${startIso},and(checkin_at.is.null,created_at.gte.${startIso})`);
 
     const map: Record<string, { visits: number; revenue: number; raw: string }> = {};
     (data || []).forEach((t: TransactionRecord) => {
         if (!t.customer_name) return;
+        // JS-side COALESCE + exclusive end
+        const effDate = t.checkin_at || t.created_at || '';
+        if (!effDate || effDate < startIso || effDate >= endIso) return;
         const key = String(t.customer_name).toLowerCase().trim();
         if (!map[key]) map[key] = { visits: 0, revenue: 0, raw: t.customer_name };
         map[key].visits++;
@@ -376,7 +386,8 @@ async function fetchUnitInventory(location?: string) {
     let txQ = supabase
         .from('transactions')
         .select('room_number, apartment_location')
-        .lte('checkin_at', now)
+        // COALESCE(checkin_at, created_at): handle null checkin for active stays
+        .or(`checkin_at.lte.${now},and(checkin_at.is.null,created_at.lte.${now})`)
         .gte('checkout_at', now);
     if (location) txQ = txQ.eq('apartment_location', location);
     const { data: active } = await txQ;
@@ -441,9 +452,9 @@ async function fetchRevenueTrend(start: string, end: string, location?: string):
     // Get distinct dates with revenue aggregated per day
     let q = supabase
         .from('transactions')
-        .select('checkin_at, cash_amount, transfer_amount')
-        .gte('checkin_at', rangeStart)
-        .lte('checkin_at', rangeEnd);
+        .select('checkin_at, created_at, cash_amount, transfer_amount')
+        // COALESCE(checkin_at, created_at): wider filter catches null-checkin rows
+        .or(`checkin_at.gte.${rangeStart},and(checkin_at.is.null,created_at.gte.${rangeStart})`);
 
     if (location) q = q.eq('apartment_location', location);
 
@@ -452,10 +463,12 @@ async function fetchRevenueTrend(start: string, end: string, location?: string):
         return { period: { start_date: start, end_date: end, location: location || null }, total_revenue: 0, days: 0, daily_revenue: [], avg_per_day: 0, max_day: null, min_day: null };
     }
 
-    // Aggregate by date
+    // Aggregate by date using COALESCE(checkin_at, created_at) + exclusive end
     const byDate: Record<string, number> = {};
     for (const t of data) {
-        const day = (t.checkin_at as string).slice(0, 10); // "YYYY-MM-DD"
+        const effDate = t.checkin_at || t.created_at || '';
+        if (!effDate || effDate < rangeStart || effDate >= rangeEnd) continue;
+        const day = effDate.slice(0, 10); // "YYYY-MM-DD"
         byDate[day] = (byDate[day] || 0) + (t.cash_amount || 0) + (t.transfer_amount || 0);
     }
 
@@ -491,29 +504,33 @@ async function fetchLatestStatus(): Promise<LatestStatus> {
     // Type B: use mode-aware today boundaries
     const { start: dayStart, end: dayEnd } = await getTodayReportRange();
 
-    // Today's transactions (checked-in today)
+    // Today's transactions — use COALESCE(checkin_at, created_at) wide filter
     const { data: todayTx, count: txCount } = await supabase
         .from('transactions')
-        .select('cash_amount, transfer_amount, status', { count: 'exact' })
-        .gte('checkin_at', dayStart)
-        .lte('checkin_at', dayEnd);
+        .select('cash_amount, transfer_amount, status, checkin_at, created_at', { count: 'exact' })
+        .or(`checkin_at.gte.${dayStart},and(checkin_at.is.null,created_at.gte.${dayStart})`);
 
-    // Active stays (currently checked-in)
+    // Active stays (currently checked-in) — use COALESCE for checkin
     const nowIso = getNowWIB();
     const { count: activeStays } = await supabase
         .from('transactions')
         .select('*', { count: 'exact', head: true })
-        .lte('checkin_at', nowIso)
-        .gte('checkout_at', nowIso);
+        .or(`checkin_at.lte.${nowIso},and(checkin_at.is.null,created_at.lte.${nowIso})`)
+        .or(`checkout_at.gte.${nowIso},checkout_at.is.null`);
 
-    // Checkouts today — use same period boundaries
+    // Checkouts today — use same period boundaries (checkout_at is always set, no COALESCE needed)
     const { count: checkoutToday } = await supabase
         .from('transactions')
         .select('*', { count: 'exact', head: true })
         .gte('checkout_at', dayStart)
         .lte('checkout_at', dayEnd);
 
-    const revenueToday = (todayTx || []).reduce(
+    // JS-side COALESCE filter + exclusive end
+    const effectiveTodayTx = (todayTx || []).filter((t: TransactionRecord) => {
+        const effDate = t.checkin_at || t.created_at || '';
+        return effDate && effDate >= dayStart && effDate < dayEnd;
+    });
+    const revenueToday = effectiveTodayTx.reduce(
         (s: number, t: TransactionRecord) => s + (t.cash_amount || 0) + (t.transfer_amount || 0), 0
     );
 
@@ -816,9 +833,68 @@ async function fetchGuestSourceSummary(start: string, end: string, location?: st
 
 /**
  * fetchCheckinHeatmap — heatmap jam checkin (0-23) dalam periode.
- * Panggil RPC get_checkin_heatmap.
+ * Queries local analytics DB with 24-hour generate_series and COALESCE(checkin_at, created_at).
+ * Falls back to Supabase RPC if analytics DB unavailable.
  */
 async function fetchCheckinHeatmap(start: string, end: string, location?: string): Promise<CheckinHeatmapResult> {
+    // Try analytics DB first for 24-hour zero-fill
+    if (!!process.env.ANALYTICS_DATABASE_URL) {
+        try {
+            const params: any[] = [start, end];
+            let whereClause = `(COALESCE(t.checkin_at, t.created_at) AT TIME ZONE 'Asia/Jakarta')::date >= $1::date
+                AND (COALESCE(t.checkin_at, t.created_at) AT TIME ZONE 'Asia/Jakarta')::date <= $2::date`;
+            let idx = 3;
+            if (location) {
+                whereClause += ` AND t.apartment_location = $${idx}`;
+                params.push(location);
+            }
+
+            const rows = await queryAnalytics<any>(`
+                WITH hours AS (
+                    SELECT generate_series(0, 23) AS hour
+                ),
+                checkins AS (
+                    SELECT
+                        EXTRACT(HOUR FROM COALESCE(t.checkin_at, t.created_at) AT TIME ZONE 'Asia/Jakarta')::int AS hour,
+                        COUNT(*) AS transaction_count
+                    FROM transactions t
+                    WHERE ${whereClause}
+                    GROUP BY 1
+                )
+                SELECT
+                    h.hour,
+                    COALESCE(c.transaction_count, 0) AS transaction_count
+                FROM hours h
+                LEFT JOIN checkins c ON c.hour = h.hour
+                ORDER BY h.hour ASC
+            `, params);
+
+            const data = rows.map((r: any) => ({
+                hour: r.hour,
+                transaction_count: Number(r.transaction_count),
+                percentage: 0,
+            }));
+
+            const total = data.reduce((s: number, r: any) => s + r.transaction_count, 0);
+            const enriched = data.map((r: any) => ({
+                ...r,
+                percentage: total > 0 ? Math.round((r.transaction_count / total) * 10000) / 100 : 0,
+            }));
+
+            return {
+                period: { start_date: start, end_date: end, location: location || null },
+                hourly_distribution: enriched,
+                peak_hour: enriched.reduce(
+                    (best: any, cur: any) => !best || cur.transaction_count > best.transaction_count ? cur : best,
+                    null as any,
+                ),
+            };
+        } catch (err) {
+            console.warn('[tools] Analytics DB unavailable for heatmap, falling back to Supabase RPC:', err);
+        }
+    }
+
+    // Fallback: Supabase RPC + JS 24-hour zero-fill
     const supabase = createServerClient();
     const { data, error } = await supabase.rpc('get_checkin_heatmap', {
         p_start_date: start,
@@ -826,13 +902,26 @@ async function fetchCheckinHeatmap(start: string, end: string, location?: string
         p_location: location || null,
     });
     if (error) throw error;
+    // JS zero-fill 24 hours
+    const filled = Array.from({ length: 24 }, (_, i) => {
+        const existing = (data || []).find((r: any) => r.hour === i);
+        return {
+            hour: i,
+            transaction_count: existing?.transaction_count ?? 0,
+            percentage: existing?.percentage ?? 0,
+        };
+    });
+    const total = filled.reduce((s: number, r: any) => s + r.transaction_count, 0);
+    const enriched = filled.map((r: any) => ({
+        ...r,
+        percentage: total > 0 ? Math.round((r.transaction_count / total) * 10000) / 100 : 0,
+    }));
     return {
         period: { start_date: start, end_date: end, location: location || null },
-        hourly_distribution: data || [],
-        peak_hour: (data || []).reduce(
-            (best: RpcResultRow | null, cur: RpcResultRow) =>
-                !best || (cur.transaction_count ?? 0) > (best.transaction_count ?? 0) ? cur : best,
-            null as RpcResultRow | null,
+        hourly_distribution: enriched,
+        peak_hour: enriched.reduce(
+            (best: any, cur: any) => !best || cur.transaction_count > best.transaction_count ? cur : best,
+            null as any,
         ),
     };
 }

@@ -102,12 +102,11 @@ export async function fetchLaporanData(
         : getDateRange(filter, mode);
     const { start, end, label } = range;
 
-    // Fetch transactions in range
+    // Fetch transactions in range using COALESCE(checkin_at, created_at)
     const { data: transactions } = await supabase
         .from('transactions')
         .select('*')
-        .gte('checkin_at', start)
-        .lte('checkin_at', end)
+        .or(`checkin_at.gte.${start},and(checkin_at.is.null,created_at.gte.${start})`)
         .order('checkin_at', { ascending: false });
 
     const txList = transactions || [];
@@ -138,11 +137,16 @@ export async function fetchLaporanData(
     }
 
     // Fallback: compute from Supabase txList if analytics threw error
+    // Apply exclusive-end JS filter for COALESCE semantics
     if (!analyticsRevenueUsed) {
-        totalRevenue = txList.reduce((s, t: any) => s + (t.cash_amount || 0) + (t.transfer_amount || 0), 0);
-        totalCash = txList.reduce((s, t: any) => s + (t.cash_amount || 0), 0);
-        totalTransfer = txList.reduce((s, t: any) => s + (t.transfer_amount || 0), 0);
-        totalTransactions = txList.length;
+        const filtered = txList.filter((t: any) => {
+            const effDate = t.checkin_at || t.created_at;
+            return effDate && effDate >= start && effDate < end;
+        });
+        totalRevenue = filtered.reduce((s: number, t: any) => s + (t.cash_amount || 0) + (t.transfer_amount || 0), 0);
+        totalCash = filtered.reduce((s: number, t: any) => s + (t.cash_amount || 0), 0);
+        totalTransfer = filtered.reduce((s: number, t: any) => s + (t.transfer_amount || 0), 0);
+        totalTransactions = filtered.length;
     }
 
     // Get rooms per location
@@ -154,8 +158,14 @@ export async function fetchLaporanData(
     });
 
     // Group by location and room
+    // Use same filtered list as revenue for location grouping
+    const groupedTxList = analyticsRevenueUsed ? txList : txList.filter((t: any) => {
+        const effDate = t.checkin_at || t.created_at;
+        return effDate && effDate >= start && effDate < end;
+    });
+
     const locMap: Record<string, { transactions: number; revenue: number; rooms: Record<string, { tx: number; rev: number }> }> = {};
-    txList.forEach((t: any) => {
+    groupedTxList.forEach((t: any) => {
         const loc = t.apartment_location;
         if (!locMap[loc]) locMap[loc] = { transactions: 0, revenue: 0, rooms: {} };
         locMap[loc].transactions++;
@@ -442,9 +452,8 @@ export async function fetchLaporanData(
         const [prevTxResult, prevExpResult] = await Promise.all([
             supabase
                 .from('transactions')
-                .select('cash_amount, transfer_amount')
-                .gte('checkin_at', prevRange.start)
-                .lte('checkin_at', prevRange.end),
+                .select('cash_amount, transfer_amount, checkin_at, created_at')
+                .or(`checkin_at.gte.${prevRange.start},and(checkin_at.is.null,created_at.gte.${prevRange.start})`),
             supabase
                 .from('pengeluaran')
                 .select('jumlah')
@@ -452,8 +461,12 @@ export async function fetchLaporanData(
                 .lte('tanggal', prevRange.end.split('T')[0]),
         ]);
 
-        prevRevenue = prevTxResult.data?.reduce((s, t: any) => s + (t.cash_amount || 0) + (t.transfer_amount || 0), 0) || 0;
-        prevTransactions = prevTxResult.data?.length || 0;
+        const prevFiltered = (prevTxResult.data || []).filter((t: any) => {
+            const effDate = t.checkin_at || t.created_at;
+            return effDate && effDate >= prevRange.start && effDate < prevRange.end;
+        });
+        prevRevenue = prevFiltered.reduce((s: number, t: any) => s + (t.cash_amount || 0) + (t.transfer_amount || 0), 0) || 0;
+        prevTransactions = prevFiltered.length;
         prevExpenses = prevExpResult.data?.reduce((s, e: any) => s + (e.jumlah || 0), 0) || 0;
     }
 

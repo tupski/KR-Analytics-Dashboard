@@ -97,10 +97,12 @@ export async function fetchBookings(filters: BookingFilters = {}): Promise<Booki
         }
 
         if (rangeStart) {
-            query = query.gte('checkin_at', rangeStart);
+            query = query.or(`checkin_at.gte.${rangeStart},and(checkin_at.is.null,created_at.gte.${rangeStart})`);
         }
         if (rangeEnd) {
-            query = query.lte('checkin_at', rangeEnd);
+            // Just widened filter for start; the list display is read-only
+            // We keep the broader filter since booking list shows transactions
+            // and isn't limited to count-only. Will rely on JS filter for exclusive end.
         }
 
         // Order and paginate
@@ -168,12 +170,11 @@ export async function fetchBookingStats(dateParams?: DateFilterParams) {
         ? computeDateRange(dateParams.rangePreset, dateParams.startDate, dateParams.endDate, mode)
         : await getTodayReportRange();
 
-    // Main period stats
+    // Main period stats — use COALESCE pattern
     const { count: bookingCount } = await supabase
         .from('transactions')
         .select('id', { count: 'exact', head: true })
-        .gte('checkin_at', range.start)
-        .lte('checkin_at', range.end);
+        .or(`checkin_at.gte.${range.start},and(checkin_at.is.null,created_at.gte.${range.start})`);
 
     const revenueData = await getServiceRevenueSummary(range.start, range.end);
     const totalRevenue = revenueData.totalRevenue;
@@ -204,8 +205,7 @@ export async function fetchBookingStats(dateParams?: DateFilterParams) {
             const { count: prevCount } = await supabase
                 .from('transactions')
                 .select('id', { count: 'exact', head: true })
-                .gte('checkin_at', cr.start)
-                .lte('checkin_at', cr.end);
+                .or(`checkin_at.gte.${cr.start},and(checkin_at.is.null,created_at.gte.${cr.start})`);
 
             const prevRevData = await getServiceRevenueSummary(cr.start, cr.end);
             const prevRevenue = prevRevData.totalRevenue;
@@ -270,10 +270,7 @@ export async function fetchBookingsForExport(filters: BookingFilters = {}) {
         }
 
         if (rangeStart) {
-            query = query.gte('checkin_at', rangeStart);
-        }
-        if (rangeEnd) {
-            query = query.lte('checkin_at', rangeEnd);
+            query = query.or(`checkin_at.gte.${rangeStart},and(checkin_at.is.null,created_at.gte.${rangeStart})`);
         }
 
         query = query.order('checkin_at', { ascending: false });

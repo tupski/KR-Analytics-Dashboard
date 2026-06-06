@@ -96,12 +96,16 @@ export async function refreshDailyRevenue(pool: Pool, opts: RefreshOptions): Pro
         console.log(`[summary:daily_revenue] Deleted ${delResult.rowCount} rows`);
 
         // INSERT computed from transactions mirror
+        // Uses COALESCE(checkin_at, created_at) for effective date
         const insResult = await pool.query(`
             INSERT INTO analytics_daily_revenue
                 (date_wib, apartment_location, total_revenue, cash_revenue, transfer_revenue,
                  transaction_count, avg_revenue_per_tx, unique_rooms)
             SELECT
-                (created_at AT TIME ZONE 'Asia/Jakarta')::DATE as date_wib,
+                COALESCE(
+                    (checkin_at AT TIME ZONE 'Asia/Jakarta')::DATE,
+                    (created_at AT TIME ZONE 'Asia/Jakarta')::DATE
+                ) as date_wib,
                 COALESCE(apartment_location, 'Unknown') as apartment_location,
                 COALESCE(SUM(COALESCE(cash_amount,0) + COALESCE(transfer_amount,0)), 0) as total_revenue,
                 COALESCE(SUM(COALESCE(cash_amount,0)), 0) as cash_revenue,
@@ -113,7 +117,10 @@ export async function refreshDailyRevenue(pool: Pool, opts: RefreshOptions): Pro
                 COUNT(DISTINCT room_number) as unique_rooms
             FROM transactions
             WHERE is_deleted = false
-              AND (created_at AT TIME ZONE 'Asia/Jakarta')::DATE >= $1
+              AND COALESCE(
+                  (checkin_at AT TIME ZONE 'Asia/Jakarta')::DATE,
+                  (created_at AT TIME ZONE 'Asia/Jakarta')::DATE
+              ) >= $1
             GROUP BY date_wib, apartment_location
             ORDER BY date_wib, apartment_location
         `, [cutoffDate]);
@@ -164,12 +171,13 @@ export async function refreshMonthlySummary(pool: Pool, opts: RefreshOptions): P
         console.log(`[summary:monthly] Deleted ${delResult.rowCount} rows`);
 
         // ── Step 1: INSERT revenue data from transactions ──
+        // Uses COALESCE(checkin_at, created_at) for effective date
         const revResult = await pool.query(`
             INSERT INTO analytics_monthly_summary
                 (year, month, apartment_location, total_revenue, cash_revenue, transfer_revenue, transaction_count)
             SELECT
-                EXTRACT(YEAR FROM (created_at AT TIME ZONE 'Asia/Jakarta'))::int as year,
-                EXTRACT(MONTH FROM (created_at AT TIME ZONE 'Asia/Jakarta'))::int as month,
+                EXTRACT(YEAR FROM COALESCE(checkin_at, created_at) AT TIME ZONE 'Asia/Jakarta')::int as year,
+                EXTRACT(MONTH FROM COALESCE(checkin_at, created_at) AT TIME ZONE 'Asia/Jakarta')::int as month,
                 COALESCE(apartment_location, 'Unknown') as apartment_location,
                 COALESCE(SUM(COALESCE(cash_amount,0) + COALESCE(transfer_amount,0)), 0) as total_revenue,
                 COALESCE(SUM(COALESCE(cash_amount,0)), 0) as cash_revenue,
@@ -177,7 +185,10 @@ export async function refreshMonthlySummary(pool: Pool, opts: RefreshOptions): P
                 COUNT(*) as transaction_count
             FROM transactions
             WHERE is_deleted = false
-              AND (created_at AT TIME ZONE 'Asia/Jakarta')::DATE >= $1
+              AND COALESCE(
+                  (checkin_at AT TIME ZONE 'Asia/Jakarta')::DATE,
+                  (created_at AT TIME ZONE 'Asia/Jakarta')::DATE
+              ) >= $1
             GROUP BY year, month, apartment_location
         `, [cutoffDate]);
         console.log(`[summary:monthly] Revenue rows: ${revResult.rowCount}`);
@@ -294,14 +305,17 @@ export async function refreshMonthlySummary(pool: Pool, opts: RefreshOptions): P
                 paid_fees_amount = sub.total_fees
             FROM (
                 SELECT
-                    EXTRACT(YEAR FROM (t.created_at AT TIME ZONE 'Asia/Jakarta'))::int as year,
-                    EXTRACT(MONTH FROM (t.created_at AT TIME ZONE 'Asia/Jakarta'))::int as month,
+                    EXTRACT(YEAR FROM COALESCE(t.checkin_at, t.created_at) AT TIME ZONE 'Asia/Jakarta')::int as year,
+                    EXTRACT(MONTH FROM COALESCE(t.checkin_at, t.created_at) AT TIME ZONE 'Asia/Jakarta')::int as month,
                     COALESCE(t.apartment_location, 'Unknown') as apartment_location,
                     COALESCE(SUM(i.fee_amount), 0) as total_fees
                 FROM tagihan_fee_lunas_items i
                 JOIN transactions t ON t.id = i.transaction_id
                 WHERE i.is_deleted = false AND t.is_deleted = false
-                  AND (t.created_at AT TIME ZONE 'Asia/Jakarta')::DATE >= $1
+                  AND COALESCE(
+                      (t.checkin_at AT TIME ZONE 'Asia/Jakarta')::DATE,
+                      (t.created_at AT TIME ZONE 'Asia/Jakarta')::DATE
+                  ) >= $1
                 GROUP BY year, month, apartment_location
             ) sub
             WHERE m.year = sub.year AND m.month = sub.month AND m.apartment_location = sub.apartment_location

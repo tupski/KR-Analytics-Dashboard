@@ -39,11 +39,13 @@ export async function fetchCustomers(
         query = query.ilike('customer_name', `%${search}%`);
     }
 
-    // Apply date filter if unified params provided
+    // Apply date filter if unified params provided — uses COALESCE(checkin_at, created_at)
     if (dateParams?.rangePreset) {
         const mode = await getReportPeriodSetting();
         const range = computeDateRange(dateParams.rangePreset, dateParams.startDate, dateParams.endDate, mode);
-        query = query.gte('checkin_at', range.start).lte('checkin_at', range.end);
+        query = query
+            .or(`checkin_at.gte.${range.start},and(checkin_at.is.null,created_at.gte.${range.start})`)
+            .lte('created_at', range.end);
     }
 
     const { data, count } = await query
@@ -87,7 +89,9 @@ export async function fetchCustomersForExport(
     if (dateParams?.rangePreset) {
         const mode = await getReportPeriodSetting();
         const range = computeDateRange(dateParams.rangePreset, dateParams.startDate, dateParams.endDate, mode);
-        query = query.gte('checkin_at', range.start).lte('checkin_at', range.end);
+        query = query
+            .or(`checkin_at.gte.${range.start},and(checkin_at.is.null,created_at.gte.${range.start})`)
+            .lte('created_at', range.end);
     }
 
     const { data } = await query;

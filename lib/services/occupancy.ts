@@ -2,6 +2,7 @@ import { format, subDays, eachDayOfInterval } from 'date-fns';
 import { createServerClient } from '@/lib/supabase/server';
 import { getNowWIB } from '@/lib/utils/format';
 import { getOccupancyWindow } from '@/lib/dashboard/periods';
+import { queryAnalytics } from '@/lib/analytics/db';
 import {
     getOccupancyDaily as getOccupancyDailyAnalytics,
     getOccupancyRate as getOccupancyRateAnalytics,
@@ -141,7 +142,7 @@ export async function getLiveOccupancy(): Promise<LiveOccupancyResult> {
         const { data: occupiedData, error: occError } = await supabase
             .from('transactions')
             .select('room_number, apartment_location')
-            .lte('checkin_at', now)
+            .or(`checkin_at.lte.${now},and(checkin_at.is.null,created_at.lte.${now})`)
             .or(`checkout_at.gte.${now},checkout_at.is.null`);
 
         if (occError) {
@@ -252,19 +253,40 @@ export async function getDailyOccupancyTrend(days: number = 30): Promise<DailyOc
 
             // Build the full date range
             const allDays: Date[] = eachDayOfInterval({ start: startDate, end: today });
-            const result: DailyOccupancyTrendPoint[] = allDays.map((d) => {
+            const todayKey = format(today, 'yyyy-MM-dd');
+            const result: DailyOccupancyTrendPoint[] = await Promise.all(allDays.map(async (d) => {
                 const dateKey = format(d, 'yyyy-MM-dd');
+
+                // If analytics_occupancy_daily has no data for today, fallback to raw analytics mirror
+                if (dateKey === todayKey && !byDate.has(dateKey)) {
+                    try {
+                        const dayStart = `${todayKey}T00:00:00`;
+                        const dayEnd = `${todayKey}T23:59:59`;
+                        const fallbackRows = await queryAnalytics<any>(`
+                            SELECT DISTINCT t.room_number, t.apartment_location
+                            FROM transactions t
+                            WHERE (COALESCE(t.checkin_at, t.created_at) AT TIME ZONE 'Asia/Jakarta')::date = $1::date
+                              AND (t.is_deleted = false OR t.is_deleted IS NULL)
+                        `, [todayKey]);
+                        const occupiedToday = new Set(
+                            (fallbackRows || []).map((r: any) => `${r.apartment_location}-${r.room_number}`)
+                        ).size;
+                        const occupiedUnits = Math.min(occupiedToday, totalRooms);
+                        const occupancyRate = totalRooms > 0
+                            ? Math.min(Math.round((occupiedUnits / totalRooms) * 10000) / 100, 100)
+                            : 0;
+                        return { date: dateKey, occupancyRate, occupiedUnits, totalUnits: totalRooms };
+                    } catch {
+                        // fallthrough to default (0 occupancy)
+                    }
+                }
+
                 const occupiedUnits = Math.min(byDate.get(dateKey)?.size || 0, totalRooms);
                 const occupancyRate = totalRooms > 0
                     ? Math.min(Math.round((occupiedUnits / totalRooms) * 10000) / 100, 100)
                     : 0;
-                return {
-                    date: dateKey,
-                    occupancyRate,
-                    occupiedUnits,
-                    totalUnits: totalRooms,
-                };
-            });
+                return { date: dateKey, occupancyRate, occupiedUnits, totalUnits: totalRooms };
+            }));
 
             return result;
         } catch (error) {
