@@ -680,7 +680,7 @@ export default function AIChatCore({
                     };
                 },
                 onDone: (finishReason: string, isTruncated: boolean) => {
-                    const finalContent = accumulatedAnswer || 'KRAI belum menerima jawaban...';
+                    const finalContent = accumulatedAnswer || 'KRAI gagal menghasilkan jawaban. Coba tanyakan ulang.';
                     updateAssistant({
                         content: normalizeAiText(finalContent),
                         thinking: accumulatedThinking,

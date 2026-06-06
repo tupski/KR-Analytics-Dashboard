@@ -258,12 +258,20 @@ export default function KraiInsightCard({
 
         // Start 30-second timeout for answer event
         let gotAnswer = false;
+        let timedOut = false;
         clearAnswerTimeout();
         timeoutRef.current = setTimeout(() => {
             if (!gotAnswer) {
+                timedOut = true;
                 streamStateRef.current = 'timeout';
                 setStreamState('timeout');
-                setError('Waktu tunggu habis. Insight sedang dibuat ulang, coba tunggu sebentar.');
+                setError('KRAI butuh waktu lebih lama dari biasanya. Coba regenerate jawaban ini.');
+                console.debug('[KRAI Timeout]', {
+                    pageContext,
+                    dataHash,
+                    timeoutMs: 30000,
+                    hasDataSummary: !!dataSummary,
+                });
                 setMainStreaming(false);
                 setLoading(false);
                 setIsSegarkanLoading(false);
@@ -345,8 +353,12 @@ export default function KraiInsightCard({
                     onError: (message) => {
                         gotAnswer = true;
                         clearAnswerTimeout();
+                        console.debug('[KRAI Insight] Stream error', {
+                            pageContext,
+                            error: message,
+                        });
                         setStreamState('error');
-                        setError(message);
+                        setError(message || 'KRAI gagal membuat insight. Coba regenerate.');
                         setMainStreaming(false);
                         setLoading(false);
                         setIsSegarkanLoading(false);
@@ -437,8 +449,25 @@ export default function KraiInsightCard({
 
     /** In-card follow-up: generate answer inside card via streaming */
     const handleFollowUp = useCallback(async (q: string) => {
+        // ── Guard: don't trigger if insight not ready ──
+        if (!insight || insight.trim().length === 0) {
+            console.debug('[KRAI FollowUp] Blocked — insight not ready', {
+                pageContext,
+                hasInsight: !!insight,
+                insightLength: insight?.length || 0,
+            });
+            return;
+        }
+
         const userPrompt = suggestionToUserPrompt(q);
         const followUpId = `fu-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+
+        console.debug('[KRAI FollowUp] Starting', {
+            followUpId,
+            question: q.slice(0, 100),
+            pageContext,
+            insightLength: insight.length,
+        });
 
         // Create placeholder
         const newFollowUp: FollowUpAnswer = {
@@ -461,7 +490,10 @@ export default function KraiInsightCard({
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     messages: [
-                        { role: 'user', content: `Berdasarkan insight berikut:\n\n${insight}\n\nJawab pertanyaan ini: ${userPrompt}` },
+                        {
+                            role: 'user',
+                            content: `Konteks halaman: ${pageContext}\n\nBerdasarkan insight berikut:\n\n${insight}\n\nJawab pertanyaan lanjutan ini: ${userPrompt}`,
+                        },
                     ],
                     config: { provider: 'auto', model: 'auto' },
                     stream: true,
@@ -470,9 +502,14 @@ export default function KraiInsightCard({
 
             if (!res.ok) {
                 const errData = await res.json().catch(() => ({}));
+                console.debug('[KRAI FollowUp] API error', {
+                    followUpId,
+                    status: res.status,
+                    error: errData.error || '(none)',
+                });
                 setFollowUpAnswers(prev => prev.map(fa =>
                     fa.id === followUpId
-                        ? { ...fa, answer: `⚠️ Gagal: ${errData.error || `HTTP ${res.status}`}`, isStreaming: false }
+                        ? { ...fa, answer: `KRAI gagal menjawab pertanyaan lanjutan. Coba ulangi beberapa saat lagi.`, isStreaming: false }
                         : fa,
                 ));
                 return;
@@ -528,23 +565,32 @@ export default function KraiInsightCard({
                                 ));
                                 break;
                             case 'done':
-                                setFollowUpAnswers(prev => prev.map(fa =>
-                                    fa.id === followUpId
-                                        ? {
-                                            ...fa,
-                                            answer: normalizeAiText(accumulatedAnswer || 'Insight sedang dibuat...'),
-                                            thinking: accumulatedThinking,
-                                            thinkingSteps: splitThinkingSteps(accumulatedThinking),
-                                            isStreaming: false,
-                                            isTruncated: !!event.isTruncated,
-                                        }
-                                        : fa,
-                                ));
+                                {
+                                    const finalAnswer = accumulatedAnswer.trim()
+                                        ? normalizeAiText(accumulatedAnswer)
+                                        : 'KRAI gagal menjawab pertanyaan lanjutan. Coba ulangi beberapa saat lagi.';
+                                    setFollowUpAnswers(prev => prev.map(fa =>
+                                        fa.id === followUpId
+                                            ? {
+                                                ...fa,
+                                                answer: finalAnswer,
+                                                thinking: accumulatedThinking,
+                                                thinkingSteps: splitThinkingSteps(accumulatedThinking),
+                                                isStreaming: false,
+                                                isTruncated: !!event.isTruncated,
+                                            }
+                                            : fa,
+                                    ));
+                                }
                                 break;
                             case 'error':
+                                console.debug('[KRAI FollowUp] Stream error', {
+                                    followUpId,
+                                    error: event.message || '(no message)',
+                                });
                                 setFollowUpAnswers(prev => prev.map(fa =>
                                     fa.id === followUpId
-                                        ? { ...fa, answer: `⚠️ ${event.message || 'Terjadi kesalahan.'}`, isStreaming: false }
+                                        ? { ...fa, answer: `KRAI gagal menjawab pertanyaan lanjutan. Coba ulangi beberapa saat lagi.`, isStreaming: false }
                                         : fa,
                                 ));
                                 break;
@@ -553,13 +599,17 @@ export default function KraiInsightCard({
                 }
             }
         } catch (err: any) {
+            console.debug('[KRAI FollowUp] Exception', {
+                followUpId,
+                error: err.message || 'Unknown',
+            });
             setFollowUpAnswers(prev => prev.map(fa =>
                 fa.id === followUpId
-                    ? { ...fa, answer: `⚠️ ${err.message || 'Gagal'}`, isStreaming: false }
+                    ? { ...fa, answer: `KRAI gagal menjawab pertanyaan lanjutan. Coba ulangi beberapa saat lagi.`, isStreaming: false }
                     : fa,
             ));
         }
-    }, [insight]);
+    }, [insight, pageContext]);
 
     const activeFollowUp = followUpAnswers[activeFollowUpIndex];
 
@@ -683,7 +733,7 @@ export default function KraiInsightCard({
                             </div>
 
                             {/* Follow-up questions — generate IN-CARD, NOT dispatch */}
-                            {!mainStreaming && followUps.length > 0 && (
+                            {!mainStreaming && followUps.length > 0 && insight && insight.trim().length > 0 && (
                                 <div className="mt-3 pt-3 border-t border-blue-100">
                                     <div className="flex items-center gap-1.5 mb-2">
                                         <Lightbulb className="w-3 h-3 text-blue-500" />
@@ -691,6 +741,7 @@ export default function KraiInsightCard({
                                     </div>
                                     <div className="flex flex-col gap-1.5 sm:flex-row sm:flex-wrap">
                                         {followUps.slice(0, 3).map((q) => {
+                                            const isTimeoutOrError = streamState === 'timeout' || streamState === 'error';
                                             const suggKey = q.slice(0, 20);
                                             const isExpanded = !!expandedSugg[suggKey];
                                             const isLong = q.length > 80;
@@ -716,10 +767,18 @@ export default function KraiInsightCard({
                                                     )}
                                                     <button
                                                         onClick={() => handleFollowUp(q)}
-                                                        className="flex-1 py-2 pr-3 text-left cursor-pointer min-w-0"
-                                                        title={q}
+                                                        disabled={insight ? insight.trim().length === 0 : true}
+                                                        className="flex-1 py-2 pr-3 text-left cursor-pointer min-w-0 disabled:opacity-50 disabled:cursor-not-allowed"
+                                                        title={insight && insight.trim().length === 0
+                                                            ? 'Tunggu insight selesai dulu.'
+                                                            : isTimeoutOrError
+                                                                ? 'Insight belum tersedia. Klik regenerate dulu.'
+                                                                : q
+                                                        }
                                                     >
-                                                        <span className={isExpanded ? '' : 'line-clamp-2'}>{q}</span>
+                                                        <span className={isExpanded ? '' : 'line-clamp-2'}>
+                                                            {isTimeoutOrError ? 'Regenerate insight' : q}
+                                                        </span>
                                                     </button>
                                                 </div>
                                             );

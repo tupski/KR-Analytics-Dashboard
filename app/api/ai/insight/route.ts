@@ -197,6 +197,7 @@ export async function POST(request: NextRequest) {
         // If streaming requested, use streaming path
         if (stream === true) {
             return createNDJSONResponse(async (writer) => {
+                const startTime = Date.now();
                 try {
                     const systemContent = buildInsightSystemPrompt(page, dataSummary, withCompare);
                     await streamInsight(writer, aiConfig, systemContent, cacheKey, page, settings, {
@@ -206,8 +207,29 @@ export async function POST(request: NextRequest) {
                         comparisonStart: comparisonStartDate,
                         comparisonEnd: comparisonEndDate,
                     });
+                    if (process.env.NODE_ENV === 'development') {
+                        console.debug('[KRAI Timeout]', {
+                            route: 'insight',
+                            page,
+                            provider: aiConfig.providerSlug,
+                            model: aiConfig.modelId,
+                            elapsedMs: Date.now() - startTime,
+                            status: 'success',
+                        });
+                    }
                 } catch (aiError: any) {
                     console.error('[ai/insight] Stream generation failed:', aiError.message);
+                    if (process.env.NODE_ENV === 'development') {
+                        console.debug('[KRAI Timeout]', {
+                            route: 'insight',
+                            page,
+                            provider: aiConfig.providerSlug,
+                            model: aiConfig.modelId,
+                            elapsedMs: Date.now() - startTime,
+                            status: 'error',
+                            error: aiError.message?.substring(0, 200),
+                        });
+                    }
                     // Try rule-based fallback
                     const fallbackText = generateFallbackInsight(page, dataSummary);
                     if (fallbackText) {
@@ -279,6 +301,16 @@ export async function POST(request: NextRequest) {
             });
         } catch (aiError: any) {
             console.error('[ai/insight] AI generation failed:', aiError.message);
+            if (process.env.NODE_ENV === 'development') {
+                console.debug('[KRAI Timeout]', {
+                    route: 'insight',
+                    page,
+                    provider: aiConfig.providerSlug,
+                    model: aiConfig.modelId,
+                    status: 'error',
+                    error: aiError.message?.substring(0, 200),
+                });
+            }
 
             // Try rule-based fallback
             const fallbackText = generateFallbackInsight(page, dataSummary);
