@@ -1171,7 +1171,7 @@ function getOpenAIHeaders(cfg: AIConfig): Record<string, string> {
         Authorization: `Bearer ${cfg.apiKey}`,
     };
     if (cfg.provider === 'openrouter') {
-        headers['HTTP-Referer'] = 'https://kakarama.com';
+        headers['HTTP-Referer'] = 'https://dash.kakaramaroom.com';
         headers['X-Title'] = 'KR Analytics';
     }
     return headers;

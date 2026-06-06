@@ -3,6 +3,8 @@ import {
     getDailyRevenue as getDailyRevenueAnalytics,
     getRevenueSummary as getRevenueSummaryAnalytics,
 } from '@/lib/analytics/revenue';
+import { format } from 'date-fns';
+import { toZonedTime } from 'date-fns-tz';
 
 // ============================================================
 // lib/services/revenue.ts
@@ -219,11 +221,11 @@ async function getRevenueTrendLegacy(
             if (rawDate) {
                 const d = new Date(rawDate);
                 if (!isNaN(d.getTime())) {
-                    dateStr = d.toISOString().split('T')[0];
+                    dateStr = format(toZonedTime(d, 'Asia/Jakarta'), 'yyyy-MM-dd');
                 }
             }
             if (!dateStr) {
-                dateStr = new Date().toISOString().split('T')[0];
+                dateStr = format(toZonedTime(new Date(), 'Asia/Jakarta'), 'yyyy-MM-dd');
             }
             return {
                 date: dateStr,

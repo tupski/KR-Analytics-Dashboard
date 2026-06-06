@@ -540,6 +540,29 @@ export async function getExpenseTrendAction(
     }
 }
 
+/**
+ * Zero-fill missing dates in daily revenue data.
+ * Ensures every date from startDate to endDate (WIB) has an entry.
+ */
+function zeroFillDateRange(
+    data: { transaction_date: string; total_revenue: number; transaction_count: number }[],
+    startDateStr: string,
+    endDateStr: string
+) {
+    const result: typeof data = [];
+    const current = new Date(startDateStr + 'T00:00:00+07:00');
+    const end = new Date(endDateStr + 'T00:00:00+07:00');
+    const dataMap = new Map(data.map(d => [d.transaction_date, d]));
+
+    while (current <= end) {
+        const key = format(toZonedTime(current, 'Asia/Jakarta'), 'yyyy-MM-dd');
+        const existing = dataMap.get(key);
+        result.push(existing || { transaction_date: key, total_revenue: 0, transaction_count: 0 });
+        current.setDate(current.getDate() + 1);
+    }
+    return result;
+}
+
 export async function fetchRevenueData(filter: RevenueFilter): Promise<RevenueDataPoint[]> {
     const today = new Date();
     let startDate: Date;
@@ -561,11 +584,12 @@ export async function fetchRevenueData(filter: RevenueFilter): Promise<RevenueDa
             startDate = subDays(today, 30);
     }
 
+    // Convert to WIB-aware date strings
+    const startWIB = format(toZonedTime(startDate, 'Asia/Jakarta'), 'yyyy-MM-dd');
+    const todayWIB = format(toZonedTime(today, 'Asia/Jakarta'), 'yyyy-MM-dd');
+
     try {
-        const trendPoints = await getRevenueTrend(
-            format(startDate, 'yyyy-MM-dd'),
-            format(today, 'yyyy-MM-dd'),
-        );
+        const trendPoints = await getRevenueTrend(startWIB, todayWIB);
 
         if (!trendPoints || trendPoints.length === 0) {
             return [];
@@ -579,7 +603,16 @@ export async function fetchRevenueData(filter: RevenueFilter): Promise<RevenueDa
             transaction_count: p.transactionCount,
         }));
 
-        return aggregateRevenueData(mapped, filter);
+        // Zero-fill missing dates for daily filter only
+        let aggregated = aggregateRevenueData(mapped, filter);
+
+        if (filter === 'daily') {
+            // Zero-fill raw data before aggregation to catch missing dates
+            const zeroFilled = zeroFillDateRange(mapped, startWIB, todayWIB);
+            aggregated = aggregateRevenueData(zeroFilled, filter);
+        }
+
+        return aggregated;
     } catch (error) {
         console.warn('[dashboard] Revenue service unavailable, falling back to legacy:', error);
     }

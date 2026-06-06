@@ -12,6 +12,8 @@ import { getRevenueSummary as getServiceRevenueSummary } from '@/lib/services/re
 import { getExpenseSummary as getServiceExpenseSummary } from '@/lib/services/expense';
 import { getLiveOccupancy } from '@/lib/services/occupancy';
 import { getDateBoundariesISO } from '@/lib/dashboard/periods';
+import { format } from 'date-fns';
+import { toZonedTime } from 'date-fns-tz';
 
 // ─── Helpers ────────────────────────────────────────────────
 
@@ -60,13 +62,16 @@ export async function getKPIData(params: {
 }): Promise<KPIDataResult> {
     const supabase = createServerClient();
 
+    const TZ = 'Asia/Jakarta';
+
     // ── Room count — use pre-fetched value if provided ───────
     const totalUnits = params.totalUnits ?? (await getTotalRoomCount());
 
     const startISO = params.startDate.toISOString();
     const endISO = params.endDate.toISOString();
-    const startStr = params.startDate.toISOString().split('T')[0];
-    const endStr = params.endDate.toISOString().split('T')[0];
+    // Use WIB-aware date strings, not UTC-split
+    const startStr = format(toZonedTime(params.startDate, TZ), 'yyyy-MM-dd');
+    const endStr = format(toZonedTime(params.endDate, TZ), 'yyyy-MM-dd');
 
     // ── Build queries (apply location filter once) ───────────
     let bookingsQuery = supabase
@@ -107,8 +112,44 @@ export async function getKPIData(params: {
     // ── Compute derived values ──────────────────────────────
     const activeStays = liveOccupancy.ditempati;
 
-    const totalRevenue = revenueSummary.totalRevenue;
+    let totalRevenue = revenueSummary.totalRevenue;
     const totalExpenses = expenseSummary.totalAmount;
+
+    // ── Today fallback: if analytics has no data for today, query raw transactions ──
+    const todayWIB = format(toZonedTime(new Date(), TZ), 'yyyy-MM-dd');
+    const todayStartStr = `${todayWIB}T00:00:00+07:00`;
+    const todayEndStr = `${todayWIB}T23:59:59+07:00`;
+
+    console.log('[Dashboard KPI] period revenue from service:', totalRevenue);
+    console.log('[Dashboard KPI] period range:', startStr, '→', endStr);
+    console.log('[Dashboard KPI] today WIB:', todayWIB);
+
+    // Only run fallback when the range includes today
+    if (todayWIB >= startStr && todayWIB <= endStr) {
+        const { data: todayTx, error: todayErr } = await supabase
+            .from('transactions')
+            .select('cash_amount, transfer_amount, nominal')
+            .gte('checkin_at', todayStartStr)
+            .lte('checkin_at', todayEndStr);
+
+        if (!todayErr && todayTx && todayTx.length > 0) {
+            const todayRevenue = todayTx.reduce((sum, tx) => {
+                return sum + (tx.cash_amount || 0) + (tx.transfer_amount || 0) + (tx.nominal || 0);
+            }, 0);
+
+            console.log('[Dashboard KPI] today raw transaction count:', todayTx.length);
+            console.log('[Dashboard KPI] today raw revenue sum:', todayRevenue);
+
+            // Override period revenue if service returned 0 but we have real data
+            if (totalRevenue === 0 && todayRevenue > 0) {
+                totalRevenue = todayRevenue;
+                console.log('[Dashboard KPI] revenue overridden with today raw value:', totalRevenue);
+            }
+        } else if (todayErr) {
+            console.warn('[Dashboard KPI] today fallback query error:', todayErr);
+        }
+    }
+
     const occupancyRate =
         totalUnits > 0 ? Math.round((activeStays / totalUnits) * 10000) / 100 : 0;
     const availableUnits = Math.max(0, totalUnits - activeStays);
