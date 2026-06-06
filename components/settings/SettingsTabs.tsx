@@ -6,7 +6,7 @@ import { Settings, Sparkles, Lightbulb, Palette, Server } from 'lucide-react';
 const TABS = [
     { id: 'umum', label: 'Umum', icon: Settings },
     { id: 'ai', label: 'AI', icon: Sparkles },
-    { id: 'insight', label: 'AI Insight', icon: Lightbulb },
+    { id: 'insight', label: 'Insight Dashboard', icon: Lightbulb },
     { id: 'tampilan', label: 'Tampilan', icon: Palette },
     { id: 'sistem', label: 'Sistem', icon: Server },
 ] as const;
@@ -41,8 +41,8 @@ export default function SettingsTabs() {
                             key={t.id}
                             onClick={() => setTab(t.id)}
                             className={`flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors flex-shrink-0 ${active
-                                    ? 'border-blue-600 text-blue-700 bg-blue-50/60'
-                                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                                ? 'border-blue-600 text-blue-700 bg-blue-50/60'
+                                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
                                 }`}
                         >
                             <t.icon className="w-4 h-4" />
