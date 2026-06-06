@@ -77,6 +77,10 @@ export default function AIChatFullscreen({ conversationId, forceNew }: Props) {
                 if (existing) {
                     setActiveConv(existing);
                     setMessages(existing.messages || []);
+                    // If conversation already has messages, remove ?new=1
+                    if (existing.messages && existing.messages.length > 0) {
+                        router.replace(`/chat/${targetId}`);
+                    }
                 } else {
                     const newConv = createConversation(targetId);
                     setActiveConv(newConv);
@@ -98,17 +102,26 @@ export default function AIChatFullscreen({ conversationId, forceNew }: Props) {
                     setActiveConv(newConv);
                     setMessages([]);
                     setActiveConversation(targetId);
-                    setHistoryLoaded(true);
-                    // Load messages async
+                    // Defer historyLoaded until async fetch completes
+                    // — prevents welcome screen flash before messages arrive
                     getConversationWithMessages(targetId)
                         .then(full => {
                             if (full && full.messages && full.messages.length > 0) {
                                 setActiveConv(full);
                                 setMessages(full.messages);
                             }
+                            setHistoryLoaded(true);
+                            console.debug('[KRAI Chat History Load]', {
+                                routeConversationId: conversationId,
+                                selectedConversationId: full?.id ?? targetId,
+                                messageCount: full?.messages?.length ?? 0,
+                                isNew: false,
+                                apiStatus: 'loaded',
+                            });
                         })
                         .catch(err => {
                             console.error('[AIChatFullscreen] Failed to load conversation:', err);
+                            setHistoryLoaded(true);
                         });
                 }
             }
@@ -135,7 +148,11 @@ export default function AIChatFullscreen({ conversationId, forceNew }: Props) {
         } catch (err) {
             console.error('[AIChatFullscreen] Failed to update messages:', err);
         }
-    }, [activeConv]);
+        // Clean ?new=1 after first real message is sent
+        if (msgs.length > 0) {
+            router.replace(`/chat/${convId}`);
+        }
+    }, [activeConv, router]);
 
     const handleInputChange = useCallback((val: string) => {
         setInputDraft(val);
@@ -247,7 +264,7 @@ export default function AIChatFullscreen({ conversationId, forceNew }: Props) {
         <div className="flex flex-1 min-h-0 overflow-hidden bg-white">
             {/* ── Desktop sticky sidebar ── */}
             <aside
-                className="hidden md:flex h-full min-h-0 flex-shrink-0 w-64 border-r border-gray-200 bg-gray-50/80 flex-col overflow-hidden"
+                className="hidden md:flex h-full min-h-0 flex-shrink-0 w-64 border-r border-gray-200 bg-gray-50/80 flex-col overflow-hidden sticky top-0"
             >
                 {sidebarContent}
             </aside>
@@ -274,17 +291,11 @@ export default function AIChatFullscreen({ conversationId, forceNew }: Props) {
                 </aside>
             </div>
 
-            {/* ── Main area — full height flex column ── */}
-            {/* overflow-hidden is deliberately NOT set here — parent boundaries
-                (ContentWrapper overflow-hidden on chat routes, page overflow-hidden)
-                already contain the flex-1 height. The header below uses flex-shrink-0
-                to stay at top without relying on sticky (which breaks inside overflow-hidden).
-                Scrolling is handled internally by AIChatCore's message list and the
-                welcome state's overflow-y-auto. */}
-            <div className="flex-1 flex flex-col min-w-0">
-                {/* ── Top bar — flex-shrink-0 keeps it at top ── */}
+            {/* ── Main area — full height flex column, no parent scroll (children handle internal overflow) ── */}
+            <div className="flex-1 flex flex-col min-w-0 min-h-0">
+                {/* ── Top bar — sticky header ── */}
                 <div
-                    className="flex items-center justify-between px-3 py-2 border-b border-gray-100 bg-white/95 backdrop-blur-sm flex-shrink-0 z-20"
+                    className="flex items-center justify-between px-3 py-2 border-b border-gray-100 bg-white/95 backdrop-blur-sm flex-shrink-0 z-30 sticky top-0"
                 >
                     <div className="flex items-center gap-2 min-w-0">
                         {/* Mobile: toggle sidebar */}
@@ -342,7 +353,7 @@ export default function AIChatFullscreen({ conversationId, forceNew }: Props) {
 
                 {/* ── Welcome state — only when no messages ── */}
                 {historyLoaded && messages.length === 0 && (
-                    <div className="flex-shrink-0 overflow-y-auto">
+                    <div className="flex-1 min-h-0 overflow-y-auto">
                         <div className="max-w-2xl mx-auto px-4 pt-6 pb-4">
                             {/* Branding */}
                             <div className="flex items-start gap-3 mb-6">

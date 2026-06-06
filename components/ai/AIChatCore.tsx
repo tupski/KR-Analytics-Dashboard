@@ -889,7 +889,7 @@ export default function AIChatCore({
             {showMemory && <MemoryPanel onClose={() => setShowMemory(false)} />}
 
             {/* Message list */}
-            <div className={`flex-1 min-h-0 overflow-y-auto ${isFloat ? 'p-3 space-y-3 bg-slate-50' : 'px-4 py-4 space-y-4 bg-slate-50/50'}`}>
+            <div className={`flex-1 min-h-0 overflow-y-auto pb-16 md:pb-0 ${isFloat ? 'p-3 space-y-3 bg-slate-50' : 'px-4 py-4 space-y-4 bg-slate-50/50'}`}>
                 {/* Only show greeting in float mode - full mode has its own welcome screen */}
                 {messages.length === 0 && !loading && isFloat && (
                     <div className="text-center py-6">
@@ -1171,8 +1171,8 @@ export default function AIChatCore({
                 </div>
             )}
 
-            {/* Input bar - Modern ChatGPT/Claude style */}
-            <div className={`border-t border-gray-200 bg-white ${isFloat ? 'p-2.5' : 'px-4 py-3'}`}>
+            {/* Input bar - Modern ChatGPT/Claude style, sticky bottom */}
+            <div className={`border-t border-gray-200 bg-white/95 backdrop-blur flex-shrink-0 sticky bottom-0 z-40 safe-bottom ${isFloat ? 'p-2.5' : 'px-4 py-3'}`}>
                 <div className={`space-y-2.5 ${isFull ? 'max-w-3xl mx-auto' : ''}`}>
                     {/* Main input area with send button */}
                     <div className="flex gap-2 items-end">
