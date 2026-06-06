@@ -80,6 +80,7 @@ async function getQuickContext(): Promise<string> {
     const timezone = 'Asia/Jakarta';
     const todayDate = toZonedTime(new Date(), timezone);
     const today = format(todayDate, 'yyyy-MM-dd');
+    const currentTime = format(todayDate, 'HH:mm');
     const yesterday = format(subDays(todayDate, 1), 'yyyy-MM-dd');
     const lastWeek = format(subDays(todayDate, 7), 'yyyy-MM-dd');
     const lastMonth = format(subDays(todayDate, 30), 'yyyy-MM-dd');
@@ -102,6 +103,7 @@ async function getQuickContext(): Promise<string> {
 
     return `KONTEKS SISTEM:
 - Hari ini: ${today} (Asia/Jakarta)
+- Waktu sekarang: ${currentTime} WIB
 - Kemarin: ${yesterday}
 - 7 hari lalu (hari sama): ${lastWeek}
 - 30 hari lalu (hari sama): ${lastMonth}
