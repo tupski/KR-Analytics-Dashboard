@@ -2,17 +2,45 @@ import { queryAnalytics, parseNumeric } from './db';
 import type { OccupancyDaily } from './types';
 
 /**
- * ─── Occupancy Definition (stay-span overlap model) ───
+ * ─── Occupancy Definition: Daily Occupancy Boolean / Room-Day Utilization ───
  *
- * A room is considered **occupied** on a given date (WIB) if there is at least
- * one active stay spanning that date, based on
- * `generate_series(checkin_at::date, checkout_at::date - 1)` in WIB timezone.
+ * `analytics_occupancy_daily` stores **daily occupancy boolean** — whether a
+ * specific room was occupied at any point during a given calendar day (WIB).
  *
- * This is computed during the summary refresh in the sync-worker and stored in
- * `analytics_occupancy_daily` (one row per occupied room-day).
+ * ## Grain
+ * 1 row per `(date_wib, apartment_location, room_number)`.
+ * No duplicate rows for the same room-date.
  *
- * The table stores one row per (date_wib, apartment_location, room_number),
- * with `is_occupied = true` for all rows.
+ * ## Same-Day Transit / Usage
+ * - A unit used for even 1 transit (≥3 hours) on a date counts as 1 occupied
+ *   room-day.
+ * - If a unit is used **multiple times** on the same date (e.g., 3 transits),
+ *   it still produces only **1 occupied room-day** row.
+ * - **Do NOT** count rows in `analytics_occupancy_daily` to compute usage
+ *   frequency or unit turnover. That is a separate metric.
+ *
+ * ## Metadata Columns (Debug / Sample Only)
+ * - `transaction_id`, `customer_name`, `checkin_at`, `checkout_at` are
+ *   **sample metadata** for the room-date, populated from the latest
+ *   transaction (deterministic via `DISTINCT ON ... ORDER BY transaction_id DESC`).
+ * - Because multiple transactions can overlap the same room-date, these fields
+ *   are **not** authoritative for usage frequency counting.
+ *
+ * ## Active Stay (`checkout_at IS NULL`) Policy
+ * - Active stays are counted up to **yesterday WIB**:
+ *   `(NOW() AT TIME ZONE 'Asia/Jakarta')::DATE - 1`
+ * - Daily analytics only covers **completed calendar days**.
+ * - Today's active occupancy is NOT in `analytics_occupancy_daily`.
+ * - For current/live occupancy (right now), use `getLiveOccupancy()`.
+ *
+ * ## Usage Frequency (Separate Metric)
+ * - Frequency / unit turnover / usage count is a **different metric**
+ *   and will be handled in a separate table (e.g. `analytics_unit_usage_daily`).
+ * - Until then, do NOT derive frequency from occupancy daily rows.
+ *
+ * ## Related
+ * - Live occupancy (point-in-time): `getLiveOccupancy()` in `lib/services/occupancy.ts`
+ * - Stay-span overlap model using `generate_series()` in `sync-worker/src/sync/summary.ts`
  */
 
 function getDefaultDateRange(): { startDate: string; endDate: string } {

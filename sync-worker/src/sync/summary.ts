@@ -420,6 +420,40 @@ export async function refreshExpenseSummary(pool: Pool, opts: RefreshOptions): P
 //
 // ═══════════════════════════════════════════════════════════════════════
 
+/**
+ * Refresh `analytics_occupancy_daily` — Daily Occupancy Boolean / Room-Day Utilization.
+ *
+ * ## Definition
+ * - Grain: 1 row per `(date_wib, apartment_location, room_number)`.
+ * - Each row = that room was occupied at least once on that calendar date (WIB).
+ * - Same-day transit (even 3 hours) = 1 occupied room-day.
+ * - Multiple same-day usages = still 1 occupied room-day (deduplicated via DISTINCT ON).
+ * - Do NOT use row count as usage frequency — that is a separate metric.
+ *
+ * ## Stay-Span Model
+ * - Uses `generate_series()` from checkin date to (checkout date - 1) in WIB.
+ * - Multi-night stays produce 1 row per calendar date the stay spans.
+ * - Checkout date is exclusive (the guest vacated before that date starts).
+ *
+ * ## Metadata Columns
+ * - `transaction_id`, `customer_name`, `checkin_at`, `checkout_at` =
+ *   sample/debug metadata only — populated from the latest transaction
+ *   (deterministic via `DISTINCT ON ... ORDER BY transaction_id DESC`).
+ * - Not authoritative for frequency counting.
+ *
+ * ## Active Stay (`checkout_at IS NULL`) Policy
+ * - Counts up to `(NOW() AT TIME ZONE 'Asia/Jakarta')::DATE - 1` (yesterday WIB).
+ * - Daily analytics only for completed calendar days.
+ * - Today's active occupancy NOT included — use `getLiveOccupancy()` instead.
+ *
+ * ## PK Safety
+ * - `DISTINCT ON (date_wib, apartment_location, room_number)` prevents duplicates.
+ * - `ON CONFLICT ... DO UPDATE SET` is a safety net for any edge case.
+ *
+ * ## Usage Frequency
+ * - Frequency / unit turnover is a separate metric for future PR
+ *   (e.g. `analytics_unit_usage_daily` table). Not implemented here.
+ */
 export async function refreshOccupancyDaily(pool: Pool, opts: RefreshOptions): Promise<SummaryResult> {
     const startTime = Date.now();
     const logId = await startSyncLog(pool, 'analytics_occupancy_daily', 'summary');
