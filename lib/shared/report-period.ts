@@ -73,12 +73,23 @@ export interface ReportPeriodRange {
     end: Date;
     /** Period start as ISO 8601 string with timezone offset, e.g. "2026-06-07T00:00:00.000+07:00" */
     startISO: string;
-    /** Period end as ISO 8601 string with timezone offset, e.g. "2026-06-07T23:59:59.999+07:00" */
+    /** Period end as ISO 8601 string with timezone offset, e.g. "2026-06-07T23:59:59.999+07:00" (inclusive) */
     endISO: string;
     /** Start date as YYYY-MM-DD (calendar date of the period start) */
     startDate: string;
     /** End date as YYYY-MM-DD (calendar date of the period end) */
     endDate: string;
+    /**
+     * Exclusive end boundary as ISO 8601 string with timezone offset.
+     * This is the first moment AFTER the period — use for `<` filtering in DB queries.
+     * e.g. "2026-06-08T00:00:00.000+07:00" for calendar_day, "2026-06-08T12:00:00.000+07:00" for hotel_day.
+     */
+    endExclusiveISO: string;
+    /**
+     * Exclusive end date as YYYY-MM-DD.
+     * The calendar date of the exclusive boundary (i.e. the day after the period ends).
+     */
+    endExclusiveDate: string;
     /** Human-readable label in Indonesian, e.g. "Hari Ini", "7 Hari Terakhir" */
     label: string;
 }
@@ -166,6 +177,13 @@ function calendarDayRange(
     const endISO = isoInTimezone(y, m, d, 23, 59, 59, 999, timezone);
     const dateStr = format(date, 'yyyy-MM-dd');
 
+    const nextDate = addDays(date, 1);
+    const ny = nextDate.getFullYear();
+    const nm = nextDate.getMonth();
+    const nd = nextDate.getDate();
+    const endExclusiveISO = isoInTimezone(ny, nm, nd, 0, 0, 0, 0, timezone);
+    const endExclusiveDate = format(nextDate, 'yyyy-MM-dd');
+
     return {
         preset,
         mode,
@@ -176,6 +194,8 @@ function calendarDayRange(
         endISO,
         startDate: dateStr,
         endDate: dateStr,
+        endExclusiveISO,
+        endExclusiveDate,
         label,
     };
 }
@@ -204,6 +224,11 @@ function hotelDayRange(
     const nd = nextDate.getDate();
     const endISO = isoInTimezone(ny, nm, nd, 11, 59, 59, 999, timezone);
 
+    // Exclusive end = next hotel day start (nextDate @ 12:00:00.000)
+    const endExclusiveISO = isoInTimezone(ny, nm, nd, 12, 0, 0, 0, timezone);
+    // Exclusive end date = the day after endDate (the calendar date of endExclusiveISO)
+    const endExclusiveDate = format(nextDate, 'yyyy-MM-dd');
+
     return {
         preset,
         mode,
@@ -214,6 +239,8 @@ function hotelDayRange(
         endISO,
         startDate: format(date, 'yyyy-MM-dd'),
         endDate: format(nextDate, 'yyyy-MM-dd'),
+        endExclusiveISO,
+        endExclusiveDate,
         label,
     };
 }
@@ -244,6 +271,10 @@ function multiDayRange(
         const endD = dayAfterEnd.getDate();
         const endISO = isoInTimezone(endY, endM, endD, 11, 59, 59, 999, timezone);
 
+        // Exclusive end = day after the period end @ 12:00:00.000 (next hotel day start)
+        const endExclusiveISO = isoInTimezone(endY, endM, endD, 12, 0, 0, 0, timezone);
+        const endExclusiveDate = format(dayAfterEnd, 'yyyy-MM-dd');
+
         return {
             preset,
             mode,
@@ -254,6 +285,8 @@ function multiDayRange(
             endISO,
             startDate: format(startDate, 'yyyy-MM-dd'),
             endDate: format(endDate, 'yyyy-MM-dd'),
+            endExclusiveISO,
+            endExclusiveDate,
             label,
         };
     }
@@ -269,6 +302,14 @@ function multiDayRange(
     const endD = endDate.getDate();
     const endISO = isoInTimezone(endY, endM, endD, 23, 59, 59, 999, timezone);
 
+    // Exclusive end = day after endDate @ 00:00:00.000
+    const dayAfterEnd = addDays(endDate, 1);
+    const excY = dayAfterEnd.getFullYear();
+    const excM = dayAfterEnd.getMonth();
+    const excD = dayAfterEnd.getDate();
+    const endExclusiveISO = isoInTimezone(excY, excM, excD, 0, 0, 0, 0, timezone);
+    const endExclusiveDate = format(dayAfterEnd, 'yyyy-MM-dd');
+
     return {
         preset,
         mode,
@@ -279,6 +320,8 @@ function multiDayRange(
         endISO,
         startDate: format(startDate, 'yyyy-MM-dd'),
         endDate: format(endDate, 'yyyy-MM-dd'),
+        endExclusiveISO,
+        endExclusiveDate,
         label,
     };
 }

@@ -73,8 +73,8 @@ export async function getKPIData(params: {
         .select('*', { count: 'exact', head: true })
         // COALESCE(checkin_at, created_at): wider filter via .or() with start-end boundary
         .or(
-            `and(checkin_at.gte.${period.startISO},checkin_at.lt.${period.endISO}),` +
-            `and(checkin_at.is.null,created_at.gte.${period.startISO},created_at.lt.${period.endISO})`
+            `and(checkin_at.gte.${period.startISO},checkin_at.lt.${period.endExclusiveISO}),` +
+            `and(checkin_at.is.null,created_at.gte.${period.startISO},created_at.lt.${period.endExclusiveISO})`
         );
     if (params.location) bookingsQuery = bookingsQuery.eq('apartment_location', params.location);
 
@@ -95,8 +95,8 @@ export async function getKPIData(params: {
         .from('transactions')
         .select('*', { count: 'exact', head: true })
         .or(
-            `and(checkin_at.gte.${todayPeriod.startISO},checkin_at.lt.${todayPeriod.endISO}),` +
-            `and(checkin_at.is.null,created_at.gte.${todayPeriod.startISO},created_at.lt.${todayPeriod.endISO})`
+            `and(checkin_at.gte.${todayPeriod.startISO},checkin_at.lt.${todayPeriod.endExclusiveISO}),` +
+            `and(checkin_at.is.null,created_at.gte.${todayPeriod.startISO},created_at.lt.${todayPeriod.endExclusiveISO})`
         );
     if (params.location) checkinsQuery = checkinsQuery.eq('apartment_location', params.location);
 
@@ -104,7 +104,7 @@ export async function getKPIData(params: {
         .from('transactions')
         .select('*', { count: 'exact', head: true })
         .gte('checkout_at', todayPeriod.startISO)
-        .lt('checkout_at', todayPeriod.endISO);
+        .lt('checkout_at', todayPeriod.endExclusiveISO);
     if (params.location) checkoutsQuery = checkoutsQuery.eq('apartment_location', params.location);
 
     const [{ count: checkinsToday }, { count: checkoutsToday }] =
@@ -124,7 +124,7 @@ export async function getKPIData(params: {
     console.debug('[Dashboard KPI] period:', {
         preset: period.preset,
         startISO: period.startISO,
-        endISO: period.endISO,
+        endExclusiveISO: period.endExclusiveISO,
         startDate: period.startDate,
         endDate: period.endDate,
     });
@@ -145,8 +145,8 @@ export async function getKPIData(params: {
                 .from('transactions')
                 .select('cash_amount, transfer_amount, checkin_at, created_at')
                 .or(
-                    `and(checkin_at.gte.${todayPeriod.startISO},checkin_at.lt.${todayPeriod.endISO}),` +
-                    `and(checkin_at.is.null,created_at.gte.${todayPeriod.startISO},created_at.lt.${todayPeriod.endISO})`
+                    `and(checkin_at.gte.${todayPeriod.startISO},checkin_at.lt.${todayPeriod.endExclusiveISO}),` +
+                    `and(checkin_at.is.null,created_at.gte.${todayPeriod.startISO},created_at.lt.${todayPeriod.endExclusiveISO})`
                 );
 
             if (!todayErr && todayTx && todayTx.length > 0) {
@@ -155,7 +155,7 @@ export async function getKPIData(params: {
                 for (const tx of todayTx) {
                     const effDate = effectiveDate(tx);
                     // Apply exclusive-end: effective_date >= start AND effective_date < end
-                    if (effDate && effDate >= todayPeriod.startISO && effDate < todayPeriod.endISO) {
+                    if (effDate && effDate >= todayPeriod.startISO && effDate < todayPeriod.endExclusiveISO) {
                         todayRevenue += calcRevenue(tx);
                         todayCount++;
                     }

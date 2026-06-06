@@ -3,7 +3,7 @@
 import { createServerClient } from '@/lib/supabase/server';
 import { getRevenueSummary as getServiceRevenueSummary } from '@/lib/services/revenue';
 import { getLocations } from '@/lib/services/location';
-import { format } from 'date-fns';
+import { format, addDays } from 'date-fns';
 import { toZonedTime } from 'date-fns-tz';
 import { getReportPeriodSetting, getTodayReportRange } from '@/lib/get-report-period-setting';
 import { getReportPeriodRange } from '@/lib/reporting-period';
@@ -164,6 +164,14 @@ export async function fetchLocations(): Promise<string[]> {
  * Used as a bridge for callers that still work with string-based ranges.
  */
 function buildPeriodFromISO(startISO: string, endISO: string): ReportPeriodRange {
+    const endDateISO = new Date(endISO);
+    const endExclusiveDateObj = addDays(endDateISO, 1);
+    const excY = endExclusiveDateObj.getFullYear();
+    const excM = String(endExclusiveDateObj.getMonth() + 1).padStart(2, '0');
+    const excD = String(endExclusiveDateObj.getDate()).padStart(2, '0');
+    const endExclusiveDate = `${excY}-${excM}-${excD}`;
+    const endExclusiveISO = `${endExclusiveDate}T00:00:00.000+07:00`;
+
     return {
         preset: 'custom',
         mode: 'calendar_day',
@@ -174,6 +182,8 @@ function buildPeriodFromISO(startISO: string, endISO: string): ReportPeriodRange
         endISO,
         startDate: startISO.split('T')[0],
         endDate: endISO.split('T')[0],
+        endExclusiveISO,
+        endExclusiveDate,
         label: `${startISO} – ${endISO}`,
     };
 }

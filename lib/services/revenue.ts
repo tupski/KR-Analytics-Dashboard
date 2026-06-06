@@ -4,7 +4,7 @@ import {
     getRevenueSummary as getRevenueSummaryAnalytics,
 } from '@/lib/analytics/revenue';
 import { effectiveDate } from '@/lib/dashboard/transaction-source';
-import { format, addDays } from 'date-fns';
+import { format } from 'date-fns';
 import { toZonedTime } from 'date-fns-tz';
 import type { ReportPeriodRange } from '@/lib/shared/report-period';
 
@@ -95,26 +95,44 @@ function normalizeDate(d: unknown): string {
 // given period.
 // ============================================================
 export async function getRevenueSummary(period: ReportPeriodRange): Promise<RevenueSummary> {
-    // Use date strings (YYYY-MM-DD) for analytics query
     const startStr = period.startDate;
-    // Exclusive end: analytics uses date_wib >= start AND date_wib < endExclusive
-    // where endExclusive should be the day AFTER period.end
-    const endDateObj = new Date(period.endISO);
-    const endExclusive = format(addDays(endDateObj, 1), 'yyyy-MM-dd');
+    const endExclusive = period.endExclusiveDate;
 
     // ── Analytics path (primary) ──────────────────────────────
     if (analyticsConfigured() && isFullCalendarDayPeriod(period)) {
         try {
             const data = await getRevenueSummaryAnalytics(startStr, endExclusive);
-            console.debug('[revenue] analytics summary:', { startStr, endExclusive, data });
-            return toRevenueSummary(data);
+            // Only return analytics data if it has actual transactions
+            if (data.totalTransactions > 0) {
+                const result = toRevenueSummary(data);
+                console.debug('[Revenue Service] getRevenueSummary:', {
+                    periodStart: period.startISO,
+                    periodEndExclusive: period.endExclusiveISO,
+                    transactionCount: result.transactionCount,
+                    totalRevenue: result.totalRevenue,
+                    source: 'analytics',
+                });
+                return result;
+            }
+            // Otherwise fall through to Supabase fallback
+            console.debug('[Revenue] Analytics returned 0 transactions, falling back to Supabase');
         } catch (error) {
-            console.warn('[revenue] Analytics DB unavailable, falling back to Supabase:', error);
+            console.warn('[Revenue] Analytics DB unavailable, falling back to Supabase:', error);
         }
     }
 
     // ── Supabase fallback ────────────────────────────────────
-    return getRevenueSummaryLegacy(period);
+    const result = await getRevenueSummaryLegacy(period);
+
+    console.debug('[Revenue Service] getRevenueSummary:', {
+        periodStart: period.startISO,
+        periodEndExclusive: period.endExclusiveISO,
+        transactionCount: result.transactionCount,
+        totalRevenue: result.totalRevenue,
+        source: 'supabase',
+    });
+
+    return result;
 }
 
 /**
@@ -132,8 +150,8 @@ async function getRevenueSummaryLegacy(period: ReportPeriodRange): Promise<Reven
             .from('transactions')
             .select('cash_amount, transfer_amount, checkin_at, created_at')
             .or(
-                `and(checkin_at.gte.${period.startISO},checkin_at.lt.${period.endISO}),` +
-                `and(checkin_at.is.null,created_at.gte.${period.startISO},created_at.lt.${period.endISO})`
+                `and(checkin_at.gte.${period.startISO},checkin_at.lt.${period.endExclusiveISO}),` +
+                `and(checkin_at.is.null,created_at.gte.${period.startISO},created_at.lt.${period.endExclusiveISO})`
             );
 
         if (error) {
@@ -152,8 +170,8 @@ async function getRevenueSummaryLegacy(period: ReportPeriodRange): Promise<Reven
 
         for (const t of data || []) {
             const effDate = effectiveDate(t);
-            // Apply exclusive-end filter: period.startISO <= effectiveDate < period.endISO
-            if (effDate && effDate >= period.startISO && effDate < period.endISO) {
+            // Apply exclusive-end filter: period.startISO <= effectiveDate < period.endExclusiveISO
+            if (effDate && effDate >= period.startISO && effDate < period.endExclusiveISO) {
                 cashAmount += t.cash_amount ?? 0;
                 transferAmount += t.transfer_amount ?? 0;
                 count++;
@@ -190,35 +208,39 @@ export async function getRevenueTrend(
     location?: string | null
 ): Promise<RevenueTrendPoint[]> {
     const startStr = period.startDate;
-    const endDateObj = new Date(period.endISO);
-    const endExclusive = format(addDays(endDateObj, 1), 'yyyy-MM-dd');
+    const endExclusive = period.endExclusiveDate;
 
     // ── Analytics path (primary) ──────────────────────────────
     if (analyticsConfigured() && isFullCalendarDayPeriod(period)) {
         try {
             const dailyRows = await getDailyRevenueAnalytics(startStr, endExclusive);
 
-            // Aggregate per date (analytics returns per-location rows)
-            const byDate = new Map<string, { revenue: number; count: number }>();
+            // Only return analytics data if it has actual rows
+            if (dailyRows.length > 0) {
+                // Aggregate per date (analytics returns per-location rows)
+                const byDate = new Map<string, { revenue: number; count: number }>();
 
-            for (const row of dailyRows) {
-                // Apply location filter if specified
-                if (location && row.apartment_location !== location) continue;
+                for (const row of dailyRows) {
+                    // Apply location filter if specified
+                    if (location && row.apartment_location !== location) continue;
 
-                const dateKey = normalizeDate(row.date_wib);
-                const existing = byDate.get(dateKey) || { revenue: 0, count: 0 };
-                existing.revenue += row.total_revenue;
-                existing.count += row.transaction_count;
-                byDate.set(dateKey, existing);
+                    const dateKey = normalizeDate(row.date_wib);
+                    const existing = byDate.get(dateKey) || { revenue: 0, count: 0 };
+                    existing.revenue += row.total_revenue;
+                    existing.count += row.transaction_count;
+                    byDate.set(dateKey, existing);
+                }
+
+                return Array.from(byDate.entries())
+                    .map(([date, { revenue, count }]) => ({
+                        date,
+                        revenue,
+                        transactionCount: count,
+                    }))
+                    .sort((a, b) => a.date.localeCompare(b.date));
             }
-
-            return Array.from(byDate.entries())
-                .map(([date, { revenue, count }]) => ({
-                    date,
-                    revenue,
-                    transactionCount: count,
-                }))
-                .sort((a, b) => a.date.localeCompare(b.date));
+            // Otherwise fall through to Supabase fallback
+            console.debug('[Revenue] Analytics returned 0 rows, falling back to Supabase');
         } catch (error) {
             console.warn('[revenue] Analytics DB unavailable, falling back to Supabase:', error);
         }

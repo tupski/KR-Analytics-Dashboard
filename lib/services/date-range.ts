@@ -1,4 +1,4 @@
-import { format, subDays, startOfWeek, endOfWeek, startOfMonth, endOfMonth, startOfYear, endOfYear, subWeeks, subMonths, subYears, parse, isSameDay } from 'date-fns';
+import { format, addDays, subDays, startOfWeek, endOfWeek, startOfMonth, endOfMonth, startOfYear, endOfYear, subWeeks, subMonths, subYears, parse, isSameDay } from 'date-fns';
 import { toZonedTime } from 'date-fns-tz';
 import { getReportPeriodRange, DEFAULT_REPORT_PERIOD } from '@/lib/reporting-period';
 import type { ReportPeriodMode } from '@/lib/reporting-period';
@@ -22,9 +22,23 @@ export type DateFilter = 'today' | 'yesterday' | '7days' | 'month' | 'year';
 
 export interface DateRangeResult {
     start: string;   // ISO datetime string like "2026-05-27T00:00:00"
-    end: string;     // ISO datetime string like "2026-05-27T23:59:59"
+    end: string;     // ISO datetime string like "2026-05-27T23:59:59" (inclusive)
     label: string;   // Human-readable label like "Hari Ini"
     dateStr?: string; // yyyy-MM-dd string (only for hotelDayRange)
+    /** Exclusive end: first moment AFTER the period. Use for `.lt()` in DB queries. */
+    endExclusiveISO?: string;
+}
+
+/**
+ * Compute the exclusive end boundary from an inclusive end ISO string.
+ * Adds 1 ms to the inclusive end, which correctly yields:
+ *   calendar_day: "2026-05-30T23:59:59.999+07:00" → "2026-05-31T00:00:00.000+07:00"
+ *   hotel_day:    "2026-05-31T11:59:59.999+07:00" → "2026-05-31T12:00:00.000+07:00"
+ */
+function toExclusiveEnd(endISO: string): string {
+    const nextMs = new Date(endISO).getTime() + 1;
+    const zoned = toZonedTime(nextMs, TIMEZONE);
+    return format(zoned, "yyyy-MM-dd'T'HH:mm:ss.SSS") + '+07:00';
 }
 
 // ============================================================
@@ -54,6 +68,7 @@ export function getHotelDayRange(): DateRangeResult {
         end: range.end,
         label: 'Hari Ini',
         dateStr: todayStr,
+        endExclusiveISO: toExclusiveEnd(range.end),
     };
 }
 
@@ -70,30 +85,30 @@ export function getDateRange(filter: DateFilter, mode: ReportPeriodMode = DEFAUL
     switch (filter) {
         case 'today': {
             const range = getReportPeriodRange(now, mode);
-            return { start: range.start, end: range.end, label: 'Hari Ini' };
+            return { start: range.start, end: range.end, endExclusiveISO: toExclusiveEnd(range.end), label: 'Hari Ini' };
         }
         case 'yesterday': {
             const yesterday = subDays(now, 1);
             const range = getReportPeriodRange(yesterday, mode);
-            return { start: range.start, end: range.end, label: 'Kemarin' };
+            return { start: range.start, end: range.end, endExclusiveISO: toExclusiveEnd(range.end), label: 'Kemarin' };
         }
         case '7days': {
             const weekAgo = subDays(now, 6);
             const start = getReportPeriodRange(weekAgo, mode).start;
             const end = getReportPeriodRange(now, mode).end;
-            return { start, end, label: '7 Hari Terakhir' };
+            return { start, end, endExclusiveISO: toExclusiveEnd(end), label: '7 Hari Terakhir' };
         }
         case 'month': {
             const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
             const start = getReportPeriodRange(monthStart, mode).start;
             const end = getReportPeriodRange(now, mode).end;
-            return { start, end, label: 'Bulan Ini' };
+            return { start, end, endExclusiveISO: toExclusiveEnd(end), label: 'Bulan Ini' };
         }
         case 'year': {
             const yearStart = new Date(now.getFullYear(), 0, 1);
             const start = getReportPeriodRange(yearStart, mode).start;
             const end = getReportPeriodRange(now, mode).end;
-            return { start, end, label: 'Tahun Ini' };
+            return { start, end, endExclusiveISO: toExclusiveEnd(end), label: 'Tahun Ini' };
         }
     }
 }
@@ -119,14 +134,16 @@ export function getPreviousDateRange(filter: DateFilter, mode: ReportPeriodMode 
         case 'yesterday': {
             const dayBefore = subDays(now, 2);
             const range = getReportPeriodRange(dayBefore, mode);
-            return { start: range.start, end: range.end, label: 'H-2' };
+            return { start: range.start, end: range.end, endExclusiveISO: toExclusiveEnd(range.end), label: 'H-2' };
         }
         case '7days': {
             const start14 = subDays(now, 13);
             const end7 = subDays(now, 7);
+            const end = getReportPeriodRange(end7, mode).end;
             return {
                 start: getReportPeriodRange(start14, mode).start,
-                end: getReportPeriodRange(end7, mode).end,
+                end,
+                endExclusiveISO: toExclusiveEnd(end),
                 label: '7 Hari Sebelumnya',
             };
         }
@@ -134,9 +151,11 @@ export function getPreviousDateRange(filter: DateFilter, mode: ReportPeriodMode 
             const firstThisMonth = new Date(now.getFullYear(), now.getMonth(), 1);
             const lastDayLastMonth = subDays(firstThisMonth, 1);
             const firstLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+            const end = getReportPeriodRange(lastDayLastMonth, mode).end;
             return {
                 start: getReportPeriodRange(firstLastMonth, mode).start,
-                end: getReportPeriodRange(lastDayLastMonth, mode).end,
+                end,
+                endExclusiveISO: toExclusiveEnd(end),
                 label: 'Bulan Lalu',
             };
         }
@@ -144,9 +163,11 @@ export function getPreviousDateRange(filter: DateFilter, mode: ReportPeriodMode 
             const firstThisYear = new Date(now.getFullYear(), 0, 1);
             const lastDayLastYear = subDays(firstThisYear, 1);
             const firstLastYear = new Date(now.getFullYear() - 1, 0, 1);
+            const end = getReportPeriodRange(lastDayLastYear, mode).end;
             return {
                 start: getReportPeriodRange(firstLastYear, mode).start,
-                end: getReportPeriodRange(lastDayLastYear, mode).end,
+                end,
+                endExclusiveISO: toExclusiveEnd(end),
                 label: 'Tahun Lalu',
             };
         }
@@ -160,12 +181,18 @@ export function getPreviousDateRange(filter: DateFilter, mode: ReportPeriodMode 
 // Supports all DateRangePicker presets plus the legacy 5 filters.
 // Falls back to last30days.
 // ============================================================
+function _withExclusiveEnd(r: DateRangeResult): DateRangeResult {
+    return { ...r, endExclusiveISO: toExclusiveEnd(r.end) };
+}
+
 function computeTrailingDaysRange(days: number, mode: ReportPeriodMode): DateRangeResult {
     const now = toZonedTime(new Date(), TIMEZONE);
     const start = subDays(now, days - 1);
+    const end = getReportPeriodRange(now, mode).end;
     return {
         start: getReportPeriodRange(start, mode).start,
-        end: getReportPeriodRange(now, mode).end,
+        end,
+        endExclusiveISO: toExclusiveEnd(end),
         label: `${days} Hari Terakhir`,
     };
 }
@@ -173,9 +200,11 @@ function computeTrailingDaysRange(days: number, mode: ReportPeriodMode): DateRan
 function computeThisWeekRange(mode: ReportPeriodMode): DateRangeResult {
     const now = toZonedTime(new Date(), TIMEZONE);
     const weekStart = startOfWeek(now, { locale: localeId });
+    const end = getReportPeriodRange(now, mode).end;
     return {
         start: getReportPeriodRange(weekStart, mode).start,
-        end: getReportPeriodRange(now, mode).end,
+        end,
+        endExclusiveISO: toExclusiveEnd(end),
         label: 'Minggu Ini',
     };
 }
@@ -184,9 +213,11 @@ function computeLastWeekRange(mode: ReportPeriodMode): DateRangeResult {
     const now = toZonedTime(new Date(), TIMEZONE);
     const prevWeekStart = startOfWeek(subWeeks(now, 1), { locale: localeId });
     const prevWeekEnd = endOfWeek(prevWeekStart, { locale: localeId });
+    const end = getReportPeriodRange(prevWeekEnd, mode).end;
     return {
         start: getReportPeriodRange(prevWeekStart, mode).start,
-        end: getReportPeriodRange(prevWeekEnd, mode).end,
+        end,
+        endExclusiveISO: toExclusiveEnd(end),
         label: 'Minggu Lalu',
     };
 }
@@ -195,9 +226,11 @@ function computeLastMonthRange(mode: ReportPeriodMode): DateRangeResult {
     const now = toZonedTime(new Date(), TIMEZONE);
     const monthStart = startOfMonth(subMonths(now, 1));
     const monthEnd = endOfMonth(monthStart);
+    const end = getReportPeriodRange(monthEnd, mode).end;
     return {
         start: getReportPeriodRange(monthStart, mode).start,
-        end: getReportPeriodRange(monthEnd, mode).end,
+        end,
+        endExclusiveISO: toExclusiveEnd(end),
         label: 'Bulan Lalu',
     };
 }
@@ -239,9 +272,11 @@ export function computeDateRange(
             if (startDate && endDate) {
                 const start = parse(startDate, 'yyyy-MM-dd', new Date());
                 const end = parse(endDate, 'yyyy-MM-dd', new Date());
+                const inclusiveEnd = getReportPeriodRange(end, mode).end;
                 return {
                     start: getReportPeriodRange(start, mode).start,
-                    end: getReportPeriodRange(end, mode).end,
+                    end: inclusiveEnd,
+                    endExclusiveISO: toExclusiveEnd(inclusiveEnd),
                     label: `${format(start, 'dd MMM')} – ${format(end, 'dd MMM yyyy')}`,
                 };
             }
@@ -257,6 +292,16 @@ export function computeDateRange(
 // Computes the comparison date range based on comparison mode.
 // Returns null when mode is 'none' or falsy.
 // ============================================================
+function _compResult(start: Date, end: Date, mode: ReportPeriodMode, label: string): DateRangeResult {
+    const inclusiveEnd = getReportPeriodRange(end, mode).end;
+    return {
+        start: getReportPeriodRange(start, mode).start,
+        end: inclusiveEnd,
+        endExclusiveISO: toExclusiveEnd(inclusiveEnd),
+        label,
+    };
+}
+
 export function computeComparisonRange(
     comparisonMode?: string,
     currentStart?: string,
@@ -271,11 +316,7 @@ export function computeComparisonRange(
         if (!comparisonStartDate || !comparisonEndDate) return null;
         const start = parse(comparisonStartDate, 'yyyy-MM-dd', new Date());
         const end = parse(comparisonEndDate, 'yyyy-MM-dd', new Date());
-        return {
-            start: getReportPeriodRange(start, mode).start,
-            end: getReportPeriodRange(end, mode).end,
-            label: `${format(start, 'dd MMM')} – ${format(end, 'dd MMM yyyy')}`,
-        };
+        return _compResult(start, end, mode, `${format(start, 'dd MMM')} – ${format(end, 'dd MMM yyyy')}`);
     }
 
     const startDate = new Date(currentStart);
@@ -286,38 +327,22 @@ export function computeComparisonRange(
         case 'previousPeriod': {
             const compEnd = subDays(startDate, 1);
             const compStart = subDays(compEnd, durationDays - 1);
-            return {
-                start: getReportPeriodRange(compStart, mode).start,
-                end: getReportPeriodRange(compEnd, mode).end,
-                label: 'Periode sebelumnya',
-            };
+            return _compResult(compStart, compEnd, mode, 'Periode sebelumnya');
         }
         case 'previousWeek': {
             const compEnd = subWeeks(endDate, 1);
             const compStart = subWeeks(startDate, 1);
-            return {
-                start: getReportPeriodRange(compStart, mode).start,
-                end: getReportPeriodRange(compEnd, mode).end,
-                label: 'Minggu sebelumnya',
-            };
+            return _compResult(compStart, compEnd, mode, 'Minggu sebelumnya');
         }
         case 'previousMonth': {
             const compEnd = subMonths(endDate, 1);
             const compStart = subMonths(startDate, 1);
-            return {
-                start: getReportPeriodRange(compStart, mode).start,
-                end: getReportPeriodRange(compEnd, mode).end,
-                label: 'Bulan sebelumnya',
-            };
+            return _compResult(compStart, compEnd, mode, 'Bulan sebelumnya');
         }
         case 'previousYear': {
             const compEnd = subYears(endDate, 1);
             const compStart = subYears(startDate, 1);
-            return {
-                start: getReportPeriodRange(compStart, mode).start,
-                end: getReportPeriodRange(compEnd, mode).end,
-                label: 'Tahun sebelumnya',
-            };
+            return _compResult(compStart, compEnd, mode, 'Tahun sebelumnya');
         }
         default:
             return null;

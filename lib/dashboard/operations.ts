@@ -69,7 +69,7 @@ export async function getOperationsSummary(params: {
         .from('transactions')
         .select('*', { count: 'exact', head: true })
         .gte('checkout_at', todayBoundaries.startISO)
-        .lt('checkout_at', todayBoundaries.endISO);
+        .lt('checkout_at', todayBoundaries.endExclusiveISO);
     if (params.location) checkoutsQuery = checkoutsQuery.eq('apartment_location', params.location);
 
     let activeQuery = supabase

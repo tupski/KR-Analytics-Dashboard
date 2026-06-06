@@ -1,7 +1,7 @@
 'use server';
 
 import { createServerClient } from '@/lib/supabase/server';
-import { format, subDays, startOfMonth, endOfMonth, parseISO } from 'date-fns';
+import { format, addDays, subDays, startOfMonth, endOfMonth, parseISO } from 'date-fns';
 import { getDateRange, getPreviousDateRange, computeDateRange, computeComparisonRange, isMonthAligned, type DateFilter } from '@/lib/services/date-range';
 import type { DateFilterParams } from '@/lib/services/date-range';
 import { getReportPeriodSetting } from '@/lib/get-report-period-setting';
@@ -17,6 +17,14 @@ export type { DateFilter };
  * Used as a bridge for callers that still work with string-based ranges.
  */
 function buildPeriodFromISO(startISO: string, endISO: string): ReportPeriodRange {
+    const endDateISO = new Date(endISO);
+    const endExclusiveDateObj = addDays(endDateISO, 1);
+    const excY = endExclusiveDateObj.getFullYear();
+    const excM = String(endExclusiveDateObj.getMonth() + 1).padStart(2, '0');
+    const excD = String(endExclusiveDateObj.getDate()).padStart(2, '0');
+    const endExclusiveDate = `${excY}-${excM}-${excD}`;
+    const endExclusiveISO = `${endExclusiveDate}T00:00:00.000+07:00`;
+
     return {
         preset: 'custom',
         mode: 'calendar_day',
@@ -27,6 +35,8 @@ function buildPeriodFromISO(startISO: string, endISO: string): ReportPeriodRange
         endISO,
         startDate: startISO.split('T')[0],
         endDate: endISO.split('T')[0],
+        endExclusiveISO,
+        endExclusiveDate,
         label: `${startISO} – ${endISO}`,
     };
 }
@@ -131,38 +141,38 @@ export async function fetchLaporanData(
 
     const txList = transactions || [];
 
-    // ── REVENUE (analytics-first, legacy Supabase fallback) ──
+    // ── REVENUE (analytics-first via getRevenueSummary, Supabase txList fallback) ──
+    const period = buildPeriodFromISO(start, end);
     let totalRevenue = 0, totalCash = 0, totalTransfer = 0, totalTransactions = txList.length;
-    let analyticsRevenueUsed = false;
 
     // hotel_day: skip analytics aggregate to preserve ISO time boundaries
     if (mode !== 'hotel_day') {
         try {
-            if (process.env.ANALYTICS_DATABASE_URL) {
-                const revSummary = await getRevenueSummary(buildPeriodFromISO(start, end));
-                totalRevenue = revSummary.totalRevenue;
-                totalCash = revSummary.cashAmount;
-                totalTransfer = revSummary.transferAmount;
-                totalTransactions = revSummary.transactionCount;
-                analyticsRevenueUsed = true;
-            }
+            const revSummary = await getRevenueSummary(period);
+            totalRevenue = revSummary.totalRevenue;
+            totalCash = revSummary.cashAmount;
+            totalTransfer = revSummary.transferAmount;
+            totalTransactions = revSummary.transactionCount;
         } catch (e) {
-            console.warn('[laporan] Analytics revenue unavailable, falling back to Supabase:', e);
+            console.warn('[laporan] getRevenueSummary failed, falling back to Supabase txList:', e);
         }
     }
 
-    // Fallback: compute from Supabase txList if analytics threw error
-    // Apply exclusive-end JS filter for COALESCE semantics
-    if (!analyticsRevenueUsed) {
-        const filtered = txList.filter((t: any) => {
-            const effDate = t.checkin_at || t.created_at;
-            return effDate && effDate >= start && effDate < end;
-        });
-        totalRevenue = filtered.reduce((s: number, t: any) => s + (t.cash_amount || 0) + (t.transfer_amount || 0), 0);
-        totalCash = filtered.reduce((s: number, t: any) => s + (t.cash_amount || 0), 0);
-        totalTransfer = filtered.reduce((s: number, t: any) => s + (t.transfer_amount || 0), 0);
-        totalTransactions = filtered.length;
-    }
+    // Always compute from local txList using exclusive-end COALESCE filter
+    const filtered = txList.filter((t: any) => {
+        const effDate = t.checkin_at ?? t.created_at;
+        return effDate && effDate >= period.startISO && effDate < period.endExclusiveISO;
+    });
+    totalRevenue = filtered.reduce((s: number, t: any) => s + (t.cash_amount || 0) + (t.transfer_amount || 0), 0);
+    totalCash = filtered.reduce((s: number, t: any) => s + (t.cash_amount || 0), 0);
+    totalTransfer = filtered.reduce((s: number, t: any) => s + (t.transfer_amount || 0), 0);
+    totalTransactions = filtered.length;
+
+    console.debug('[Laporan Revenue Debug]', {
+        period: { startISO: period.startISO, endExclusiveISO: period.endExclusiveISO },
+        transactionCount: totalTransactions,
+        totalRevenue,
+    });
 
     // Get rooms per location
     const { data: allRooms } = await supabase.from('nomor_kamar').select('name, lokasi');
@@ -173,10 +183,10 @@ export async function fetchLaporanData(
     });
 
     // Group by location and room
-    // Use same filtered list as revenue for location grouping
-    const groupedTxList = analyticsRevenueUsed ? txList : txList.filter((t: any) => {
-        const effDate = t.checkin_at || t.created_at;
-        return effDate && effDate >= start && effDate < end;
+    // Use exclusive-end COALESCE filtered list for location grouping
+    const groupedTxList = txList.filter((t: any) => {
+        const effDate = t.checkin_at ?? t.created_at;
+        return effDate && effDate >= period.startISO && effDate < period.endExclusiveISO;
     });
 
     const locMap: Record<string, { transactions: number; revenue: number; rooms: Record<string, { tx: number; rev: number }> }> = {};
@@ -223,10 +233,8 @@ export async function fetchLaporanData(
     if (mode !== 'hotel_day') {
         try {
             if (process.env.ANALYTICS_DATABASE_URL) {
-                const startDateStr = start.split('T')[0];
-                const endDateExcl = new Date(end);
-                endDateExcl.setDate(endDateExcl.getDate() + 1);
-                const endDateStr = endDateExcl.toISOString().split('T')[0];
+                const startDateStr = period.startDate;
+                const endDateStr = period.endExclusiveDate;
 
                 const expSummary = await getExpenseSummary(startDateStr, endDateStr);
                 totalExpenses = expSummary.totalAmount;
@@ -437,31 +445,28 @@ export async function fetchLaporanData(
         prevRange = getPreviousDateRange(filter, mode);
     }
 
+    const prevPeriod = buildPeriodFromISO(prevRange.start, prevRange.end);
     let prevRevenue = 0, prevTransactions = 0, prevExpenses = 0;
-    let analyticsComparisonUsed = false;
 
     // hotel_day: skip analytics aggregate to preserve ISO time boundaries
     if (mode !== 'hotel_day') {
         try {
-            if (process.env.ANALYTICS_DATABASE_URL) {
-                const prevRevSummary = await getRevenueSummary(buildPeriodFromISO(prevRange.start, prevRange.end));
-                prevRevenue = prevRevSummary.totalRevenue;
-                prevTransactions = prevRevSummary.transactionCount;
+            const prevRevSummary = await getRevenueSummary(prevPeriod);
+            prevRevenue = prevRevSummary.totalRevenue;
+            prevTransactions = prevRevSummary.transactionCount;
 
-                const prevExpSummary = await getExpenseSummary(
-                    prevRange.start.split('T')[0],
-                    prevRange.end.split('T')[0]
-                );
-                prevExpenses = prevExpSummary.totalAmount;
-                analyticsComparisonUsed = true;
-            }
+            const prevExpSummary = await getExpenseSummary(
+                prevPeriod.startDate,
+                prevPeriod.endExclusiveDate
+            );
+            prevExpenses = prevExpSummary.totalAmount;
         } catch (e) {
-            console.warn('[laporan] Analytics comparison unavailable, falling back to Supabase:', e);
+            console.warn('[laporan] getRevenueSummary/getExpenseSummary failed for comparison, falling back to Supabase:', e);
         }
     }
 
-    // Fallback: compute from Supabase if analytics threw error
-    if (!analyticsComparisonUsed) {
+    // Always compute comparison from local Supabase using exclusive-end COALESCE filter
+    {
         const [prevTxResult, prevExpResult] = await Promise.all([
             supabase
                 .from('transactions')
@@ -470,13 +475,13 @@ export async function fetchLaporanData(
             supabase
                 .from('pengeluaran')
                 .select('jumlah')
-                .gte('tanggal', prevRange.start.split('T')[0])
-                .lte('tanggal', prevRange.end.split('T')[0]),
+                .gte('tanggal', prevPeriod.startDate)
+                .lte('tanggal', prevPeriod.endDate),
         ]);
 
         const prevFiltered = (prevTxResult.data || []).filter((t: any) => {
-            const effDate = t.checkin_at || t.created_at;
-            return effDate && effDate >= prevRange.start && effDate < prevRange.end;
+            const effDate = t.checkin_at ?? t.created_at;
+            return effDate && effDate >= prevPeriod.startISO && effDate < prevPeriod.endExclusiveISO;
         });
         prevRevenue = prevFiltered.reduce((s: number, t: any) => s + (t.cash_amount || 0) + (t.transfer_amount || 0), 0) || 0;
         prevTransactions = prevFiltered.length;

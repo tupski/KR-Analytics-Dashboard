@@ -63,7 +63,7 @@ export default async function DashboardPage({
     ] = await Promise.all([
         fetchKPIData(compareMode || undefined, dateParams),
         fetchRevenueData('daily'),
-        fetchOccupancyData(30, dateParams),
+        fetchOccupancyData(30),
         fetchTodayCheckins(dateParams),
         fetchTodayCheckouts(dateParams),
         fetchUnitStatus(),

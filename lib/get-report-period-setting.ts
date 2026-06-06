@@ -36,8 +36,13 @@ export async function getReportPeriodSetting(): Promise<ReportPeriodMode> {
 /**
  * Get today's report period range using the DB setting.
  * Convenience wrapper used in dashboard/actions.ts to replace getHotelDayRange().
+ *
+ * Returns start (inclusive), end (inclusive), and endExclusiveISO for `<` DB queries.
  */
-export async function getTodayReportRange(): Promise<{ start: string; end: string }> {
+export async function getTodayReportRange(): Promise<{ start: string; end: string; endExclusiveISO: string }> {
     const mode = await getReportPeriodSetting();
-    return getReportPeriodRange(new Date(), mode);
+    const range = getReportPeriodRange(new Date(), mode);
+    // Compute exclusive end from the inclusive end by adding 1 ms
+    const endExclusiveISO = new Date(new Date(range.end).getTime() + 1).toISOString().replace('.000Z', '.000+07:00');
+    return { start: range.start, end: range.end, endExclusiveISO };
 }

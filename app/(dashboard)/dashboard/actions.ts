@@ -44,6 +44,16 @@ function buildPeriodFromISO(startISO: string, endISO: string): ReportPeriodRange
     const endDate = endISO.substring(0, 10);
     // Try to detect the mode from the hour (12:00 = hotel_day)
     const mode: ReportPeriodRange['mode'] = startISO.includes('T12:') ? 'hotel_day' : 'calendar_day';
+
+    // Compute exclusive end: next day at 00:00:00 (calendar_day) or 12:00:00 (hotel_day)
+    const endExclusiveDateObj = addDays(endDateISO, 1);
+    const excY = endExclusiveDateObj.getFullYear();
+    const excM = String(endExclusiveDateObj.getMonth() + 1).padStart(2, '0');
+    const excD = String(endExclusiveDateObj.getDate()).padStart(2, '0');
+    const endExclusiveDate = `${excY}-${excM}-${excD}`;
+    const excHour = mode === 'hotel_day' ? '12:00:00.000' : '00:00:00.000';
+    const endExclusiveISO = `${endExclusiveDate}T${excHour}+07:00`;
+
     return {
         preset: 'custom',
         mode,
@@ -54,6 +64,8 @@ function buildPeriodFromISO(startISO: string, endISO: string): ReportPeriodRange
         endISO,
         startDate,
         endDate,
+        endExclusiveISO,
+        endExclusiveDate,
         label: `${startDate} – ${endDate}`,
     };
 }
@@ -85,29 +97,28 @@ export async function fetchTodayCheckins(dateParams?: DateFilterParams): Promise
     const supabase = createServerClient();
     // Use dateParams if provided, otherwise fall back to today
     let start: string;
-    let end: string;
+    let exclusEnd: string;
     if (dateParams?.rangePreset || (dateParams?.startDate && dateParams?.endDate)) {
         const { getReportPeriodSetting } = await import('@/lib/get-report-period-setting');
         const mode = await getReportPeriodSetting();
         const range = computeDateRange(dateParams.rangePreset || 'custom', dateParams.startDate, dateParams.endDate, mode);
         start = range.start;
-        end = range.end;
+        exclusEnd = range.endExclusiveISO ?? (() => { throw new Error('endExclusiveISO missing from date range'); })();
     } else {
         const todayRange = await getTodayReportRange();
         start = todayRange.start;
-        end = todayRange.end;
+        exclusEnd = todayRange.endExclusiveISO;
     }
 
     try {
         // Use COALESCE: checkin_at >= start OR (checkin IS NULL AND created_at >= start)
-        // Exclusive end: use the end parameter directly (report-period-aware)
-        const exclusEnd = end;
+        // Exclusive end boundaries for correct `<` filtering
         const { data, error } = await supabase
             .from('transactions')
             .select('id, apartment_location, room_number, customer_name, checkin_at, created_at')
             .or(
-                `and(checkin_at.gte.${start},checkin_at.lt.${end}),` +
-                `and(checkin_at.is.null,created_at.gte.${start},created_at.lt.${end})`
+                `and(checkin_at.gte.${start},checkin_at.lt.${exclusEnd}),` +
+                `and(checkin_at.is.null,created_at.gte.${start},created_at.lt.${exclusEnd})`
             )
             .order('checkin_at', { ascending: false })
             .limit(100);
@@ -160,26 +171,25 @@ export async function fetchTodayCheckouts(dateParams?: DateFilterParams): Promis
     const supabase = createServerClient();
     // Use dateParams if provided, otherwise fall back to today
     let start: string;
-    let end: string;
+    let exclusEnd: string;
     if (dateParams?.rangePreset || (dateParams?.startDate && dateParams?.endDate)) {
         const { getReportPeriodSetting } = await import('@/lib/get-report-period-setting');
         const mode = await getReportPeriodSetting();
         const range = computeDateRange(dateParams.rangePreset || 'custom', dateParams.startDate, dateParams.endDate, mode);
         start = range.start;
-        end = range.end;
+        exclusEnd = range.endExclusiveISO ?? (() => { throw new Error('endExclusiveISO missing from date range'); })();
     } else {
         const todayRange = await getTodayReportRange();
         start = todayRange.start;
-        end = todayRange.end;
+        exclusEnd = todayRange.endExclusiveISO;
     }
 
     try {
-        const exclusEnd = end;
         const { data, error } = await supabase
             .from('transactions')
             .select('id, apartment_location, room_number, customer_name, checkout_at, checkin_at, created_at')
             .gte('checkout_at', start)
-            .lt('checkout_at', end)
+            .lt('checkout_at', exclusEnd)
             .order('checkout_at', { ascending: true })
             .limit(10);
 
@@ -233,7 +243,7 @@ async function fetchDailyKPISnapshot(
     // Use period-aware boundaries (calendar_day or hotel_day) when mode provided
     const range = getReportPeriodRange({ preset: 'custom', startDate: targetDay, endDate: targetDay, mode: mode ?? 'calendar_day', timezone: 'Asia/Jakarta' });
     const dayStart = range.startISO;
-    const dayEnd = range.endISO;
+    const dayExclusEnd = range.endExclusiveISO;
 
     // Use COALESCE(checkin_at, created_at) with exclusive end
     // Widen filter: checkin_at >= start OR (checkin IS NULL AND created_at >= start)
@@ -252,7 +262,7 @@ async function fetchDailyKPISnapshot(
     // JS filter: effective_date < dayEnd (exclusive)
     const filtered = (txData || []).filter((t: any) => {
         const effDate = t.checkin_at || t.created_at;
-        return effDate && effDate >= dayStart && effDate < dayEnd;
+        return effDate && effDate >= dayStart && effDate < dayExclusEnd;
     });
 
     const revenue = filtered.reduce(
@@ -328,15 +338,17 @@ export async function fetchKPIData(
         const range = dateParams?.rangePreset
             ? computeDateRange(dateParams.rangePreset, dateParams.startDate, dateParams.endDate, mode)
             : null;
-        const actualDayStart = range?.start || (await getTodayReportRange()).start;
-        const actualDayEnd = range?.end || (await getTodayReportRange()).end;
+        const todayFallback = range ? null : await getTodayReportRange();
+        const actualDayStart = range?.start || todayFallback!.start;
+        const actualDayEnd = range?.end || todayFallback!.end;
+        const actualDayExclusEnd = range?.endExclusiveISO || todayFallback!.endExclusiveISO;
 
         const { count: bookingCount } = await supabase
             .from('transactions')
             .select('*', { count: 'exact', head: true })
             .or(
-                `and(checkin_at.gte.${actualDayStart},checkin_at.lt.${actualDayEnd}),` +
-                `and(checkin_at.is.null,created_at.gte.${actualDayStart},created_at.lt.${actualDayEnd})`
+                `and(checkin_at.gte.${actualDayStart},checkin_at.lt.${actualDayExclusEnd}),` +
+                `and(checkin_at.is.null,created_at.gte.${actualDayStart},created_at.lt.${actualDayExclusEnd})`
             );
 
         // Build ReportPeriodRange for the main period to pass to the service
@@ -359,7 +371,7 @@ export async function fetchKPIData(
         };
 
         // Compute comparison range from dateParams or legacy compareMode
-        let compRange: { start: string; end: string; label: string } | null = null;
+        let compRange: { start: string; end: string; label: string; endExclusiveISO?: string } | null = null;
 
         if (dateParams?.comparisonMode && dateParams.comparisonMode !== 'none') {
             const cr = computeComparisonRange(
@@ -374,16 +386,17 @@ export async function fetchKPIData(
         } else if (compareMode) {
             const { day: prevDay, label: prevLabel } = getCompareDay(today, compareMode);
             const snap = getReportPeriodRange({ preset: 'custom', startDate: prevDay, endDate: prevDay, mode, timezone: 'Asia/Jakarta' });
-            compRange = { start: snap.startISO, end: snap.endISO, label: prevLabel };
+            compRange = { start: snap.startISO, end: snap.endISO, endExclusiveISO: snap.endExclusiveISO, label: prevLabel };
         }
 
         if (compRange) {
+            const compExclusEnd = compRange.endExclusiveISO ?? (() => { throw new Error('endExclusiveISO missing from comparison range'); })();
             const { count: prevBookingCount } = await supabase
                 .from('transactions')
                 .select('*', { count: 'exact', head: true })
                 .or(
-                    `and(checkin_at.gte.${compRange.start},checkin_at.lt.${compRange.end}),` +
-                    `and(checkin_at.is.null,created_at.gte.${compRange.start},created_at.lt.${compRange.end})`
+                    `and(checkin_at.gte.${compRange.start},checkin_at.lt.${compExclusEnd}),` +
+                    `and(checkin_at.is.null,created_at.gte.${compRange.start},created_at.lt.${compExclusEnd})`
                 );
 
             const prevPeriod = buildPeriodFromISO(compRange.start, compRange.end);
@@ -745,7 +758,7 @@ export async function getSyncFreshness(): Promise<import('@/lib/analytics/sync-f
  */
 export async function fetchLocationHealthData(): Promise<LocationHealthItem[]> {
     const supabase = createServerClient();
-    const { start: periodStart, end: periodEnd } = await getTodayReportRange();
+    const { start: periodStart, end: periodEnd, endExclusiveISO: periodExclusEnd } = await getTodayReportRange();
 
     try {
         // 1. Get all locations with room counts
@@ -763,14 +776,14 @@ export async function fetchLocationHealthData(): Promise<LocationHealthItem[]> {
             .from('transactions')
             .select('apartment_location, cash_amount, transfer_amount, checkin_at, created_at')
             .or(
-                `and(checkin_at.gte.${periodStart},checkin_at.lt.${periodEnd}),` +
-                `and(checkin_at.is.null,created_at.gte.${periodStart},created_at.lt.${periodEnd})`
+                `and(checkin_at.gte.${periodStart},checkin_at.lt.${periodExclusEnd}),` +
+                `and(checkin_at.is.null,created_at.gte.${periodStart},created_at.lt.${periodExclusEnd})`
             );
 
         const revenuePerLocation: Record<string, number> = {};
         revenueData?.forEach((t: any) => {
             const effDate = t.checkin_at || t.created_at;
-            if (effDate && effDate >= periodStart && effDate < periodEnd) {
+            if (effDate && effDate >= periodStart && effDate < periodExclusEnd) {
                 const loc = t.apartment_location;
                 revenuePerLocation[loc] = (revenuePerLocation[loc] || 0)
                     + (t.cash_amount || 0) + (t.transfer_amount || 0);
@@ -1018,10 +1031,9 @@ export async function fetchMarketingPerformanceData(): Promise<{
     activeChannels: number;
 }> {
     const supabase = createServerClient();
-    const { start, end } = await getTodayReportRange();
+    const { start, end, endExclusiveISO: exclusEnd } = await getTodayReportRange();
 
     try {
-        const exclusEnd = new Date(new Date(start).getTime() + 86400000).toISOString();
         const { data, error } = await supabase
             .from('transactions')
             .select('marketing_name, cash_amount, transfer_amount, checkin_at, created_at')

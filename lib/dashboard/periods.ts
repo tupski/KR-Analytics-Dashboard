@@ -92,13 +92,14 @@ export async function getDateBoundaries(date: Date): Promise<{ dayStart: Date; d
  *
  * @deprecated Prefer using getReportPeriodRange() directly from @/lib/shared/report-period.
  */
-export async function getDateBoundariesISO(date: Date): Promise<{ startISO: string; endISO: string }> {
+export async function getDateBoundariesISO(date: Date): Promise<{ startISO: string; endISO: string; endExclusiveISO: string }> {
     const mode = await getMode();
     const dateStr = format(date, 'yyyy-MM-dd');
     const range = getSharedRange({ preset: 'custom', startDate: dateStr, endDate: dateStr, mode });
     return {
         startISO: range.startISO,
         endISO: range.endISO,
+        endExclusiveISO: range.endExclusiveISO,
     };
 }
 
@@ -135,7 +136,7 @@ export async function getOccupancyWindow(date: Date): Promise<{ dayStart: Date; 
  *
  * @deprecated Prefer using getReportPeriodRange() directly from @/lib/shared/report-period.
  */
-export async function getComparisonRange(daysOffset: number): Promise<{ startISO: string; endISO: string }> {
+export async function getComparisonRange(daysOffset: number): Promise<{ startISO: string; endISO: string; endExclusiveISO: string }> {
     const mode = await getMode();
     const date = subDays(new Date(), daysOffset);
     const dateStr = format(date, 'yyyy-MM-dd');
@@ -143,5 +144,6 @@ export async function getComparisonRange(daysOffset: number): Promise<{ startISO
     return {
         startISO: range.startISO,
         endISO: range.endISO,
+        endExclusiveISO: range.endExclusiveISO,
     };
 }
