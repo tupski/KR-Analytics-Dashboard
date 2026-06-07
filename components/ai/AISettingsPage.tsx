@@ -58,6 +58,55 @@ function isMaskedApiKey(value: string): boolean {
     );
 }
 
+/** Map technical/server errors to user-friendly Indonesian messages */
+function mapUserFriendlyError(rawError: string): string {
+    const lower = rawError.toLowerCase();
+
+    // Cleanup / model lama
+    if (lower.includes('membersihkan model lama') || lower.includes('cleanup model') || lower.includes('clean up model')) {
+        return 'Gagal membersihkan model lama. Model baru tetap bisa digunakan jika berhasil dimuat.';
+    }
+
+    // API key / auth errors
+    if (
+        lower.includes('api key') ||
+        lower.includes('apikey') ||
+        lower.includes('unauthorized') ||
+        lower.includes('401') ||
+        lower.includes('invalid key') ||
+        lower.includes('invalid api') ||
+        lower.includes('authentication failed') ||
+        lower.includes('not authorized')
+    ) {
+        return 'API key atau endpoint provider belum valid. Periksa kembali konfigurasi.';
+    }
+
+    // Model not selected
+    if (
+        lower.includes('pilih model') ||
+        lower.includes('model belum dipilih') ||
+        lower.includes('no model') ||
+        lower.includes('model is required') ||
+        lower.includes('model wajib')
+    ) {
+        return 'Pilih model terlebih dahulu sebelum menyimpan.';
+    }
+
+    // Chat config / KRAI not ready
+    if (
+        lower.includes('krai') ||
+        lower.includes('mengalami kendala') ||
+        (lower.includes('chat') && lower.includes('config')) ||
+        lower.includes('model aktif') ||
+        lower.includes('provider aktif') ||
+        lower.includes('belum siap')
+    ) {
+        return 'Model aktif belum siap. Pilih provider dan model aktif di Pengaturan KR-AI.';
+    }
+
+    return rawError;
+}
+
 /**
  * Mask API key for display — shows first 4 and last 4 characters.
  * Returns empty string if key is too short.
@@ -240,7 +289,7 @@ export default function AISettingsPage({ section = 'ai' }: AISettingsPageProps) 
             const data = await res.json();
             setPruneResult(`${data.deleted ?? 0} percakapan lama dihapus.`);
         } catch {
-            setPruneResult('Gagal menjalankan pembersihan.');
+            setPruneResult('Gagal membersihkan model lama. Model baru tetap bisa digunakan jika berhasil dimuat.');
         } finally {
             setPruning(false);
         }
@@ -556,7 +605,7 @@ export default function AISettingsPage({ section = 'ai' }: AISettingsPageProps) 
     };
 
     return (
-        <div className="max-w-5xl space-y-5">
+        <div className="w-full max-w-5xl space-y-5 overflow-x-hidden min-w-0">
             {/* ── Section: AI (Provider Config) ── */}
             {section === 'ai' && (
                 <>
@@ -632,8 +681,8 @@ export default function AISettingsPage({ section = 'ai' }: AISettingsPageProps) 
 
                                 {apiKeySet && !isEditingApiKey ? (
                                     /* Key exists + not editing → show masked preview + Edit/Delete */
-                                    <div className="flex items-center gap-2">
-                                        <div className="flex items-center gap-2 px-3 py-2 border rounded-lg bg-gray-50 font-mono text-sm select-all">
+                                    <div className="flex items-center gap-2 flex-wrap">
+                                        <div className="flex items-center gap-2 px-3 py-2 border rounded-lg bg-gray-50 font-mono text-sm select-all min-w-0">
                                             <span className="text-gray-600 truncate" title="API Key tersimpan (enkripsi AES-256-GCM)">
                                                 {maskApiKey(apiKeyPreview) || '••••••••••••••••'}
                                             </span>
@@ -679,13 +728,12 @@ export default function AISettingsPage({ section = 'ai' }: AISettingsPageProps) 
                                             value={draftApiKey}
                                             onChange={e => {
                                                 setDraftApiKey(e.target.value);
-                                                // Clear error when user starts typing
                                                 if (saveError && saveError.includes('API key')) {
                                                     setSaveError(null);
                                                 }
                                             }}
                                             placeholder={isEditingApiKey ? "Masukkan API key baru" : provider.placeholder}
-                                            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                                            className="w-full max-w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
                                             aria-label="API Key input"
                                         />
                                         {draftApiKey && !isMaskedApiKey(draftApiKey) && (
@@ -716,7 +764,7 @@ export default function AISettingsPage({ section = 'ai' }: AISettingsPageProps) 
                                         value={draftBaseUrl}
                                         onChange={e => setDraftBaseUrl(e.target.value)}
                                         placeholder="https://..."
-                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                                        className="w-full max-w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
                                     />
                                 </div>
                             )}
@@ -861,19 +909,19 @@ export default function AISettingsPage({ section = 'ai' }: AISettingsPageProps) 
                                         <Plus className="w-3 h-3 inline mr-1" />
                                         Tambah Model Custom
                                     </label>
-                                    <div className="flex gap-2">
+                                    <div className="flex flex-col sm:flex-row gap-2">
                                         <input
                                             type="text"
                                             value={customModelName}
                                             onChange={e => setCustomModelName(e.target.value)}
                                             placeholder="Nama model (contoh: kr/claude-haiku-4.5)"
-                                            className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                                            className="min-w-0 flex-1 w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
                                             onKeyDown={e => { if (e.key === 'Enter') handleTestCustomModel(); }}
                                         />
                                         <button
                                             onClick={handleTestCustomModel}
                                             disabled={!customModelName.trim() || testingCustom}
-                                            className="px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700 transition-colors disabled:opacity-50 flex-shrink-0"
+                                            className="w-full sm:w-auto px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700 transition-colors disabled:opacity-50 flex-shrink-0"
                                         >
                                             {testingCustom ? (
                                                 <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
@@ -890,20 +938,34 @@ export default function AISettingsPage({ section = 'ai' }: AISettingsPageProps) 
 
                             {/* Save error */}
                             {saveError && (
-                                <div className="p-3 rounded-lg bg-red-50 border border-red-200">
+                                <div className="p-3 rounded-lg bg-red-50 border border-red-200 w-full overflow-hidden break-words">
                                     <div className="flex items-start gap-2">
                                         <AlertCircle className="w-4 h-4 text-red-600 flex-shrink-0 mt-0.5" />
-                                        <p className="text-xs text-red-800 font-medium">{saveError}</p>
+                                        <div className="min-w-0 flex-1">
+                                            <p className="text-xs text-red-800 font-medium break-words">
+                                                {mapUserFriendlyError(saveError)}
+                                            </p>
+                                            {mapUserFriendlyError(saveError) !== saveError && (
+                                                <details className="mt-2">
+                                                    <summary className="text-[10px] text-red-500 cursor-pointer hover:text-red-700">
+                                                        Detail teknis
+                                                    </summary>
+                                                    <p className="text-[10px] text-red-600 mt-1 bg-red-100/50 rounded px-2 py-1 break-words font-mono">
+                                                        {saveError}
+                                                    </p>
+                                                </details>
+                                            )}
+                                        </div>
                                     </div>
                                 </div>
                             )}
 
                             {/* Actions */}
-                            <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-gray-100">
+                            <div className="flex flex-col sm:flex-row flex-wrap items-stretch sm:items-center gap-2 pt-2 border-t border-gray-100">
                                 <button
                                     onClick={handleSave}
                                     disabled={!apiKeySet && !draftApiKey.trim()}
-                                    className="inline-flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors disabled:opacity-50"
+                                    className="w-full sm:w-auto inline-flex items-center justify-center gap-1.5 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors disabled:opacity-50"
                                 >
                                     {saved === activeProviderId ? <Check className="w-4 h-4" /> : <Key className="w-4 h-4" />}
                                     {saved === activeProviderId ? 'Tersimpan' : 'Simpan'}
@@ -911,7 +973,7 @@ export default function AISettingsPage({ section = 'ai' }: AISettingsPageProps) 
                                 <button
                                     onClick={handleSetActive}
                                     disabled={!apiKeySet}
-                                    className="inline-flex items-center gap-1.5 px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 transition-colors disabled:opacity-50"
+                                    className="w-full sm:w-auto inline-flex items-center justify-center gap-1.5 px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 transition-colors disabled:opacity-50"
                                 >
                                     <Brain className="w-4 h-4" />
                                     Set Aktif
@@ -919,7 +981,7 @@ export default function AISettingsPage({ section = 'ai' }: AISettingsPageProps) 
                                 <button
                                     onClick={handleTest}
                                     disabled={(!apiKeySet && !draftApiKey.trim()) || testing}
-                                    className="inline-flex items-center gap-1.5 px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700 transition-colors disabled:opacity-50"
+                                    className="w-full sm:w-auto inline-flex items-center justify-center gap-1.5 px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700 transition-colors disabled:opacity-50"
                                 >
                                     {testing ? (
                                         <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
@@ -931,7 +993,7 @@ export default function AISettingsPage({ section = 'ai' }: AISettingsPageProps) 
                                 {apiKeySet && !isEditingApiKey && (
                                     <button
                                         onClick={handleDelete}
-                                        className="inline-flex items-center gap-1.5 px-3 py-2 text-red-600 hover:bg-red-50 rounded-lg text-sm font-medium transition-colors ml-auto"
+                                        className="w-full sm:w-auto inline-flex items-center justify-center gap-1.5 px-3 py-2 text-red-600 hover:bg-red-50 rounded-lg text-sm font-medium transition-colors sm:ml-auto"
                                     >
                                         <Trash2 className="w-3.5 h-3.5" />
                                         Hapus
@@ -940,12 +1002,12 @@ export default function AISettingsPage({ section = 'ai' }: AISettingsPageProps) 
                             </div>
 
                             {testResult && (
-                                <div className={`p-3 rounded-lg ${testResult.success ? 'bg-emerald-50 border border-emerald-200' : 'bg-red-50 border border-red-200'}`}>
+                                <div className={`p-3 rounded-lg w-full overflow-hidden break-words ${testResult.success ? 'bg-emerald-50 border border-emerald-200' : 'bg-red-50 border border-red-200'}`}>
                                     <div className="flex items-start gap-2">
                                         {testResult.success
                                             ? <Check className="w-4 h-4 text-emerald-600 flex-shrink-0 mt-0.5" />
                                             : <AlertCircle className="w-4 h-4 text-red-600 flex-shrink-0 mt-0.5" />}
-                                        <div className="text-xs">
+                                        <div className="text-xs min-w-0">
                                             <p className={`font-semibold ${testResult.success ? 'text-emerald-800' : 'text-red-800'}`}>
                                                 {testResult.success ? 'Berhasil terhubung' : 'Gagal'}
                                             </p>
@@ -1179,9 +1241,9 @@ export default function AISettingsPage({ section = 'ai' }: AISettingsPageProps) 
 
                     {/* Save indicator */}
                     {insightSaved && (
-                        <div className="flex items-center gap-2 text-xs text-emerald-700 bg-emerald-50 px-3 py-2 rounded-lg border border-emerald-200">
-                            <Check className="w-3.5 h-3.5" />
-                            <span>Pengaturan &ldquo;{insightSaved}&rdquo; tersimpan</span>
+                        <div className="flex items-center gap-2 text-xs text-emerald-700 bg-emerald-50 px-3 py-2 rounded-lg border border-emerald-200 w-full overflow-hidden break-words">
+                            <Check className="w-3.5 h-3.5 flex-shrink-0" />
+                            <span className="min-w-0">Pengaturan &ldquo;{insightSaved}&rdquo; tersimpan</span>
                         </div>
                     )}
 
@@ -1209,7 +1271,7 @@ export default function AISettingsPage({ section = 'ai' }: AISettingsPageProps) 
                                 }
                             }}
                             disabled={testingInsight}
-                            className="inline-flex items-center gap-1.5 px-4 py-2 bg-purple-600 text-white rounded-lg text-sm font-medium hover:bg-purple-700 transition-colors disabled:opacity-50"
+                            className="w-full sm:w-auto inline-flex items-center justify-center gap-1.5 px-4 py-2 bg-purple-600 text-white rounded-lg text-sm font-medium hover:bg-purple-700 transition-colors disabled:opacity-50"
                         >
                             {testingInsight ? (
                                 <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
@@ -1219,10 +1281,10 @@ export default function AISettingsPage({ section = 'ai' }: AISettingsPageProps) 
                             {testingInsight ? 'Mengenerate...' : 'Test Generate Insight'}
                         </button>
                         {insightTestResult && (
-                            <div className={`mt-3 p-3 rounded-lg border ${insightTestResult.success ? 'bg-emerald-50 border-emerald-200' : 'bg-red-50 border-red-200'}`}>
+                            <div className={`mt-3 p-3 rounded-lg border w-full overflow-hidden break-words ${insightTestResult.success ? 'bg-emerald-50 border-emerald-200' : 'bg-red-50 border-red-200'}`}>
                                 <div className="flex items-start gap-2">
                                     {insightTestResult.success ? <Check className="w-4 h-4 text-emerald-600 flex-shrink-0 mt-0.5" /> : <AlertCircle className="w-4 h-4 text-red-600 flex-shrink-0 mt-0.5" />}
-                                    <div className="text-xs">
+                                    <div className="text-xs min-w-0">
                                         <p className={`font-semibold ${insightTestResult.success ? 'text-emerald-800' : 'text-red-800'}`}>{insightTestResult.success ? 'Insight berhasil digenerate' : 'Gagal'}</p>
                                         <p className={`mt-0.5 ${insightTestResult.success ? 'text-emerald-700' : 'text-red-700'}`}>{normalizeAiText(insightTestResult.message)}</p>
                                     </div>
@@ -1260,18 +1322,22 @@ export default function AISettingsPage({ section = 'ai' }: AISettingsPageProps) 
                             </div>
                         </div>
 
-                        <div className="flex flex-wrap items-center gap-2">
-                            <button onClick={handleSaveRetention} className="inline-flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors">
+                        <div className="flex flex-col sm:flex-row flex-wrap items-stretch sm:items-center gap-2">
+                            <button onClick={handleSaveRetention} className="w-full sm:w-auto inline-flex items-center justify-center gap-1.5 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors">
                                 {retentionSaved ? <Check className="w-4 h-4" /> : <Clock className="w-4 h-4" />}
                                 {retentionSaved ? 'Tersimpan' : 'Simpan Pengaturan'}
                             </button>
-                            <button onClick={handlePruneNow} disabled={pruning} className="inline-flex items-center gap-1.5 px-4 py-2 border border-red-200 text-red-600 rounded-lg text-sm font-medium hover:bg-red-50 transition-colors disabled:opacity-50">
+                            <button onClick={handlePruneNow} disabled={pruning} className="w-full sm:w-auto inline-flex items-center justify-center gap-1.5 px-4 py-2 border border-red-200 text-red-600 rounded-lg text-sm font-medium hover:bg-red-50 transition-colors disabled:opacity-50">
                                 <Trash2 className="w-4 h-4" />
                                 {pruning ? 'Membersihkan...' : 'Bersihkan Sekarang'}
                             </button>
                         </div>
 
-                        {pruneResult && <p className="text-xs text-gray-600 bg-gray-50 rounded px-3 py-2">{pruneResult}</p>}
+                        {pruneResult && (
+                            <p className="text-xs text-gray-600 bg-gray-50 rounded px-3 py-2 w-full overflow-hidden break-words">
+                                {mapUserFriendlyError(pruneResult)}
+                            </p>
+                        )}
                     </div>
 
                     {/* Info / Health */}
