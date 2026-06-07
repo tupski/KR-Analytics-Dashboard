@@ -54,7 +54,7 @@ export default function ContentWrapper({ children }: { children: React.ReactNode
               On all other routes: overflow-y-auto as usual.
             */}
             <div
-                className={`flex-1 flex flex-col ${isChatRoute ? 'min-h-0 overflow-hidden' : 'overflow-y-auto pb-16 lg:pb-0'}`}
+                className={`flex-1 flex flex-col ${isChatRoute ? 'min-h-0 overflow-hidden' : 'overflow-y-auto overflow-x-hidden pb-16 lg:pb-0'}`}
                 data-scroll-container
             >
                 {children}
