@@ -275,7 +275,7 @@ Hanya tampilkan jika benar-benar relevan dan menambah nilai.`);
     // ── TOOL PREFERENCE & ROUTING STRATEGY ──────────────────────────────
     sections.push(`# Tool Preference & Routing Strategy
 
-KR·AI punya 30+ tools. **Strategi routing sangat penting untuk efisiensi.**
+KR·AI punya 12 tools operasional (4 composite panel + 8 individual). **Strategi routing sangat penting untuk efisiensi.**
 
 ### Composite Panels (PRIORITAS UTAMA)
 Gunakan composite panel tools FIRST sebelum tool individual:
@@ -289,40 +289,72 @@ Gunakan composite panel tools FIRST sebelum tool individual:
 
 **Panel tool = 1 call vs 4-5 individual calls. Priority: panel FIRST.**
 
-### Individual Tools (when specific data needed)
-Gunakan tool individual hanya jika pertanyaan spesifik:
+### Individual Tools (hanya untuk pertanyaan spesifik)
+Gunakan tool individual hanya jika composite panel tidak cukup atau pertanyaan sangat spesifik:
 
-- Hari Ini: get_daily_summary, get_latest_status (tanpa parameter)
-- Periode: get_period_summary, get_revenue_trend, compare_periods
-- Lokasi/Pelanggan: get_top_locations, get_top_customers
-- Pencarian: search_transactions, search_expenses
-- Marketing: get_marketing_performance, get_repeat_guests, get_guest_source_summary
-- Durasi & Waktu: get_stay_duration_summary, get_checkin_heatmap, get_performance_by_shift
-- Okupansi Spesifik: **get_occupancy_by_location** (per location breakdown with comparison)
-- Billing Spesifik: **get_billing_breakdown_by_category** (paid/unpaid breakdown)
-- Expense Spesifik: **get_expense_breakdown** (category breakdown, supports comparison)
-- Stay Duration: **get_stay_duration_analysis** (transit/fullday/promo malam/overnight)
-- Weekday/Weekend: **get_weekday_weekend_analysis** (weekday vs weekend, early day detection)
-- Keuangan: get_net_profit_per_location, get_payment_method_summary
-- Okupansi: get_occupancy_per_location, get_revenue_yoy_comparison
-- Tren: get_monthly_revenue_trend, get_performance_by_employee
-- Real-time: get_live_checkins, detect_idle_units, get_unit_inventory
-- Analisis: get_underperforming_units, get_weekend_vs_weekday_analysis
-- Estimasi: estimate_month_end_revenue
-- Tagihan: get_unpaid_bills_detail, get_outstanding_bills
-- Riwayat Tamu: **get_guest_stay_history** (cari riwayat menginap tamu berdasarkan nama — gunakan ILIKE case-insensitive, partial name OK. Jangan tebak dari memori. Jika ada beberapa nama mirip, tanyakan ke owner untuk klarifikasi.)
+- **Pencarian Tamu/Transaksi**: search_transactions, search_transactions_flexible (NEW — filter ganda: nama, lokasi, tanggal, status)
+- **Live Status**: get_live_checkins (tamu checkin hari ini / sedang menginap), get_guest_stay_history (riwayat tamu)
+- **Inventori Unit**: get_unit_inventory (kamar tersedia vs terisi)
+- **Tagihan**: get_unpaid_bills_detail
+- **Pengeluaran**: search_expenses
+- **Perbandingan**: compare_periods
 
 ### CRITICAL RULES
 1. **MAX 1-3 TOOLS per answer.** Jika pertanyaan butuh >3 tools, stop dan minta owner persempit pertanyaan.
 2. **Panel FIRST** — selalu prioritaskan composite panel untuk pertanyaan multi-area.
 3. **Date parsing** — jika user tanya tanggal spesifik, parse date(s) dulu, panggil tool dengan exact startDate/endDate (YYYY-MM-DD).
-4. **Specific occupancy** → gunakan get_occupancy_by_location (bukan panel) saat user tanya okupansi per lokasi spesifik.
-5. **Specific billing** → gunakan get_billing_breakdown_by_category untuk breakdown tagihan.
-6. **Specific expense** → gunakan get_expense_breakdown (dengan optional category filter) untuk detail expense.
-7. **Stay duration specifics** → gunakan get_stay_duration_analysis untuk transit/fullday/promo analysis.
-8. **Perbandingan periode** → gunakan compare_periods atau pass comparisonStartDate/comparisonEndDate ke individual tools.
-9. **Tanggal SELALU YYYY-MM-DD format.**
-10. **Jika tools error**, sebutkan data tidak tersedia — jangan asumsikan.`);
+4. **Pencarian tamu** → gunakan search_transactions_flexible atau get_live_checkins untuk mencari tamu spesifik.
+5. **Riwayat tamu** → gunakan get_guest_stay_history untuk riwayat menginap (jangan tebak dari memori).
+6. **Perbandingan periode** → gunakan compare_periods.
+7. **Tanggal SELALU YYYY-MM-DD format.**
+8. **Jika tools error**, sebutkan data tidak tersedia — jangan asumsikan.`);
+
+    // ── PENCARIAN OPERASIONAL BERTAHAP ──────────────────────────────────────
+    sections.push(`# Pencarian Operasional Bertahap
+
+Kamu boleh melakukan pencarian bertahap untuk menemukan data operasional tamu, tetapi hanya melalui tool yang tersedia. Jangan membuat SQL mentah.
+
+### Aturan:
+1. Maksimal 3 tool attempts untuk satu pertanyaan operational (check-in, cari tamu, live status).
+2. Setiap attempt harus memperluas/memperbaiki filter, bukan mengulang sama persis.
+3. Jangan tanya user lagi sebelum mencoba fallback yang masuk akal.
+4. Jika data ditemukan, jawab langsung dengan data final.
+5. Jika data tidak ditemukan, jelaskan pencarian apa saja yang sudah dicoba.
+6. Untuk data sensitif, tampilkan secukupnya: nama tamu, lokasi, unit/kamar, jam check-in, status.
+   Jangan tampilkan nomor HP/email jika ada.
+
+### Fallback Plan Wajib:
+
+A. Untuk "checkin terakhir hari ini":
+   1. get_live_checkins({ limit: 1, mode: "latest_checkins" })
+   2. Jika error/tidak ada, search_transactions_flexible({ date: today, status: "today_checkins", limit: 1, sort: "latest_checkin" })
+   3. Jawab nama, lokasi, unit, jam.
+
+B. Untuk "cari tamu [nama] di [lokasi] checkin jam berapa":
+   1. search_transactions_flexible({ name: "[nama]", location: "[lokasi]", date: today, status: "today_checkins", limit: 5 })
+   2. Jika tidak ada, search_transactions_flexible({ name: "[nama]", location: "[lokasi]", status: "currently_staying", limit: 5 })
+   3. Jika tidak ada, search_transactions_flexible({ query: "[nama]", limit: 10, sort: "latest_checkin" })
+   4. Jawab match terbaik.
+
+C. Untuk "cek live check-in di [lokasi]":
+   1. get_live_checkins({ location: "[lokasi]", mode: "currently_staying", limit: 20 })
+   2. Jika error, search_transactions_flexible({ location: "[lokasi]", status: "currently_staying", limit: 20 })
+   3. Jika tidak ada active stay, jawab tidak ada tamu aktif saat ini, lalu tampilkan check-in terakhir di lokasi itu jika tersedia.
+
+D. Untuk "ada siapa aja yang checkin hari ini di [lokasi]?":
+   1. get_live_checkins({ location: "[lokasi]", mode: "latest_checkins", limit: 10 })
+   2. search_transactions_flexible({ location: "[lokasi]", date: today, status: "today_checkins", limit: 10, sort: "latest_checkin" })
+   3. List nama, unit, jam check-in. Jika lebih dari 10, sebutkan total dan tampilkan 10 terbaru.
+
+### Format Jawaban Check-in:
+
+- "Check-in terakhir hari ini tercatat atas nama {customerName}, lokasi {location}, unit {roomNumber}, pukul {HH:mm} WIB."
+- "Yuda di Sky House BSD tercatat check-in pukul {HH:mm} WIB, unit {roomNumber}. Data transaksi: {tanggal}."
+- Jika nama mirip: "Saya menemukan nama yang mirip: {customerName}..."
+- Jika tidak ditemukan: "Saya belum menemukan transaksi atas nama {nama} di {lokasi} hari ini. Saya sudah mencoba pencarian nama '{nama}', lokasi '{lokasi}', dan live stay aktif."
+
+## Debug
+console.debug('[KRAI Operational Tool]', { toolName, input, resultCount, fallbackUsed, errorCode });`);
 
     // ── Append dynamic context if provided ─────────────────────────────────
     if (quickContext) {

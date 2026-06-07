@@ -50,6 +50,8 @@ import { getGuestStayHistory } from '@/lib/ai/tools/guest-history';
 import { effectiveDate } from '@/lib/dashboard/transaction-source';
 import { DATE_RANGE, API_LIMITS, IDLE_THRESHOLDS, TIME, LOCATION_HEALTH } from '@/lib/config/constants';
 import { getCanonicalPeriodSummary } from '@/lib/ai/tools/shared/period-summary';
+import { normalizeText, fuzzyLocationMatch, fuzzyNameMatch, isCurrentlyStaying, formatTimeWIB, formatDateWIB } from '@/lib/ai/tools/shared/normalize';
+import type { TransactionStay } from '@/lib/ai/tools/shared/normalize';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Type Definitions — replace `any` types for proper type safety
@@ -142,10 +144,24 @@ export interface SearchResult {
 
 /** Live checkins result */
 export interface LiveCheckinsResult {
-    snapshot_time: string;
-    location: string;
-    active_guests: Record<string, unknown>[];
-    total_count: number;
+    ok: boolean;
+    mode: 'latest_checkins' | 'currently_staying';
+    period: { date: string; startISO: string; endExclusiveISO: string };
+    count: number;
+    items: LiveCheckinItem[];
+}
+
+export interface LiveCheckinItem {
+    id: string;
+    customerName: string | null;
+    location: string | null;
+    roomNumber: string | null;
+    checkinAt: string | null;
+    effectiveCheckinAt: string | null;
+    checkinTimeWIB: string | null;
+    checkoutAt: string | null;
+    revenue: number | null;
+    status?: 'currently_staying' | 'checked_out';
 }
 
 /** Idle units result */
@@ -610,14 +626,449 @@ async function fetchSearchExpenses(query: string, startDate?: string, endDate?: 
     return { query, results: data || [], total_count: data?.[0]?.total_count || 0 };
 }
 
-async function fetchLiveCheckins(location?: string, limit: number = API_LIMITS.MAX_IDLE_UNITS): Promise<LiveCheckinsResult> {
+/**
+ * fetchSearchTransactionsFlexible — flexible multi-filter transaction search.
+ *
+ * Supports: query (full-text across name/room/location), individual name/roomNumber/location,
+ * date range via effectiveDate(), status filter ("aktif"/"lunas"/"cancel"/"all").
+ * Falls back to queryAnalytics on Supabase error.
+ */
+async function fetchSearchTransactionsFlexible(
+    query?: string,
+    name?: string,
+    location?: string,
+    roomNumber?: string,
+    date?: string,
+    startDate?: string,
+    endDate?: string,
+    status?: string,
+    limit: number = 20,
+    sort: string = 'date_desc',
+): Promise<SearchResult> {
     const supabase = createServerClient();
-    const { data, error } = await supabase.rpc('get_live_checkins', {
-        p_location: location || null,
-        p_limit: Math.min(limit, API_LIMITS.MAX_PAGE_SIZE),
-    });
-    if (error) throw error;
-    return { snapshot_time: getNowWIB(), location: location || 'Semua Lokasi', active_guests: data || [], total_count: data?.[0]?.total_count || 0 };
+
+    // --- Build date range from params ---
+    let effectiveStartISO: string | null = null;
+    let effectiveEndExclusiveISO: string | null = null;
+    if (date) {
+        // Single date: calendar day in Asia/Jakarta
+        const { getReportPeriodRange } = await import('@/lib/shared/report-period');
+        const range = getReportPeriodRange({ preset: 'custom', startDate: date, endDate: date, mode: 'calendar_day' });
+        effectiveStartISO = range.startISO;
+        effectiveEndExclusiveISO = range.endExclusiveISO;
+    } else if (startDate || endDate) {
+        const { getReportPeriodRange } = await import('@/lib/shared/report-period');
+        const range = getReportPeriodRange({
+            preset: 'custom',
+            startDate: startDate || '2020-01-01',
+            endDate: endDate || new Date().toISOString().split('T')[0],
+            mode: 'calendar_day',
+        });
+        effectiveStartISO = range.startISO;
+        effectiveEndExclusiveISO = range.endExclusiveISO;
+    }
+
+    try {
+        // Build filters array for .or() + individual filters
+        const orClauses: string[] = [];
+        const normalizedQuery = query ? normalizeText(query) : '';
+
+        if (normalizedQuery) {
+            orClauses.push(`customer_name.ilike.%${normalizedQuery}%`);
+            orClauses.push(`room_number.ilike.%${normalizedQuery}%`);
+            orClauses.push(`apartment_location.ilike.%${normalizedQuery}%`);
+        }
+
+        let sbQuery = supabase
+            .from('transactions')
+            .select('*', { count: 'exact' })
+            .eq('is_deleted', false);
+
+        if (orClauses.length > 0) {
+            sbQuery = sbQuery.or(orClauses.join(','));
+        }
+
+        // Individual filters (additive)
+        if (name && !query) {
+            sbQuery = sbQuery.ilike('customer_name', `%${normalizeText(name)}%`);
+        }
+        if (roomNumber && !query) {
+            sbQuery = sbQuery.ilike('room_number', `%${normalizeText(roomNumber)}%`);
+        }
+        if (location && !query) {
+            sbQuery = sbQuery.ilike('apartment_location', `%${normalizeText(location)}%`);
+        }
+
+        // Date range on effective date (checkin_at COALESCE created_at)
+        if (effectiveStartISO) {
+            sbQuery = sbQuery.gte('checkin_at', effectiveStartISO);
+        }
+        if (effectiveEndExclusiveISO) {
+            sbQuery = sbQuery.lt('checkin_at', effectiveEndExclusiveISO);
+        }
+
+        // Status filter
+        if (status && status !== 'all') {
+            const s = status.toLowerCase();
+            if (s === 'aktif' || s === 'active') {
+                sbQuery = sbQuery.not('checkin_at', 'is', null).is('checkout_at', null);
+            } else {
+                sbQuery = sbQuery.ilike('status', `%${s}%`);
+            }
+        }
+
+        // Sort
+        switch (sort) {
+            case 'revenue_desc':
+                sbQuery = sbQuery.order('cash_amount', { ascending: false });
+                break;
+            case 'revenue_asc':
+                sbQuery = sbQuery.order('cash_amount', { ascending: true });
+                break;
+            case 'date_asc':
+                sbQuery = sbQuery.order('checkin_at', { ascending: true });
+                break;
+            default:
+                sbQuery = sbQuery.order('checkin_at', { ascending: false });
+        }
+
+        sbQuery = sbQuery.limit(Math.min(limit, API_LIMITS.MAX_PAGE_SIZE));
+
+        const { data, error, count } = await sbQuery;
+        if (error) throw error;
+
+        const items = (data || []).map(mapTxToFlexibleSearchItem);
+        return {
+            query: query || name || '',
+            results: items as unknown as Record<string, unknown>[],
+            total_count: count || items.length,
+        };
+    } catch {
+        // Fallback to queryAnalytics
+        return fetchSearchFlexibleFallback(query, name, location, roomNumber, date, startDate, endDate, status, limit, sort);
+    }
+}
+
+/** Map a transaction row to a clean search result item. */
+function mapTxToFlexibleSearchItem(tx: any): Record<string, unknown> {
+    return {
+        id: tx.id,
+        customerName: tx.customer_name || null,
+        location: tx.apartment_location || null,
+        roomNumber: tx.room_number || null,
+        checkinAt: tx.checkin_at || tx.created_at || null,
+        checkoutAt: tx.checkout_at || null,
+        revenue: (tx.cash_amount || 0) + (tx.transfer_amount || 0),
+        status: tx.status || null,
+        rentalDuration: tx.rental_duration || null,
+        marketingName: tx.marketing_name || null,
+    };
+}
+
+/** Fallback: queryAnalytics SQL for flexible transaction search. */
+async function fetchSearchFlexibleFallback(
+    query?: string,
+    name?: string,
+    location?: string,
+    roomNumber?: string,
+    date?: string,
+    startDate?: string,
+    endDate?: string,
+    status?: string,
+    limit: number = 20,
+    sort: string = 'date_desc',
+): Promise<SearchResult> {
+    const conditions: string[] = ['t.is_deleted = false'];
+    const params: any[] = [];
+
+    if (query) {
+        const q = `%${normalizeText(query)}%`;
+        params.push(q, q, q);
+        conditions.push(`(t.customer_name ILIKE $${params.length - 2} OR t.room_number ILIKE $${params.length - 1} OR t.apartment_location ILIKE $${params.length})`);
+    }
+    if (name && !query) {
+        params.push(`%${normalizeText(name)}%`);
+        conditions.push(`t.customer_name ILIKE $${params.length}`);
+    }
+    if (roomNumber && !query) {
+        params.push(`%${normalizeText(roomNumber)}%`);
+        conditions.push(`t.room_number ILIKE $${params.length}`);
+    }
+    if (location && !query) {
+        params.push(`%${normalizeText(location)}%`);
+        conditions.push(`t.apartment_location ILIKE $${params.length}`);
+    }
+
+    // Date range on effective date
+    if (date) {
+        params.push(date, `${date}T23:59:59+07:00`);
+        conditions.push(`COALESCE(t.checkin_at, t.created_at) >= $${params.length - 1}::timestamptz AND COALESCE(t.checkin_at, t.created_at) < $${params.length}::timestamptz`);
+    } else if (startDate || endDate) {
+        if (startDate) {
+            params.push(startDate);
+            conditions.push(`COALESCE(t.checkin_at, t.created_at) >= $${params.length}::timestamptz`);
+        }
+        if (endDate) {
+            params.push(`${endDate}T23:59:59+07:00`);
+            conditions.push(`COALESCE(t.checkin_at, t.created_at) < $${params.length}::timestamptz`);
+        }
+    }
+
+    // Status
+    if (status && status !== 'all') {
+        const s = status.toLowerCase();
+        if (s === 'aktif' || s === 'active') {
+            conditions.push(`t.checkin_at IS NOT NULL AND t.checkout_at IS NULL`);
+        } else {
+            params.push(`%${s}%`);
+            conditions.push(`t.status ILIKE $${params.length}`);
+        }
+    }
+
+    const orderBy = sort === 'revenue_desc' ? '(t.cash_amount + t.transfer_amount) DESC'
+        : sort === 'revenue_asc' ? '(t.cash_amount + t.transfer_amount) ASC'
+            : sort === 'date_asc' ? 'COALESCE(t.checkin_at, t.created_at) ASC'
+                : 'COALESCE(t.checkin_at, t.created_at) DESC';
+
+    const sql = `
+        SELECT t.*
+        FROM transactions t
+        WHERE ${conditions.join(' AND ')}
+        ORDER BY ${orderBy}
+        LIMIT ${Math.min(limit, API_LIMITS.MAX_PAGE_SIZE)}
+    `;
+
+    const rows = await queryAnalytics(sql, params);
+    const items = (rows || []).map(mapTxToFlexibleSearchItem);
+
+    return {
+        query: query || name || '',
+        results: items as unknown as Record<string, unknown>[],
+        total_count: items.length,
+    };
+}
+
+/**
+ * fetchLiveCheckins — live checkins or currently staying guests.
+ *
+ * Supports two modes:
+ * - latest_checkins: today's checkins sorted by effective date desc
+ * - currently_staying: guests whose stay period covers right now
+ */
+async function fetchLiveCheckins(
+    location?: string,
+    name?: string,
+    date?: string,
+    mode: 'latest_checkins' | 'currently_staying' = 'latest_checkins',
+    limit: number = 10,
+): Promise<LiveCheckinsResult> {
+    const tz = 'Asia/Jakarta';
+    const { format, startOfDay } = await import('date-fns');
+    const { toZonedTime } = await import('date-fns-tz');
+
+    const now = toZonedTime(new Date(), tz);
+    const todayStr = date || format(now, 'yyyy-MM-dd');
+    const todayDate = date ? toZonedTime(new Date(`${date}T12:00:00.000Z`), tz) : now;
+
+    // Mode-aware period boundaries via shared helper
+    const reportMode = await getReportPeriodSetting();
+    const todayRange = getReportPeriodRange({ preset: 'today', mode: reportMode });
+    // For a specific date (not today), build custom range
+    let periodStartISO: string;
+    let periodEndExclusiveISO: string;
+    if (date && date !== todayStr) {
+        const range = getReportPeriodRange({ preset: 'custom', startDate: date, endDate: date, mode: reportMode });
+        periodStartISO = range.startISO;
+        periodEndExclusiveISO = range.endExclusiveISO;
+    } else {
+        periodStartISO = todayRange.startISO;
+        periodEndExclusiveISO = todayRange.endExclusiveISO;
+    }
+
+    try {
+        const supabase = createServerClient();
+
+        if (mode === 'currently_staying') {
+            // Query transactions from last 3 days or where checkout_at is null
+            const threeDaysAgo = new Date(now.getTime() - 3 * 24 * 60 * 60 * 1000);
+            const threeDaysAgoISO = threeDaysAgo.toISOString();
+
+            let query = supabase
+                .from('transactions')
+                .select('id, customer_name, apartment_location, room_number, checkin_at, created_at, checkout_at, rental_duration, cash_amount, transfer_amount')
+                .or(`checkin_at.gte.${threeDaysAgoISO},and(checkin_at.is.null,created_at.gte.${threeDaysAgoISO})`);
+
+            if (location) {
+                query = query.ilike('apartment_location', `%${location}%`);
+            }
+            if (name) {
+                query = query.ilike('customer_name', `%${name}%`);
+            }
+
+            const { data } = await query;
+            const nowDate = new Date();
+
+            // JS filter with isCurrentlyStaying
+            const filtered = (data || []).filter((t: any) => isCurrentlyStaying(t as TransactionStay, nowDate));
+
+            // Apply fuzzy location/name filter for accuracy
+            const fuzzyFiltered = filtered.filter((t: any) => {
+                if (location && !fuzzyLocationMatch(location, t.apartment_location)) return false;
+                if (name && !fuzzyNameMatch(name, t.customer_name)) return false;
+                return true;
+            });
+
+            fuzzyFiltered.sort((a: any, b: any) => {
+                const aEff = (a.checkin_at || a.created_at || '');
+                const bEff = (b.checkin_at || b.created_at || '');
+                return bEff.localeCompare(aEff);
+            });
+
+            const limited = fuzzyFiltered.slice(0, Math.min(limit, 50));
+
+            return {
+                ok: true,
+                mode: 'currently_staying',
+                period: { date: todayStr, startISO: periodStartISO, endExclusiveISO: periodEndExclusiveISO },
+                count: limited.length,
+                items: limited.map(mapTxToLiveCheckinItem),
+            };
+        }
+
+        // mode === 'latest_checkins' (default)
+        let query = supabase
+            .from('transactions')
+            .select('id, customer_name, apartment_location, room_number, checkin_at, created_at, checkout_at, rental_duration, cash_amount, transfer_amount')
+            .or(`checkin_at.gte.${periodStartISO},and(checkin_at.is.null,created_at.gte.${periodStartISO})`);
+
+        if (location) {
+            query = query.ilike('apartment_location', `%${location}%`);
+        }
+        if (name) {
+            query = query.ilike('customer_name', `%${name}%`);
+        }
+
+        const { data, error } = await query;
+
+        if (error) {
+            console.warn('[tools] fetchLiveCheckins Supabase error, falling back to queryAnalytics:', error);
+            return await fetchLiveCheckinsFallback(location, name, date, mode, limit, periodStartISO, periodEndExclusiveISO);
+        }
+
+        // JS-side COALESCE filter + exclusive end
+        const filtered = (data || []).filter((t: any) => {
+            const effDate = t.checkin_at || t.created_at || '';
+            return effDate && effDate >= periodStartISO && effDate < periodEndExclusiveISO;
+        });
+
+        // Apply fuzzy location/name filter
+        const fuzzyFiltered = filtered.filter((t: any) => {
+            if (location && !fuzzyLocationMatch(location, t.apartment_location)) return false;
+            if (name && !fuzzyNameMatch(name, t.customer_name)) return false;
+            return true;
+        });
+
+        // Sort by effective date descending
+        fuzzyFiltered.sort((a: any, b: any) => {
+            const aEff = (a.checkin_at || a.created_at || '');
+            const bEff = (b.checkin_at || b.created_at || '');
+            return bEff.localeCompare(aEff);
+        });
+
+        const limited = fuzzyFiltered.slice(0, Math.min(limit, 50));
+
+        return {
+            ok: true,
+            mode: 'latest_checkins',
+            period: { date: todayStr, startISO: periodStartISO, endExclusiveISO: periodEndExclusiveISO },
+            count: limited.length,
+            items: limited.map(mapTxToLiveCheckinItem),
+        };
+    } catch (err: any) {
+        console.error('[tools] fetchLiveCheckins error:', err);
+        return {
+            ok: false,
+            mode,
+            period: { date: todayStr, startISO: periodStartISO, endExclusiveISO: periodEndExclusiveISO },
+            count: 0,
+            items: [],
+        };
+    }
+}
+
+/** Fallback: use queryAnalytics if Supabase direct query fails */
+async function fetchLiveCheckinsFallback(
+    location: string | undefined,
+    name: string | undefined,
+    date: string | undefined,
+    mode: 'latest_checkins' | 'currently_staying',
+    limit: number,
+    periodStartISO: string,
+    periodEndExclusiveISO: string,
+): Promise<LiveCheckinsResult> {
+    try {
+        let sql = `SELECT id, customer_name, apartment_location, room_number, checkin_at, created_at, checkout_at, rental_duration, cash_amount, transfer_amount
+FROM transactions
+WHERE (checkin_at >= $1 OR (checkin_at IS NULL AND created_at >= $1))`;
+        const params: any[] = [periodStartISO];
+        let idx = 2;
+
+        if (location) {
+            sql += ` AND apartment_location ILIKE $${idx}`;
+            params.push(`%${location}%`);
+            idx++;
+        }
+        if (name) {
+            sql += ` AND customer_name ILIKE $${idx}`;
+            params.push(`%${name}%`);
+            idx++;
+        }
+
+        sql += ` ORDER BY COALESCE(checkin_at, created_at) DESC LIMIT $${idx}`;
+        params.push(Math.min(limit, 50));
+
+        const rows = await queryAnalytics<any>(sql, params);
+
+        // JS filter
+        const filtered = (rows || []).filter((t: any) => {
+            const effDate = t.checkin_at || t.created_at || '';
+            return effDate && effDate >= periodStartISO && effDate < periodEndExclusiveISO;
+        });
+
+        return {
+            ok: true,
+            mode,
+            period: { date: date || periodStartISO.slice(0, 10), startISO: periodStartISO, endExclusiveISO: periodEndExclusiveISO },
+            count: filtered.length,
+            items: filtered.map(mapTxToLiveCheckinItem),
+        };
+    } catch (err: any) {
+        console.error('[tools] fetchLiveCheckinsFallback error:', err);
+        return {
+            ok: false,
+            mode,
+            period: { date: date || periodStartISO.slice(0, 10), startISO: periodStartISO, endExclusiveISO: periodEndExclusiveISO },
+            count: 0,
+            items: [],
+        };
+    }
+}
+
+/** Map a raw transaction row to LiveCheckinItem */
+function mapTxToLiveCheckinItem(tx: any): LiveCheckinItem {
+    const effCheckin = tx.checkin_at || tx.created_at;
+    return {
+        id: tx.id || '',
+        customerName: tx.customer_name || null,
+        location: tx.apartment_location || null,
+        roomNumber: tx.room_number || null,
+        checkinAt: tx.checkin_at || null,
+        effectiveCheckinAt: effCheckin || null,
+        checkinTimeWIB: formatTimeWIB(effCheckin),
+        checkoutAt: tx.checkout_at || null,
+        revenue: (tx.cash_amount || 0) + (tx.transfer_amount || 0),
+        status: tx.checkout_at ? 'checked_out' : (effCheckin ? 'currently_staying' : undefined),
+    };
 }
 
 async function fetchIdleUnits(daysThreshold: number = IDLE_THRESHOLDS.DEFAULT_QUERY_DAYS, location?: string, limit: number = API_LIMITS.MAX_IDLE_UNITS): Promise<IdleUnitsResult> {
@@ -2080,13 +2531,38 @@ export const OPENAI_TOOLS = [
     {
         type: 'function',
         function: {
-            name: 'get_live_checkins',
-            description: 'TAMU YANG SEDANG MENGINAP — daftar realtime tamu yang sedang check-in sekarang. Berguna untuk: "siapa yang lagi nginep?", "berapa tamu aktif sekarang?", "kamar mana yang terisi?".',
+            name: 'search_transactions_flexible',
+            description: 'CARI TRANSAKSI FLEKSIBEL — pencarian transaksi dengan filter ganda opsional: nama tamu, lokasi, nomor kamar, tanggal, status (aktif/lunas/cancel). Minimal satu filter harus diisi. Berguna untuk: "tamu checkin hari ini di Sky House", "transaksi lunas minggu ini di Emerald", "cari transaksi aktif". LEBIH BAIK dari search_transactions untuk pencarian dengan filter spesifik.',
             parameters: {
                 type: 'object',
                 properties: {
-                    location: { type: 'string', description: 'Filter lokasi (opsional)' },
-                    limit: { type: 'number', description: 'Jumlah hasil, default 50, max 100' },
+                    query: { type: 'string', description: 'Kata kunci pencarian (nama/kamar/lokasi) — OPSIONAL jika filter lain diisi' },
+                    name: { type: 'string', description: 'Filter nama tamu (partial OK, case-insensitive) — OPSIONAL' },
+                    location: { type: 'string', description: 'Filter lokasi (fuzzy match) — OPSIONAL' },
+                    roomNumber: { type: 'string', description: 'Filter nomor kamar — OPSIONAL' },
+                    date: { type: 'string', description: 'Filter tanggal YYYY-MM-DD — OPSIONAL (gunakan ini ATAU start_date/end_date)' },
+                    startDate: { type: 'string', description: 'Filter tanggal mulai YYYY-MM-DD — OPSIONAL' },
+                    endDate: { type: 'string', description: 'Filter tanggal akhir YYYY-MM-DD — OPSIONAL' },
+                    status: { type: 'string', description: 'Filter status: aktif, lunas, cancel, atau all (default: all)' },
+                    limit: { type: 'number', description: 'Jumlah hasil, default 20, max 100' },
+                    sort: { type: 'string', description: 'Urutan: date_desc (default), date_asc, revenue_desc, revenue_asc' },
+                },
+            },
+        },
+    },
+    {
+        type: 'function',
+        function: {
+            name: 'get_live_checkins',
+            description: 'TAMU YANG SEDANG MENGINAP / CHECKIN HARI INI — daftar realtime tamu yang sedang check-in sekarang atau daftar check-in hari ini. Berguna untuk: "siapa yang lagi nginep?", "berapa tamu aktif sekarang?", "kamar mana yang terisi?", "tamu checkin hari ini".',
+            parameters: {
+                type: 'object',
+                properties: {
+                    location: { type: 'string', description: 'Filter lokasi (opsional, fuzzy match)' },
+                    name: { type: 'string', description: 'Filter nama tamu (opsional, fuzzy match)' },
+                    date: { type: 'string', description: 'Tanggal YYYY-MM-DD (default: hari ini Asia/Jakarta)' },
+                    mode: { type: 'string', description: 'Mode: latest_checkins (default, checkin hari ini) atau currently_staying (sedang menginap sekarang)', enum: ['latest_checkins', 'currently_staying'] },
+                    limit: { type: 'number', description: 'Jumlah hasil, default 10, max 50' },
                 },
             },
         },
@@ -2109,17 +2585,13 @@ export const OPENAI_TOOLS = [
         type: 'function',
         function: {
             name: 'get_guest_stay_history',
-            description: 'RIWAYAT MENGINAP TAMU — cari riwayat menginap tamu berdasarkan nama. Gunakan ILIKE case-insensitive, dukung partial name. Jika ada beberapa nama mirip, return daftar matches untuk klarifikasi. Jika satu kecocokan jelas, return semua riwayat menginap detail. Output: guestName, totalStays, totalRevenue, stays[] (checkInDate, checkOutDate, locationName, roomNumber, durationLabel, bookingSource, amount, status). JANGAN tebak data dari memori — selalu pakai tool ini untuk pertanyaan nama tamu.',
+            description: 'RIWAYAT MENGINAP TAMU — cari riwayat menginap tamu berdasarkan nama dengan 3-step search: (A) check-in hari ini → (B) tamu yang sedang menginap → (C) historical. Gunakan ILIKE case-insensitive, dukung partial name. Jika beberapa nama mirip, return daftar matches. Output: ok, query, todayMatches (GuestStayMatchItem[]), liveMatches, historyMatches, bestMatch, bestMatchSource. JANGAN tebak dari memori — selalu pakai tool ini untuk pertanyaan nama tamu.',
             parameters: {
                 type: 'object',
                 properties: {
                     guestName: { type: 'string', description: 'Nama tamu yang dicari (partial name OK, case-insensitive)' },
-                    startDate: { type: 'string', description: 'Filter tanggal mulai YYYY-MM-DD (opsional)' },
-                    endDate: { type: 'string', description: 'Filter tanggal akhir YYYY-MM-DD (opsional)' },
-                    location: { type: 'string', description: 'Filter lokasi apartemen (opsional)' },
-                    roomNumber: { type: 'string', description: 'Filter nomor kamar (opsional)' },
-                    fuzzyMatch: { type: 'boolean', description: 'Gunakan fuzzy matching (default: true)' },
-                    limit: { type: 'number', description: 'Jumlah hasil maksimum, default 20, max 100' },
+                    location: { type: 'string', description: 'Filter lokasi apartemen (opsional, fuzzy match)' },
+                    limit: { type: 'number', description: 'Jumlah hasil maksimum, default 20, max 50' },
                 },
                 required: ['guestName'],
             },
@@ -2252,10 +2724,26 @@ export async function executeTool(call: ToolCall): Promise<any> {
                             call.arguments.category,
                             call.arguments.limit || 20,
                         );
+                    case 'search_transactions_flexible':
+                        return await fetchSearchTransactionsFlexible(
+                            call.arguments.query,
+                            call.arguments.name,
+                            call.arguments.location,
+                            call.arguments.roomNumber,
+                            call.arguments.date,
+                            call.arguments.startDate,
+                            call.arguments.endDate,
+                            call.arguments.status,
+                            call.arguments.limit || 20,
+                            call.arguments.sort || 'date_desc',
+                        );
                     case 'get_live_checkins':
                         return await fetchLiveCheckins(
                             call.arguments.location,
-                            call.arguments.limit || 50,
+                            call.arguments.name,
+                            call.arguments.date,
+                            call.arguments.mode || 'latest_checkins',
+                            call.arguments.limit || 10,
                         );
                     case 'get_unpaid_bills_detail':
                         return await fetchUnpaidBillsDetail(
@@ -2266,12 +2754,8 @@ export async function executeTool(call: ToolCall): Promise<any> {
                     case 'get_guest_stay_history':
                         return await getGuestStayHistory(
                             call.arguments.guestName,
-                            call.arguments.startDate,
-                            call.arguments.endDate,
                             call.arguments.location,
-                            call.arguments.roomNumber,
-                            call.arguments.fuzzyMatch,
-                            call.arguments.limit,
+                            call.arguments.limit || 20,
                         );
 
                     default:

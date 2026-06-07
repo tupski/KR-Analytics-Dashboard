@@ -1,230 +1,281 @@
 /**
- * Guest stay history — search guest stay records by name.
+ * Guest stay history — 3-step search for guest stay records.
  *
- * Uses analytics PostgreSQL directly for fast ILIKE search + stay history.
- * SELECT-only, parameterized queries.
+ * Step A: Today's check-ins (effective date = today Asia/Jakarta)
+ * Step B: Currently staying (isCurrentlyStaying)
+ * Step C: Historical latest (broad name search, sorted by effective date desc)
  *
- * Migrated from Supabase customers table to analytics DB transactions mirror
- * for consistency with other AI tools and centralized data access pattern.
+ * Returns unified structure with bestMatch identification.
+ * SELECT-only, parameterized queries. Falls back from Supabase to queryAnalytics.
  */
 
+import { createServerClient } from '@/lib/supabase/server';
 import { queryAnalytics } from '@/lib/analytics/db';
+import { format, toZonedTime } from 'date-fns-tz';
+import {
+    normalizeText,
+    fuzzyNameMatch,
+    fuzzyLocationMatch,
+    isCurrentlyStaying,
+    formatTimeWIB,
+} from '@/lib/ai/tools/shared/normalize';
+import type { TransactionStay } from '@/lib/ai/tools/shared/normalize';
 
-export interface GuestStayHistoryResult {
-    query: string;
-    match_status: 'single_match' | 'multiple_matches' | 'no_match';
-    guest_name: string;
-    total_stays: number;
-    total_revenue: number;
-    stays: Array<{
-        checkin_date: string;
-        checkout_date: string;
-        location: string;
-        room: string;
-        revenue: number;
-    }>;
-    likely_matches: Array<{
-        name: string;
-        phone?: string;
-        total_stays: number;
-    }>;
+// ─── Types ──────────────────────────────────────────────────
+
+export interface GuestStayMatchItem {
+    id: string;
+    customerName: string | null;
+    location: string | null;
+    roomNumber: string | null;
+    checkinAt: string | null;
+    effectiveCheckinAt: string | null;
+    checkinTimeWIB: string | null;
+    checkoutAt: string | null;
+    revenue: number | null;
 }
 
-export async function getGuestStayHistory(
-    guestQuery: string,
-    startDate?: string,
-    endDate?: string,
-    location?: string,
-    roomNumber?: string,
-    fuzzyMatch?: boolean,
-    limit?: number,
-): Promise<GuestStayHistoryResult> {
-    if (!guestQuery || !guestQuery.trim()) {
-        return {
-            query: guestQuery,
-            match_status: 'no_match',
-            guest_name: guestQuery || '',
-            total_stays: 0,
-            total_revenue: 0,
-            stays: [],
-            likely_matches: [],
-        };
-    }
+export interface GuestStayHistoryResult {
+    ok: boolean;
+    query: { guestName: string; location?: string };
+    todayMatches: GuestStayMatchItem[];
+    liveMatches: GuestStayMatchItem[];
+    historyMatches: GuestStayMatchItem[];
+    bestMatch: GuestStayMatchItem | null;
+    bestMatchSource: 'today' | 'live' | 'history' | null;
+}
 
-    const safeLimit = limit ? Math.min(Math.max(1, limit), 100) : 20;
-    const normalizedName = guestQuery.trim().replace(/\s+/g, ' ');
+// ─── Helpers ────────────────────────────────────────────────
 
-    // Step 1: Find matching customer names (case-insensitive ILIKE) from transactions
-    let nameQuery = `SELECT DISTINCT customer_name, COUNT(*)::INT as stay_count
-FROM transactions
-WHERE customer_name ILIKE $1 AND is_deleted = false`;
-    const nameParams: any[] = [`%${normalizedName}%`];
-    let paramIdx = 2;
-
-    if (startDate) {
-        nameQuery += ` AND (created_at AT TIME ZONE 'Asia/Jakarta')::DATE >= $${paramIdx}::date`;
-        nameParams.push(startDate);
-        paramIdx++;
-    }
-    if (endDate) {
-        nameQuery += ` AND (created_at AT TIME ZONE 'Asia/Jakarta')::DATE <= $${paramIdx}::date`;
-        nameParams.push(endDate);
-        paramIdx++;
-    }
-    if (location) {
-        nameQuery += ` AND apartment_location = $${paramIdx}`;
-        nameParams.push(location);
-        paramIdx++;
-    }
-    if (roomNumber) {
-        nameQuery += ` AND room_number ILIKE $${paramIdx}`;
-        nameParams.push(`%${roomNumber}%`);
-        paramIdx++;
-    }
-
-    nameQuery += ` GROUP BY customer_name ORDER BY stay_count DESC LIMIT 20`;
-
-    let nameRows: any[];
-    try {
-        nameRows = await queryAnalytics<any>(nameQuery, nameParams);
-    } catch {
-        return {
-            query: guestQuery,
-            match_status: 'no_match',
-            guest_name: normalizedName,
-            total_stays: 0,
-            total_revenue: 0,
-            stays: [],
-            likely_matches: [],
-        };
-    }
-
-    if (!nameRows || nameRows.length === 0) {
-        return {
-            query: guestQuery,
-            match_status: 'no_match',
-            guest_name: normalizedName,
-            total_stays: 0,
-            total_revenue: 0,
-            stays: [],
-            likely_matches: [],
-        };
-    }
-
-    // Single match
-    if (nameRows.length === 1) {
-        const matchedName = nameRows[0].customer_name;
-        const stays = await fetchStaysForGuest(matchedName, startDate, endDate, location, roomNumber, safeLimit);
-
-        const totalRevenue = (stays || []).reduce(
-            (sum: number, s: any) => sum + (parseFloat(s.amount) || 0),
-            0,
-        );
-
-        return {
-            query: guestQuery,
-            match_status: 'single_match',
-            guest_name: matchedName,
-            total_stays: stays?.length || 0,
-            total_revenue: Math.round(totalRevenue * 100) / 100,
-            stays: (stays || []).map(mapStayRow),
-            likely_matches: [],
-        };
-    }
-
-    // Multiple matches — build likely matches list
-    const matchResults = nameRows.map((r: any) => ({
-        name: r.customer_name,
-        phone: undefined,
-        total_stays: parseInt(r.stay_count) || 0,
-    }));
-
-    // Sort by stay count descending, pick best match as primary
-    matchResults.sort((a, b) => b.total_stays - a.total_stays);
-    const bestGuest = matchResults[0];
-    const stays = await fetchStaysForGuest(bestGuest.name, startDate, endDate, location, roomNumber, safeLimit);
-
-    const totalRevenue = (stays || []).reduce(
-        (sum: number, s: any) => sum + (parseFloat(s.amount) || 0),
-        0,
-    );
-
+function mapTxToMatchItem(tx: any): GuestStayMatchItem {
+    const effCheckin = tx.checkin_at || tx.created_at;
     return {
-        query: guestQuery,
-        match_status: 'multiple_matches',
-        guest_name: bestGuest.name,
-        total_stays: stays?.length || 0,
-        total_revenue: Math.round(totalRevenue * 100) / 100,
-        stays: (stays || []).map(mapStayRow),
-        likely_matches: matchResults.slice(1),
+        id: tx.id || '',
+        customerName: tx.customer_name || null,
+        location: tx.apartment_location || null,
+        roomNumber: tx.room_number || null,
+        checkinAt: tx.checkin_at || null,
+        effectiveCheckinAt: effCheckin || null,
+        checkinTimeWIB: formatTimeWIB(effCheckin),
+        checkoutAt: tx.checkout_at || null,
+        revenue: (tx.cash_amount || 0) + (tx.transfer_amount || 0),
     };
 }
 
-async function fetchStaysForGuest(
-    customerName: string,
-    startDate?: string,
-    endDate?: string,
+function pickBestMatch(
+    today: GuestStayMatchItem[],
+    live: GuestStayMatchItem[],
+    history: GuestStayMatchItem[],
+): { bestMatch: GuestStayMatchItem | null; bestMatchSource: 'today' | 'live' | 'history' | null } {
+    if (today.length > 0) return { bestMatch: today[0], bestMatchSource: 'today' };
+    if (live.length > 0) return { bestMatch: live[0], bestMatchSource: 'live' };
+    if (history.length > 0) return { bestMatch: history[0], bestMatchSource: 'history' };
+    return { bestMatch: null, bestMatchSource: null };
+}
+
+// ─── Supabase query helper ──────────────────────────────────
+
+async function querySupabaseILike(
+    guestName: string,
     location?: string,
-    roomNumber?: string,
-    safeLimit: number = 20,
+    additionalFilter?: (q: any) => any,
+    limit: number = 50,
 ): Promise<any[]> {
-    let staysQuery = `SELECT
-    (created_at AT TIME ZONE 'Asia/Jakarta')::DATE as check_in_date,
-    (checkout_at AT TIME ZONE 'Asia/Jakarta')::DATE as check_out_date,
-    apartment_location as location_name,
-    room_number,
-    rental_duration,
-    CASE
-        WHEN rental_duration = 0 THEN 'Transit'
-        WHEN rental_duration = 1 THEN 'Fullday'
-        WHEN rental_duration = 2 THEN 'Promo 2 Malam'
-        ELSE rental_duration::TEXT || ' Malam'
-    END as duration_label,
-    marketing_name as booking_source,
-    COALESCE(cash_amount, 0) + COALESCE(transfer_amount, 0) as amount,
-    status,
-    is_deleted
-FROM transactions
-WHERE customer_name = $1 AND is_deleted = false`;
-    const stayParams: any[] = [customerName];
-    let stayIdx = 2;
+    const supabase = createServerClient();
+    let q = supabase
+        .from('transactions')
+        .select('id, customer_name, apartment_location, room_number, checkin_at, created_at, checkout_at, rental_duration, cash_amount, transfer_amount')
+        .ilike('customer_name', `%${guestName.trim()}%`);
 
-    if (startDate) {
-        staysQuery += ` AND (created_at AT TIME ZONE 'Asia/Jakarta')::DATE >= $${stayIdx}::date`;
-        stayParams.push(startDate);
-        stayIdx++;
-    }
-    if (endDate) {
-        staysQuery += ` AND (created_at AT TIME ZONE 'Asia/Jakarta')::DATE <= $${stayIdx}::date`;
-        stayParams.push(endDate);
-        stayIdx++;
-    }
     if (location) {
-        staysQuery += ` AND apartment_location = $${stayIdx}`;
-        stayParams.push(location);
-        stayIdx++;
-    }
-    if (roomNumber) {
-        staysQuery += ` AND room_number ILIKE $${stayIdx}`;
-        stayParams.push(`%${roomNumber}%`);
-        stayIdx++;
+        q = q.ilike('apartment_location', `%${location.trim()}%`);
     }
 
-    staysQuery += ` ORDER BY (created_at AT TIME ZONE 'Asia/Jakarta')::DATE DESC LIMIT ${safeLimit}`;
+    if (additionalFilter) {
+        q = additionalFilter(q);
+    }
 
+    q = q.limit(limit);
+
+    const { data, error } = await q;
+    if (error) throw error;
+    return data || [];
+}
+
+// ─── Analytics DB fallback ──────────────────────────────────
+
+async function queryAnalyticsILike(
+    guestName: string,
+    whereClause: string,
+    params: any[],
+    limit: number = 50,
+): Promise<any[]> {
+    const sql = `SELECT id, customer_name, apartment_location, room_number, checkin_at, created_at, checkout_at, rental_duration, cash_amount, transfer_amount
+FROM transactions
+WHERE customer_name ILIKE $1 AND ${whereClause}
+ORDER BY COALESCE(checkin_at, created_at) DESC
+LIMIT $${params.length + 1}`;
+
+    const allParams = [`%${guestName.trim()}%`, ...params, limit];
     try {
-        return await queryAnalytics<any>(staysQuery, stayParams);
+        return await queryAnalytics<any>(sql, allParams);
     } catch {
         return [];
     }
 }
 
-function mapStayRow(s: any): GuestStayHistoryResult['stays'][0] {
+// ─── Main 3-step search ─────────────────────────────────────
+
+export async function getGuestStayHistory(
+    guestName: string,
+    location?: string,
+    limit: number = 50,
+): Promise<GuestStayHistoryResult> {
+    const emptyResult: GuestStayHistoryResult = {
+        ok: true,
+        query: { guestName, location },
+        todayMatches: [],
+        liveMatches: [],
+        historyMatches: [],
+        bestMatch: null,
+        bestMatchSource: null,
+    };
+
+    if (!guestName || !guestName.trim()) {
+        return { ...emptyResult, ok: false };
+    }
+
+    const safeLimit = Math.min(Math.max(1, limit), 100);
+    const tz = 'Asia/Jakarta';
+    const now = toZonedTime(new Date(), tz);
+    const todayStr = format(now, 'yyyy-MM-dd');
+
+    // ── Step A: Today's check-ins ─────────────────────────────
+    let todayMatches: GuestStayMatchItem[] = [];
+    try {
+        const todayStart = format(now, "yyyy-MM-dd'T'00:00:00.000'xxx'", { timeZone: tz });
+        const tomorrowStart = format(
+            new Date(now.getTime() + 86400000),
+            "yyyy-MM-dd'T'00:00:00.000'xxx'",
+            { timeZone: tz },
+        );
+
+        const todayRows = await querySupabaseILike(guestName, location, (q) => {
+            return q.or(`checkin_at.gte.${todayStart},and(checkin_at.is.null,created_at.gte.${todayStart})`);
+        }, safeLimit);
+
+        // JS filter: effective date in [todayStart, tomorrowStart)
+        todayMatches = (todayRows || [])
+            .filter((t: any) => {
+                const effDate = t.checkin_at || t.created_at || '';
+                return effDate && effDate >= todayStart && effDate < tomorrowStart;
+            })
+            .map(mapTxToMatchItem);
+    } catch (err) {
+        console.warn('[guest-history] Step A Supabase failed, trying fallback:', err);
+        try {
+            const todayStart = format(now, "yyyy-MM-dd'T'00:00:00.000'xxx'", { timeZone: tz });
+            const tomorrowStart = format(
+                new Date(now.getTime() + 86400000),
+                "yyyy-MM-dd'T'00:00:00.000'xxx'",
+                { timeZone: tz },
+            );
+            const rows = await queryAnalyticsILike(
+                guestName,
+                `(checkin_at >= $2 AND checkin_at < $3) OR (checkin_at IS NULL AND created_at >= $2 AND created_at < $3)`,
+                [todayStart, tomorrowStart],
+                safeLimit,
+            );
+            // Already filtered by the SQL where clause
+            todayMatches = rows.map(mapTxToMatchItem);
+        } catch (fallbackErr) {
+            console.warn('[guest-history] Step A fallback also failed:', fallbackErr);
+        }
+    }
+
+    if (todayMatches.length > 0) {
+        const { bestMatch, bestMatchSource } = pickBestMatch(todayMatches, [], []);
+        return {
+            ok: true,
+            query: { guestName, location },
+            todayMatches,
+            liveMatches: [],
+            historyMatches: [],
+            bestMatch,
+            bestMatchSource,
+        };
+    }
+
+    // ── Step B: Currently staying ─────────────────────────────
+    let liveMatches: GuestStayMatchItem[] = [];
+    try {
+        const threeDaysAgo = new Date(now.getTime() - 3 * 24 * 60 * 60 * 1000).toISOString();
+
+        const liveRows = await querySupabaseILike(guestName, location, (q) => {
+            return q.or(`checkin_at.gte.${threeDaysAgo},and(checkin_at.is.null,created_at.gte.${threeDaysAgo})`);
+        }, safeLimit);
+
+        const nowDate = new Date();
+        liveMatches = (liveRows || [])
+            .filter((t: any) => isCurrentlyStaying(t as TransactionStay, nowDate))
+            .map(mapTxToMatchItem);
+    } catch (err) {
+        console.warn('[guest-history] Step B Supabase failed:', err);
+    }
+
+    if (liveMatches.length > 0) {
+        const { bestMatch, bestMatchSource } = pickBestMatch([], liveMatches, []);
+        return {
+            ok: true,
+            query: { guestName, location },
+            todayMatches: [],
+            liveMatches,
+            historyMatches: [],
+            bestMatch,
+            bestMatchSource,
+        };
+    }
+
+    // ── Step C: Historical latest ─────────────────────────────
+    let historyMatches: GuestStayMatchItem[] = [];
+    try {
+        const histRows = await querySupabaseILike(guestName, undefined, undefined, safeLimit);
+
+        // Apply location filter in JS if needed
+        const filtered = location
+            ? (histRows || []).filter((t: any) => fuzzyLocationMatch(location, t.apartment_location))
+            : histRows;
+
+        // Sort by effective date descending
+        filtered.sort((a: any, b: any) => {
+            const aEff = (a.checkin_at || a.created_at || '');
+            const bEff = (b.checkin_at || b.created_at || '');
+            return bEff.localeCompare(aEff);
+        });
+
+        historyMatches = filtered.slice(0, safeLimit).map(mapTxToMatchItem);
+    } catch (err) {
+        console.warn('[guest-history] Step C Supabase failed, trying fallback:', err);
+        try {
+            const rows = await queryAnalyticsILike(guestName, '1=1', [], safeLimit);
+            const filtered = location
+                ? rows.filter((t: any) => fuzzyLocationMatch(location, t.apartment_location))
+                : rows;
+            historyMatches = filtered.slice(0, safeLimit).map(mapTxToMatchItem);
+        } catch (fallbackErr) {
+            console.warn('[guest-history] Step C fallback also failed:', fallbackErr);
+        }
+    }
+
+    const { bestMatch, bestMatchSource } = pickBestMatch([], [], historyMatches);
+
     return {
-        checkin_date: s.check_in_date || '',
-        checkout_date: s.check_out_date || '',
-        location: s.location_name || '',
-        room: s.room_number || '',
-        revenue: Math.round((parseFloat(s.amount) || 0) * 100) / 100,
+        ok: true,
+        query: { guestName, location },
+        todayMatches: [],
+        liveMatches: [],
+        historyMatches,
+        bestMatch,
+        bestMatchSource,
     };
 }
