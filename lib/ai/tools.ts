@@ -49,6 +49,7 @@ import { withCache, pickTTL } from '@/lib/analytics/cache';
 import { getGuestStayHistory } from '@/lib/ai/tools/guest-history';
 import { effectiveDate } from '@/lib/dashboard/transaction-source';
 import { DATE_RANGE, API_LIMITS, IDLE_THRESHOLDS, TIME, LOCATION_HEALTH } from '@/lib/config/constants';
+import { getCanonicalPeriodSummary } from '@/lib/ai/tools/shared/period-summary';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Type Definitions — replace `any` types for proper type safety
@@ -419,13 +420,41 @@ async function fetchDailySummary(): Promise<DailySummary> {
     const todayStr = format(today, 'yyyy-MM-dd');
     const yesterdayStr = format(subDays(today, 1), 'yyyy-MM-dd');
 
-    // Type B: fetch mode from DB for period-aware boundaries
+    // Use canonical services (same as dashboard/laporan)
     const mode = await getReportPeriodSetting();
 
-    const [todayData, yesterdayData] = await Promise.all([
-        fetchPeriodSummary(todayStr, todayStr, undefined, mode),
-        fetchPeriodSummary(yesterdayStr, yesterdayStr, undefined, mode),
+    const [todayCanon, yesterdayCanon] = await Promise.all([
+        getCanonicalPeriodSummary({ startDate: todayStr, endDate: todayStr, mode, timezone: tz }),
+        getCanonicalPeriodSummary({ startDate: yesterdayStr, endDate: yesterdayStr, mode, timezone: tz }),
     ]);
+
+    const todayData = {
+        period: { start_date: todayStr, end_date: todayStr, location: null as string | null },
+        transactions: todayCanon.revenue.transactionCount,
+        revenue: todayCanon.revenue.totalRevenue,
+        revenue_cash: todayCanon.revenue.cashAmount,
+        revenue_transfer: todayCanon.revenue.transferAmount,
+        marketing_fee_total: 0,
+        expense_total: todayCanon.expenses.totalAmount,
+        net: todayCanon.netProfit,
+        distinct_customers: 0,
+        location_breakdown: [] as { location: string; count: number; revenue: number }[],
+        expense_by_category: todayCanon.expenses.byCategory.map(c => ({ category: c.category, total: c.total_amount })),
+    };
+
+    const yesterdayData = {
+        period: { start_date: yesterdayStr, end_date: yesterdayStr, location: null as string | null },
+        transactions: yesterdayCanon.revenue.transactionCount,
+        revenue: yesterdayCanon.revenue.totalRevenue,
+        revenue_cash: yesterdayCanon.revenue.cashAmount,
+        revenue_transfer: yesterdayCanon.revenue.transferAmount,
+        marketing_fee_total: 0,
+        expense_total: yesterdayCanon.expenses.totalAmount,
+        net: yesterdayCanon.netProfit,
+        distinct_customers: 0,
+        location_breakdown: [] as { location: string; count: number; revenue: number }[],
+        expense_by_category: yesterdayCanon.expenses.byCategory.map(c => ({ category: c.category, total: c.total_amount })),
+    };
 
     return {
         today: { date: todayStr, ...todayData },
@@ -1982,7 +2011,7 @@ export const OPENAI_TOOLS = [
         function: {
             name: 'compare_periods',
             description:
-                'Bandingkan dua periode side-by-side. Otomatis hitung delta dan persentase perubahan. Berguna untuk pertanyaan "vs minggu/bulan/tahun lalu".',
+                'Bandingkan dua periode side-by-side. Otomatis hitung delta dan persentase perubahan. Berguna untuk pertanyaan "vs minggu/bulan/tahun lalu". Menggunakan layanan revenue/expense kanonikal yang sama dengan dashboard.',
             parameters: {
                 type: 'object',
                 properties: {
@@ -1991,6 +2020,8 @@ export const OPENAI_TOOLS = [
                     b_start: { type: 'string', description: 'Periode B start YYYY-MM-DD' },
                     b_end: { type: 'string', description: 'Periode B end YYYY-MM-DD' },
                     location: { type: 'string', description: 'Filter lokasi (opsional)' },
+                    mode: { type: 'string', description: 'Mode periode: calendar_day atau hotel_day (opsional, auto-detect dari DB)' },
+                    timezone: { type: 'string', description: 'Timezone IANA (opsional, default Asia/Jakarta)' },
                 },
                 required: ['a_start', 'a_end', 'b_start', 'b_end'],
             },
@@ -2140,25 +2171,61 @@ export async function executeTool(call: ToolCall): Promise<any> {
 
             // ── CORE TOOLS ──────────────────────────────────────────────────────
             case 'compare_periods': {
-                const [a, b] = await Promise.all([
-                    fetchPeriodSummary(call.arguments.a_start, call.arguments.a_end, call.arguments.location),
-                    fetchPeriodSummary(call.arguments.b_start, call.arguments.b_end, call.arguments.location),
+                const { a_start, a_end, b_start, b_end, location, mode, timezone } = call.arguments;
+
+                const [summaryA, summaryB] = await Promise.all([
+                    getCanonicalPeriodSummary({ startDate: a_start, endDate: a_end, mode, timezone }),
+                    getCanonicalPeriodSummary({ startDate: b_start, endDate: b_end, mode, timezone }),
                 ]);
+
+                console.debug('[KRAI Tool compare_periods]', {
+                    input: { a_start, a_end, b_start, b_end, mode, timezone },
+                    periodA: {
+                        startISO: summaryA.period.startISO,
+                        endExclusiveISO: summaryA.period.endExclusiveISO,
+                    },
+                    periodB: {
+                        startISO: summaryB.period.startISO,
+                        endExclusiveISO: summaryB.period.endExclusiveISO,
+                    },
+                    revenueA: { total: summaryA.revenue.totalRevenue, count: summaryA.revenue.transactionCount },
+                    revenueB: { total: summaryB.revenue.totalRevenue, count: summaryB.revenue.transactionCount },
+                });
+
                 const pct = (cur: number, prev: number) => {
                     if (prev === 0) return cur === 0 ? 0 : null;
                     return Math.round(((cur - prev) / prev) * 10000) / 100;
                 };
+
                 return {
-                    period_a: a,
-                    period_b: b,
+                    period_a: {
+                        start: summaryA.period.startISO,
+                        end: summaryA.period.endExclusiveISO,
+                        revenue: summaryA.revenue.totalRevenue,
+                        transaction_count: summaryA.revenue.transactionCount,
+                        cash_amount: summaryA.revenue.cashAmount,
+                        transfer_amount: summaryA.revenue.transferAmount,
+                        expenses: summaryA.expenses.totalAmount,
+                        net_profit: summaryA.netProfit,
+                    },
+                    period_b: {
+                        start: summaryB.period.startISO,
+                        end: summaryB.period.endExclusiveISO,
+                        revenue: summaryB.revenue.totalRevenue,
+                        transaction_count: summaryB.revenue.transactionCount,
+                        cash_amount: summaryB.revenue.cashAmount,
+                        transfer_amount: summaryB.revenue.transferAmount,
+                        expenses: summaryB.expenses.totalAmount,
+                        net_profit: summaryB.netProfit,
+                    },
                     deltas: {
-                        revenue_change_pct: pct(a.revenue, b.revenue),
-                        expense_change_pct: pct(a.expense_total, b.expense_total),
-                        transaction_change_pct: pct(a.transactions, b.transactions),
-                        net_change_pct: pct(a.net, b.net),
-                        revenue_diff: a.revenue - b.revenue,
-                        expense_diff: a.expense_total - b.expense_total,
-                        transaction_diff: a.transactions - b.transactions,
+                        revenue_change_pct: pct(summaryA.revenue.totalRevenue, summaryB.revenue.totalRevenue),
+                        expense_change_pct: pct(summaryA.expenses.totalAmount, summaryB.expenses.totalAmount),
+                        transaction_change_pct: pct(summaryA.revenue.transactionCount, summaryB.revenue.transactionCount),
+                        net_change_pct: pct(summaryA.netProfit, summaryB.netProfit),
+                        revenue_diff: summaryA.revenue.totalRevenue - summaryB.revenue.totalRevenue,
+                        expense_diff: summaryA.expenses.totalAmount - summaryB.expenses.totalAmount,
+                        transaction_diff: summaryA.revenue.transactionCount - summaryB.revenue.transactionCount,
                     },
                 };
             }

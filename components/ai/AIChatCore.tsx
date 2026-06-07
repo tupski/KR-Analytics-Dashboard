@@ -1196,8 +1196,8 @@ export default function AIChatCore({
                 </div>
             )}
 
-            {/* Input bar - Modern ChatGPT/Claude style, sticky bottom */}
-            <div className={`border-t border-gray-200 bg-white/95 backdrop-blur flex-shrink-0 sticky bottom-0 z-40 safe-bottom ${isFloat ? 'p-2.5' : 'px-4 py-3'}`}>
+            {/* Input bar - Modern ChatGPT/Claude style */}
+            <div className={`border-t border-gray-200 bg-white/95 backdrop-blur flex-shrink-0 z-40 safe-bottom ${isFloat ? 'p-2.5' : 'px-4 py-3'}`}>
                 <div className={`space-y-2.5 ${isFull ? 'max-w-3xl mx-auto' : ''}`}>
                     {/* Main input area with send button */}
                     <div className="flex gap-2 items-end">

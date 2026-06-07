@@ -264,9 +264,9 @@ export default function AIChatFullscreen({ conversationId, forceNew }: Props) {
     // ── Render ────────────────────────────────────────────────────────────────
     return (
         <div className="flex flex-1 min-h-0 overflow-hidden bg-white">
-            {/* ── Desktop sticky sidebar ── */}
+            {/* ── Desktop sidebar ── */}
             <aside
-                className="hidden md:flex h-full min-h-0 flex-shrink-0 w-64 border-r border-gray-200 bg-gray-50/80 flex-col overflow-hidden sticky top-0"
+                className="hidden md:flex h-full min-h-0 flex-shrink-0 w-64 border-r border-gray-200 bg-gray-50/80 flex-col overflow-hidden"
             >
                 {sidebarContent}
             </aside>
@@ -293,11 +293,11 @@ export default function AIChatFullscreen({ conversationId, forceNew }: Props) {
                 </aside>
             </div>
 
-            {/* ── Main area — full height flex column, no parent scroll (children handle internal overflow) ── */}
+            {/* ── Main area — full height flex column, children handle internal overflow ── */}
             <div className="flex-1 flex flex-col min-w-0 min-h-0">
-                {/* ── Top bar — sticky header ── */}
+                {/* ── Top bar header ── */}
                 <div
-                    className="flex items-center justify-between px-3 py-2 border-b border-gray-100 bg-white/95 backdrop-blur-sm flex-shrink-0 z-30 sticky top-0"
+                    className="flex items-center justify-between px-3 py-2 border-b border-gray-100 bg-white/95 backdrop-blur-sm flex-shrink-0 z-30"
                 >
                     <div className="flex items-center gap-2 min-w-0">
                         {/* Mobile: toggle sidebar */}
@@ -419,7 +419,7 @@ export default function AIChatFullscreen({ conversationId, forceNew }: Props) {
                 )}
 
                 {/* ── Chat core — flex-1, min-h-0 for proper overflow containment ── */}
-                <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
+                <div className="flex-1 min-h-0 flex flex-col">
                     {historyLoaded && (
                         <AIChatCoreWithDispatch
                             key={activeConv?.id ?? 'new'}

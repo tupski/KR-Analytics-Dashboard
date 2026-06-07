@@ -15,8 +15,6 @@ export default async function ChatConversationPage({ params, searchParams }: Pro
     const { new: isNew } = await searchParams;
 
     return (
-        <div className="flex-1 overflow-hidden flex flex-col">
-            <AIChatFullscreen conversationId={id} forceNew={isNew === '1'} />
-        </div>
+        <AIChatFullscreen conversationId={id} forceNew={isNew === '1'} />
     );
 }
