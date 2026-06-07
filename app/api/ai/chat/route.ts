@@ -392,8 +392,21 @@ async function runAnthropicLoop(
 }
 
 export async function POST(request: NextRequest) {
+    let body: any = {};
     try {
-        const body = await request.json();
+        body = await request.json();
+
+        // ── Request validation + debug logging ──────────────────────────────
+        console.debug('[AI Chat Request]', {
+            hasMessages: Array.isArray(body.messages),
+            messageCount: body.messages?.length,
+            hasMessage: Boolean(body.message),
+            conversationId: body.conversationId,
+            provider: body.provider,
+            model: body.model,
+            isNew: body.new === '1',
+        });
+
         const { messages, config, thinkingMode, verbose, stream } = body as {
             messages: any[];
             config: AIConfig;
@@ -401,6 +414,28 @@ export async function POST(request: NextRequest) {
             verbose?: boolean;
             stream?: boolean;
         };
+
+        // Validate input: at least one of messages array or message string must be present
+        const hasMessages = Array.isArray(messages) && messages.length > 0 && messages.some((m: any) => m?.content);
+        const hasMessageString = typeof body.message === 'string' && body.message.trim().length > 0;
+
+        if (!hasMessages && !hasMessageString) {
+            return NextResponse.json(
+                { ok: false, error: 'Pertanyaan tidak boleh kosong.', code: 'EMPTY_MESSAGE' },
+                { status: 400 },
+            );
+        }
+
+        if (Array.isArray(messages) && messages.length > 0 && !hasMessages) {
+            return NextResponse.json(
+                { ok: false, error: 'Pesan tidak valid.', code: 'INVALID_MESSAGE' },
+                { status: 400 },
+            );
+        }
+
+        // NOTE: If provider/model are not specified in the body (or set to 'auto'),
+        // the handler already falls back to the active AI config from the DB
+        // via the AUTO-FALLBACK ROUTING logic below. No additional change needed.
 
         // AUTO-FALLBACK ROUTING
         //
@@ -634,9 +669,32 @@ Owner ingin analisis mendalam. Ambil waktu untuk:
                 ? 'KRAI mengalami kendala. Coba tanyakan ulang.'
                 : 'Belum ada provider AI yang dikonfigurasi. Buka Pengaturan untuk menambahkan.',
         );
-    } catch (error: any) {
+    } catch (err) {
+        const errorMessage = err instanceof Error ? err.message : String(err);
+        console.error('[AI Chat Error]', {
+            error: errorMessage,
+            conversationId: body?.conversationId,
+            provider: body?.provider,
+            model: body?.model,
+        });
+
+        // Determine error code
+        let code = 'PROVIDER_ERROR';
+        let userMessage = 'KRAI mengalami kendala. Coba tanyakan ulang.';
+
+        if (errorMessage.includes('API key') || errorMessage.includes('apiKey') || errorMessage.includes('401')) {
+            code = 'MISSING_AI_CONFIG';
+            userMessage = 'Konfigurasi provider/model belum valid. Periksa Pengaturan KR-AI.';
+        } else if (errorMessage.includes('model') && (errorMessage.includes('not found') || errorMessage.includes('not_found'))) {
+            code = 'MODEL_NOT_FOUND';
+            userMessage = 'Model yang dipilih tidak tersedia. Pilih model lain di Pengaturan KR-AI.';
+        } else if (errorMessage.includes('timeout') || errorMessage.includes('TIMEOUT')) {
+            code = 'TIMEOUT';
+            userMessage = 'Permintaan ke provider timeout. Coba lagi atau periksa koneksi.';
+        }
+
         return NextResponse.json(
-            { error: 'KRAI mengalami kendala. Coba tanyakan ulang.' },
+            { ok: false, error: userMessage, code },
             { status: 500 },
         );
     }
