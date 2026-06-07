@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState } from 'react';
+import Link from 'next/link';
 import { ArrowDown } from 'lucide-react';
 import { CheckinItem } from '@/types/dashboard';
 import { useAppSettings } from '@/lib/contexts/AppSettingsContext';
@@ -120,9 +121,13 @@ export default function CheckinHariIni({ items, isLoading = false }: CheckinHari
             </div>
 
             {hasMore && (
-                <p className="mt-3 text-xs text-gray-400 text-center">
+                <Link
+                    href="/booking?rangePreset=today&status=checkin"
+                    className="mt-3 text-xs text-blue-500 hover:text-blue-700 text-center block"
+                    title="Lihat semua check-in hari ini"
+                >
                     +{items.length - 5} check-in lainnya
-                </p>
+                </Link>
             )}
 
             <p className="mt-3 text-xs text-gray-400 text-center">
@@ -134,7 +139,8 @@ export default function CheckinHariIni({ items, isLoading = false }: CheckinHari
                 <RoomDetailModal
                     location={selectedTx.apartmentLocation}
                     room={selectedTx.roomNumber}
-                    filter={'today' as DateFilter}
+                    isOccupied={true}
+                    mode="active_or_period"
                     onClose={() => setModalOpen(false)}
                 />
             )}

@@ -92,16 +92,18 @@ export default function FilterBarWrapper({
     };
 
     return (
-        <StickyComparisonBar
-            rangePreset={(rangePreset || 'today') as DatePreset}
-            startDate={startDate || ''}
-            endDate={endDate || ''}
-            comparisonMode={(comparisonMode || 'none') as ComparisonMode}
-            comparisonStartDate={comparisonStartDate || ''}
-            comparisonEndDate={comparisonEndDate || ''}
-            reportPeriodMode={reportPeriodMode as 'calendar_day' | 'hotel_day'}
-            onFilterChange={handleFilterChange}
-            className={className}
-        />
+        <div className="relative z-50">
+            <StickyComparisonBar
+                rangePreset={(rangePreset || 'today') as DatePreset}
+                startDate={startDate || ''}
+                endDate={endDate || ''}
+                comparisonMode={(comparisonMode || 'none') as ComparisonMode}
+                comparisonStartDate={comparisonStartDate || ''}
+                comparisonEndDate={comparisonEndDate || ''}
+                reportPeriodMode={reportPeriodMode as 'calendar_day' | 'hotel_day'}
+                onFilterChange={handleFilterChange}
+                className={className}
+            />
+        </div>
     );
 }

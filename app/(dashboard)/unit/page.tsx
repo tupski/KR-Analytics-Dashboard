@@ -132,7 +132,7 @@ export default async function UnitPage({
                 </div>
 
                 {/* Filter Bar — StickyComparisonBar */}
-                <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="relative z-50 flex flex-wrap items-center justify-between gap-3">
                     <FilterBarWrapper
                         basePath="/unit"
                         rangePreset={rangePreset || dateFilter || 'today'}
@@ -153,7 +153,13 @@ export default async function UnitPage({
                 />
 
                 <UnitLocationCards summaries={unitData.locationSummaries} />
-                <UnitGrid units={unitData.units} dateFilter={dateFilter} />
+                <UnitGrid
+                    units={unitData.units}
+                    dateFilter={dateFilter}
+                    periodStart={startDate}
+                    periodEnd={endDate}
+                    rangePreset={rangePreset}
+                />
             </main>
         </div>
     );

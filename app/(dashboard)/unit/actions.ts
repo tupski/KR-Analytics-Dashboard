@@ -5,9 +5,14 @@ import { getDateRange, computeDateRange } from '@/lib/services/date-range';
 import type { DateFilterParams } from '@/lib/services/date-range';
 import { getLocations } from '@/lib/services/location';
 import { getReportPeriodSetting } from '@/lib/get-report-period-setting';
-import { getNowWIB } from '@/lib/utils/format';
-import { getLiveOccupancy } from '@/lib/services/occupancy';
-import type { LiveOccupancyResult, LocationOccupancyItem } from '@/lib/services/occupancy';
+import {
+    getLiveActiveStays,
+    getLocationActiveSummaries,
+    buildRoomKey,
+    getEffectiveStart,
+    getEstimatedEnd,
+} from '@/lib/services/stays';
+import type { LocationActiveSummary } from '@/lib/services/stays';
 
 export type UnitDateFilter = 'today' | 'yesterday' | '7days' | 'month' | 'year';
 
@@ -17,7 +22,7 @@ export interface UnitItem {
     lokasi: string;
     status: string;
     createdAt: string;
-    /** Point-in-time: room occupied right now (via getLiveOccupancy). Consistent across all filters. */
+    /** Point-in-time: room occupied right now (via getLiveActiveStays). Consistent across all filters. */
     isOccupiedToday: boolean;
     currentGuest?: string;
     /** Number of transactions overlapping the selected period. Used for period activity info, not labeled "occupancy". */
@@ -46,15 +51,12 @@ export interface UnitPageData {
  * Fetch all units with their occupancy status for a given period.
  *
  * KEY SEMANTICS:
- * - `isOccupiedToday`: ALWAYS point-in-time live occupancy (via getLiveOccupancy()),
+ * - `isOccupiedToday`: ALWAYS point-in-time live occupancy (via getLiveActiveStays()),
  *   regardless of filter. Same as Dashboard KPI.
  * - `hasActivityInPeriod` (non-today only): room had ≥1 transaction overlapping the period.
- * - Location summaries and top-level counts: ALWAYS from getLiveOccupancy() point-in-time.
+ * - Location summaries and top-level counts: ALWAYS from getLocationActiveSummaries() point-in-time.
  *
  * Never label period-overlap counts as "occupancy" or "Terisi".
- *
- * Accepts either legacy dateFilter (today/yesterday/7days/month/year) or
- * unified DateFilterParams (rangePreset, startDate, endDate).
  */
 export async function fetchUnits(
     locationFilter?: string,
@@ -88,33 +90,45 @@ export async function fetchUnits(
             ? computeDateRange(dateParams.rangePreset, dateParams.startDate, dateParams.endDate, mode)
             : getDateRange(dateFilter, mode);
 
-        // ── Step 1: Always get point-in-time live occupancy ──
-        // Used for isOccupiedToday, location summaries, and top-level counts.
-        // Consistent with Dashboard KPI regardless of filter.
-        const liveOccupancyData = await getLiveOccupancy();
+        // ── Step 1: Get canonical active stays (point-in-time) ──
+        const activeStays = await getLiveActiveStays({ supabase });
 
-        // Build point-in-time occupied set from live data with customer names
-        const liveOccupiedSet = new Map<string, string>(); // key → customer_name
-        const { data: activeTransactions } = await supabase
-            .from('transactions')
-            .select('room_number, apartment_location, customer_name')
-            .lte('checkin_at', getNowWIB())
-            .or(`checkout_at.gte.${getNowWIB()},checkout_at.is.null`);
+        // Deduplicate by room — keep first (latest, since stays are sorted descending)
+        const latestPerRoom = new Map<string, string>(); // roomKey → customerName
+        for (const stay of activeStays) {
+            const key = buildRoomKey(stay.location, stay.roomNumber);
+            if (!latestPerRoom.has(key)) {
+                latestPerRoom.set(key, stay.customerName ?? '-');
+            }
+        }
 
-        activeTransactions?.forEach((tx: any) => {
-            const key = `${tx.apartment_location}-${tx.room_number}`;
-            liveOccupiedSet.set(key, tx.customer_name);
-        });
+        // ── Step 2: Get location summaries from canonical source ──
+        const summaries = await getLocationActiveSummaries({ supabase });
 
-        // ── Step 2: Compute period activity (for hasActivityInPeriod / occupancyCount) ──
+        // Development debug logging
+        if (process.env.NODE_ENV === 'development') {
+            console.debug('[Unit] Location summaries:', JSON.stringify(summaries, null, 2));
+            console.debug('[Unit] Active stays:', JSON.stringify(activeStays, null, 2));
+
+            const bintaroSummary = summaries.find(s => s.location.includes('Bintaro'));
+            if (bintaroSummary) {
+                console.debug('[Unit Debug] Transpark Bintaro:', bintaroSummary);
+                console.debug(
+                    '[Unit Debug] Active stays for Bintaro:',
+                    activeStays.filter(s => s.location.includes('Bintaro')),
+                );
+            }
+        }
+
+        // ── Step 3: Compute period activity (for hasActivityInPeriod / occupancyCount) ──
         const periodActivityMap = new Map<string, number>();
 
         if (dateFilter === 'today') {
             // For today, period activity = currently active transactions
-            activeTransactions?.forEach((tx: any) => {
-                const key = `${tx.apartment_location}-${tx.room_number}`;
+            for (const stay of activeStays) {
+                const key = buildRoomKey(stay.location, stay.roomNumber);
                 periodActivityMap.set(key, (periodActivityMap.get(key) || 0) + 1);
-            });
+            }
         } else {
             // Stay-span overlap: any transaction overlapping [range.start, range.end]
             const { data: periodTx } = await supabase
@@ -125,15 +139,15 @@ export async function fetchUnits(
                 .order('checkin_at', { ascending: false });
 
             periodTx?.forEach((tx: any) => {
-                const key = `${tx.apartment_location}-${tx.room_number}`;
+                const key = buildRoomKey(tx.apartment_location, tx.room_number);
                 periodActivityMap.set(key, (periodActivityMap.get(key) || 0) + 1);
             });
         }
 
-        // ── Step 3: Build units with consistent semantics ──
+        // ── Step 4: Build units with consistent semantics ──
         const units: UnitItem[] = (rooms || []).map((room: any) => {
-            const key = `${room.lokasi}-${room.name}`;
-            const isOccupied = liveOccupiedSet.has(key);
+            const key = buildRoomKey(room.lokasi, room.name);
+            const isOccupied = latestPerRoom.has(key);
             const periodCount = periodActivityMap.get(key) || 0;
             const item: UnitItem = {
                 id: room.id,
@@ -142,7 +156,7 @@ export async function fetchUnits(
                 status: room.status,
                 createdAt: room.created_at,
                 isOccupiedToday: isOccupied,
-                currentGuest: isOccupied ? liveOccupiedSet.get(key) : undefined,
+                currentGuest: isOccupied ? latestPerRoom.get(key) : undefined,
                 occupancyCount: periodCount,
             };
             // Only non-today filters get hasActivityInPeriod; today uses isOccupiedToday directly
@@ -152,25 +166,29 @@ export async function fetchUnits(
             return item;
         });
 
-        // ── Step 4: Location summaries — ALWAYS from getLiveOccupancy() (point-in-time) ──
-        const locationSummaries: LocationSummary[] = liveOccupancyData.locationBreakdown
-            .filter(loc => !locationFilter || loc.name === locationFilter)
+        // ── Step 5: Location summaries — from canonical getLocationActiveSummaries() ──
+        const locationSummaries: LocationSummary[] = summaries
+            .filter(loc => !locationFilter || loc.location === locationFilter)
             .map(loc => ({
-                name: loc.name,
+                name: loc.location,
                 totalRooms: loc.totalRooms,
                 occupiedToday: loc.occupiedRooms,
-                availableToday: loc.totalRooms - loc.occupiedRooms,
+                availableToday: loc.availableRooms,
                 occupancyRate: loc.occupancyRate,
             }))
             .sort((a, b) => b.occupancyRate - a.occupancyRate);
 
-        // ── Step 5: Top-level counts — ALWAYS from getLiveOccupancy() (point-in-time) ──
+        // ── Step 6: Top-level counts — computed from canonical summaries ──
+        const totalUnits = summaries.reduce((sum, s) => sum + s.totalRooms, 0);
+        const occupiedToday = summaries.reduce((sum, s) => sum + s.occupiedRooms, 0);
+        const availableToday = summaries.reduce((sum, s) => sum + s.availableRooms, 0);
+
         return {
             units,
             locationSummaries,
-            totalUnits: liveOccupancyData.total,
-            occupiedToday: liveOccupancyData.ditempati,
-            availableToday: liveOccupancyData.tersedia,
+            totalUnits,
+            occupiedToday,
+            availableToday,
             dateLabel: range.label,
         };
     } catch (error) {
@@ -186,4 +204,128 @@ export async function fetchUnits(
 export async function fetchUnitLocations(): Promise<string[]> {
     const locations = await getLocations();
     return locations.map(loc => loc.name);
+}
+
+// ─────────────────────────────────────────────────────────────────
+// C5: Fetch room details for occupied units — filter-period guests only
+// ─────────────────────────────────────────────────────────────────
+
+export interface UnitRoomDetail {
+    id: string | number;
+    created_at: string;
+    checkin_at: string | null;
+    checkout_at: string | null;
+    rental_duration: number | null;
+    customer_name: string | null;
+    apartment_location: string;
+    room_number: string;
+    status?: string | null;
+}
+
+export async function fetchUnitRoomDetails(params: {
+    location: string;
+    room: string;
+    periodStart?: string;
+    periodEnd?: string;
+    mode: 'active_or_period';
+    page?: number;
+    pageSize?: number;
+}): Promise<{ data: UnitRoomDetail[]; total: number }> {
+    const supabase = await createServerClient();
+
+    const { location, room, periodStart, periodEnd, page = 1, pageSize = 10 } = params;
+
+    let query = supabase
+        .from('transactions')
+        .select('id, created_at, checkin_at, checkout_at, rental_duration, customer_name, status, apartment_location, room_number')
+        .eq('apartment_location', location)
+        .eq('room_number', room);
+
+    // If period provided, get overlapping stays using canonical helpers
+    if (periodStart && periodEnd) {
+        // Fetch all transactions for this room (with reasonable limit)
+        const { data, error } = await query
+            .gte('created_at', periodStart) // lookback
+            .order('created_at', { ascending: false })
+            .limit(50);
+
+        if (error) throw error;
+
+        // JS filter by overlap using canonical helpers
+        const filtered = (data ?? []).filter(tx => {
+            const start = getEffectiveStart(tx as any);
+            const end = getEstimatedEnd(tx as any);
+            const pStart = new Date(periodStart);
+            const pEnd = new Date(periodEnd);
+            return start < pEnd && end > pStart;
+        });
+
+        return { data: filtered as UnitRoomDetail[], total: filtered.length };
+    }
+
+    // Otherwise just return recent transactions
+    const { data, error } = await query
+        .order('created_at', { ascending: false })
+        .limit(pageSize);
+
+    if (error) throw error;
+    return { data: (data ?? []) as UnitRoomDetail[], total: (data ?? []).length };
+}
+
+// ─────────────────────────────────────────────────────────────────
+// C6: Fetch last check-ins for empty units with pagination (5 per page)
+// ─────────────────────────────────────────────────────────────────
+
+export interface UnitLastCheckin {
+    id: string | number;
+    created_at: string;
+    checkin_at: string | null;
+    checkout_at: string | null;
+    rental_duration: number | null;
+    customer_name: string | null;
+    status?: string | null;
+}
+
+export async function fetchUnitLastCheckins(params: {
+    location: string;
+    room: string;
+    page?: number;
+    pageSize?: number;
+}): Promise<{
+    data: UnitLastCheckin[];
+    total: number;
+    page: number;
+    pageSize: number;
+    hasNext: boolean;
+}> {
+    const supabase = await createServerClient();
+    const { location, room, page = 1, pageSize = 5 } = params;
+
+    const from = (page - 1) * pageSize;
+    const to = from + pageSize - 1;
+
+    const { data, error, count } = await supabase
+        .from('transactions')
+        .select('id, created_at, checkin_at, checkout_at, rental_duration, customer_name, status', { count: 'exact' })
+        .eq('apartment_location', location)
+        .eq('room_number', room)
+        .order('created_at', { ascending: false })
+        .range(from, to);
+
+    if (error) throw error;
+
+    // Sort by effective date descending
+    const sorted = ((data ?? []) as UnitLastCheckin[]).sort((a: any, b: any) => {
+        const dateA = new Date(a.checkin_at || a.created_at).getTime();
+        const dateB = new Date(b.checkin_at || b.created_at).getTime();
+        return dateB - dateA;
+    });
+
+    return {
+        data: sorted,
+        total: count ?? sorted.length,
+        page,
+        pageSize,
+        hasNext: (from + pageSize) < (count ?? sorted.length),
+    };
 }

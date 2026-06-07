@@ -4,16 +4,23 @@ import { useState } from 'react';
 import { User, CheckCircle } from 'lucide-react';
 import type { UnitItem, UnitDateFilter } from '@/app/(dashboard)/unit/actions';
 import RoomDetailModal from '@/components/shared/RoomDetailModal';
-import type { DateFilter } from '@/app/(dashboard)/laporan/actions';
 
 interface UnitGridProps {
     units: UnitItem[];
     dateFilter: UnitDateFilter;
+    /** Filter period info for passing into the modal (C7) */
+    periodStart?: string;
+    periodEnd?: string;
+    rangePreset?: string;
 }
 
-export default function UnitGrid({ units, dateFilter }: UnitGridProps) {
+export default function UnitGrid({ units, dateFilter, periodStart, periodEnd, rangePreset }: UnitGridProps) {
     const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
-    const [selected, setSelected] = useState<{ location: string; room: string } | null>(null);
+    const [selected, setSelected] = useState<{
+        location: string;
+        room: string;
+        isOccupied: boolean;
+    } | null>(null);
 
     // Group units by location
     const groupedUnits = units.reduce((acc, unit) => {
@@ -30,9 +37,13 @@ export default function UnitGrid({ units, dateFilter }: UnitGridProps) {
         );
     }
 
+    // C4: All units clickable — empty units show last check-in history
     const openDetail = (unit: UnitItem) => {
-        if (!unit.isOccupiedToday) return;
-        setSelected({ location: unit.lokasi, room: unit.name });
+        setSelected({
+            location: unit.lokasi,
+            room: unit.name,
+            isOccupied: unit.isOccupiedToday,
+        });
     };
 
     return (
@@ -87,7 +98,7 @@ export default function UnitGrid({ units, dateFilter }: UnitGridProps) {
                                     {locationUnits.map((unit) => (
                                         <tr
                                             key={unit.id}
-                                            className={`hover:bg-gray-50 ${unit.isOccupiedToday ? 'cursor-pointer' : ''}`}
+                                            className="hover:bg-gray-50 cursor-pointer"
                                             onClick={() => openDetail(unit)}
                                         >
                                             <td className="px-4 py-2.5 font-medium text-gray-900 whitespace-nowrap">{unit.name}</td>
@@ -130,16 +141,19 @@ export default function UnitGrid({ units, dateFilter }: UnitGridProps) {
                     <span>Terisi</span>
                 </div>
                 <span className="text-xs text-gray-400 ml-auto hidden sm:inline">
-                    Klik unit terisi untuk lihat detail
+                    Klik unit untuk lihat detail
                 </span>
             </div>
 
-            {/* Modal — reuse the laporan filter values (compatible) */}
+            {/* Modal */}
             {selected && (
                 <RoomDetailModal
                     location={selected.location}
                     room={selected.room}
-                    filter={dateFilter as DateFilter}
+                    isOccupied={selected.isOccupied}
+                    mode={selected.isOccupied ? 'active_or_period' : 'last_checkins'}
+                    periodStart={periodStart}
+                    periodEnd={periodEnd}
                     onClose={() => setSelected(null)}
                     currentGuest={units.find(u => u.lokasi === selected.location && u.name === selected.room)?.currentGuest}
                 />
@@ -148,17 +162,16 @@ export default function UnitGrid({ units, dateFilter }: UnitGridProps) {
     );
 }
 
+// C4: All units clickable, remove disabled guard
 function UnitCard({ unit, dateFilter, onClick }: { unit: UnitItem; dateFilter: UnitDateFilter; onClick: () => void }) {
-    const clickable = unit.isOccupiedToday;
     return (
         <button
             type="button"
-            disabled={!clickable}
             onClick={onClick}
-            className={`relative rounded-lg border p-3 text-left transition-shadow ${clickable ? 'hover:shadow-md cursor-pointer' : 'cursor-default'} ${unit.isOccupiedToday
+            className={`relative rounded-lg border p-3 text-left transition-shadow hover:shadow-md cursor-pointer ${unit.isOccupiedToday
                 ? 'bg-orange-50 border-orange-200 hover:border-orange-300'
                 : 'bg-green-50 border-green-200'}`}
-            title={unit.isOccupiedToday ? `Tamu: ${unit.currentGuest} — klik untuk detail` : 'Tersedia'}
+            title={unit.isOccupiedToday ? `Tamu: ${unit.currentGuest} — klik untuk detail` : 'Tersedia — klik untuk riwayat'}
         >
             <div className="flex items-center justify-between mb-1">
                 {unit.isOccupiedToday ? (

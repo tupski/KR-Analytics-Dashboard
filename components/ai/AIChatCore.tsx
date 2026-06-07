@@ -659,8 +659,8 @@ export default function AIChatCore({
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const inputRef = useRef<HTMLInputElement | HTMLTextAreaElement>(null);
     // ── Streaming batching refs ──
-    const WORD_BATCH_SIZE = 8;
-    const FLUSH_INTERVAL_MS = 120;
+    const WORD_BATCH_SIZE = 10;
+    const FLUSH_INTERVAL_MS = 150;
     const streamBufferRef = useRef('');
     const flushTimerRef = useRef<number | null>(null);
     const lastFlushRef = useRef(0);
@@ -668,6 +668,7 @@ export default function AIChatCore({
     const scrollRef = useRef<HTMLDivElement>(null);
     const shouldAutoScrollRef = useRef(true);
     const rafRef = useRef<number | null>(null);
+    const [showScrollDown, setShowScrollDown] = useState(false);
     // ── Abort controller ref ──
     const abortControllerRef = useRef<AbortController | null>(null);
     const onMessagesChangeRef = useRef(onMessagesChange);
@@ -725,7 +726,9 @@ export default function AIChatCore({
     const handleScroll = useCallback(() => {
         const el = scrollRef.current;
         if (!el) return;
-        shouldAutoScrollRef.current = isNearBottom(el);
+        const near = isNearBottom(el);
+        shouldAutoScrollRef.current = near;
+        setShowScrollDown(!near);
     }, [isNearBottom]);
 
     const scheduleScrollToBottom = useCallback(() => {
@@ -861,13 +864,10 @@ export default function AIChatCore({
         loadConfiguredModels();
     }, [config]);
 
-    // ── Scroll effect: only initial scroll when not streaming (not on every message change) ──
+    // ── Scroll effect: scroll on send & during streaming, guarded by shouldAutoScrollRef ──
     useEffect(() => {
-        if (!loading && messages.length > 0) {
-            const el = scrollRef.current;
-            if (el) el.scrollTop = el.scrollHeight;
-        }
-    }, [loading]); // Only depend on loading, not messages
+        scheduleScrollToBottom();
+    }, [loading, messages.length]);
 
     // ── Cleanup on unmount: abort fetch, clear timers/RAF ──
     useEffect(() => {
@@ -927,6 +927,15 @@ export default function AIChatCore({
 
         // Image without vision support → warn
         if (pendingImage && !visionCapable) {
+            if (process.env.NODE_ENV === 'development') {
+                console.debug('[KRAI Vision Debug]', {
+                    event: 'vision_mismatch',
+                    hasPendingImage: !!pendingImage,
+                    visionCapable,
+                    activeProviderId,
+                    activeModelId,
+                });
+            }
             setError('Model aktif tidak mendukung gambar. Pilih model dengan kemampuan vision (Gemini, GPT-4o, Claude, dll).');
             return;
         }
@@ -1285,6 +1294,14 @@ export default function AIChatCore({
     const isFloat = mode === 'float';
     const isFull = mode === 'full';
 
+    const scrollToBottom = useCallback(() => {
+        const el = scrollRef.current;
+        if (!el) return;
+        el.scrollTop = el.scrollHeight;
+        shouldAutoScrollRef.current = true;
+        setShowScrollDown(false);
+    }, []);
+
     // Active model display (memoized)
     const activeModelLabel = useMemo(() => {
         if (!config) return 'Auto';
@@ -1298,77 +1315,90 @@ export default function AIChatCore({
             {showMemory && <MemoryPanel onClose={() => setShowMemory(false)} />}
 
             {/* Message list */}
-            <div ref={scrollRef} onScroll={handleScroll} className={`flex-1 min-h-0 overflow-y-auto pb-16 md:pb-0 ${isFloat ? 'p-3 space-y-3 bg-slate-50' : 'px-4 py-4 space-y-4 bg-slate-50/50'}`}>
-                {/* Only show greeting in float mode - full mode has its own welcome screen */}
-                {messages.length === 0 && !loading && isFloat && (
-                    <div className="text-center py-6">
-                        <div className="bg-gradient-to-br from-blue-600 to-blue-400 rounded-2xl flex items-center justify-center mx-auto mb-3 w-10 h-10">
-                            <Bot className="text-white w-5 h-5" />
+            <div className="flex-1 min-h-0 relative">
+                <div ref={scrollRef} onScroll={handleScroll} className={`absolute inset-0 overflow-y-auto overscroll-contain pb-16 md:pb-0 ${isFloat ? 'p-3 space-y-3 bg-slate-50' : 'px-4 py-4 space-y-4 bg-slate-50/50'}`}>
+                    {/* Only show greeting in float mode - full mode has its own welcome screen */}
+                    {messages.length === 0 && !loading && isFloat && (
+                        <div className="text-center py-6">
+                            <div className="bg-gradient-to-br from-blue-600 to-blue-400 rounded-2xl flex items-center justify-center mx-auto mb-3 w-10 h-10">
+                                <Bot className="text-white w-5 h-5" />
+                            </div>
+                            <p className="font-semibold text-gray-800 text-sm">
+                                Halo, saya <KraiLogo size="sm" />
+                            </p>
+                            <p className="mt-1 text-gray-500 text-xs">Asisten AI analitik Kakarama Room. Tanyakan apa saja tentang data bisnis.</p>
                         </div>
-                        <p className="font-semibold text-gray-800 text-sm">
-                            Halo, saya <KraiLogo size="sm" />
-                        </p>
-                        <p className="mt-1 text-gray-500 text-xs">Asisten AI analitik Kakarama Room. Tanyakan apa saja tentang data bisnis.</p>
-                    </div>
+                    )}
+
+                    {messages.map((msg, idx) => (
+                        <MemoMessageItem
+                            key={idx}
+                            msg={msg}
+                            idx={idx}
+                            isFloat={isFloat}
+                            isFull={isFull}
+                            loading={loading}
+                            expandedStepsIdx={expandedStepsIdx}
+                            setExpandedStepsIdx={setExpandedStepsIdx}
+                            expandedSugg={expandedSugg}
+                            setExpandedSugg={setExpandedSugg}
+                            copiedIdx={copiedIdx}
+                            handleCopy={handleCopy}
+                            handleFillInput={handleFillInput}
+                            setInputAndNotify={setInputAndNotify}
+                            setShowModelPicker={setShowModelPicker}
+                            inputRef={inputRef}
+                        />
+                    ))}
+
+                    {loading && <LoadingBubble thinking={thinkingMode === 'thinking'} />}
+
+                    {error && (
+                        <div className="space-y-2">
+                            <div className="text-xs text-red-700 bg-red-50 px-3 py-2 rounded-lg border border-red-200 flex items-start gap-2">
+                                <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+                                <span className="flex-1">{error}</span>
+                            </div>
+                            <div className="flex items-center gap-2 pl-2">
+                                <button
+                                    onClick={() => {
+                                        const lastUser = [...messages].reverse().find(m => m.role === 'user');
+                                        if (lastUser) handleSend(lastUser.content);
+                                    }}
+                                    disabled={loading}
+                                    className="inline-flex items-center gap-1 px-2.5 py-1 text-xs text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                                >
+                                    <RotateCw className="w-3 h-3" />
+                                    Coba lagi
+                                </button>
+                                <button
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        // Open the top bar model selector instead of spawning a duplicate
+                                        setShowModelPicker(true);
+                                    }}
+                                    className="inline-flex items-center gap-1 px-2.5 py-1 text-xs text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
+                                >
+                                    <Brain className="w-3 h-3" />
+                                    Ganti model
+                                </button>
+                            </div>
+                        </div>
+                    )}
+
+                    <div ref={messagesEndRef} />
+                </div>
+
+                {/* Floating scroll-down button */}
+                {showScrollDown && (
+                    <button
+                        onClick={scrollToBottom}
+                        className="absolute bottom-4 right-4 z-30 bg-white border border-gray-200 shadow-lg rounded-full p-2 hover:bg-gray-50 hover:shadow-xl transition-all duration-200 animate-bounce"
+                        aria-label="Scroll ke bawah"
+                    >
+                        <ChevronDown className="w-4 h-4 text-gray-600" />
+                    </button>
                 )}
-
-                {messages.map((msg, idx) => (
-                    <MemoMessageItem
-                        key={idx}
-                        msg={msg}
-                        idx={idx}
-                        isFloat={isFloat}
-                        isFull={isFull}
-                        loading={loading}
-                        expandedStepsIdx={expandedStepsIdx}
-                        setExpandedStepsIdx={setExpandedStepsIdx}
-                        expandedSugg={expandedSugg}
-                        setExpandedSugg={setExpandedSugg}
-                        copiedIdx={copiedIdx}
-                        handleCopy={handleCopy}
-                        handleFillInput={handleFillInput}
-                        setInputAndNotify={setInputAndNotify}
-                        setShowModelPicker={setShowModelPicker}
-                        inputRef={inputRef}
-                    />
-                ))}
-
-                {loading && <LoadingBubble thinking={thinkingMode === 'thinking'} />}
-
-                {error && (
-                    <div className="space-y-2">
-                        <div className="text-xs text-red-700 bg-red-50 px-3 py-2 rounded-lg border border-red-200 flex items-start gap-2">
-                            <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
-                            <span className="flex-1">{error}</span>
-                        </div>
-                        <div className="flex items-center gap-2 pl-2">
-                            <button
-                                onClick={() => {
-                                    const lastUser = [...messages].reverse().find(m => m.role === 'user');
-                                    if (lastUser) handleSend(lastUser.content);
-                                }}
-                                disabled={loading}
-                                className="inline-flex items-center gap-1 px-2.5 py-1 text-xs text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
-                            >
-                                <RotateCw className="w-3 h-3" />
-                                Coba lagi
-                            </button>
-                            <button
-                                onClick={(e) => {
-                                    e.stopPropagation();
-                                    // Open the top bar model selector instead of spawning a duplicate
-                                    setShowModelPicker(true);
-                                }}
-                                className="inline-flex items-center gap-1 px-2.5 py-1 text-xs text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
-                            >
-                                <Brain className="w-3 h-3" />
-                                Ganti model
-                            </button>
-                        </div>
-                    </div>
-                )}
-
-                <div ref={messagesEndRef} />
             </div>
 
             {/* Pending image preview */}

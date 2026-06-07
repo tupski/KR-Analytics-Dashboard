@@ -220,7 +220,7 @@ export default function ComparisonFilter({
 
             {/* Dropdown */}
             {openDropdown && (
-                <div className="absolute z-[60] mt-2 bg-white border border-gray-200 rounded-xl shadow-xl py-1 min-w-[220px]">
+                <div className="absolute z-[80] mt-2 bg-white border border-gray-200 rounded-xl shadow-xl py-1 min-w-[220px]">
                     {(Object.keys(MODE_LABELS) as ComparisonMode[]).map(m => (
                         <button
                             type="button"
@@ -240,7 +240,7 @@ export default function ComparisonFilter({
 
             {/* Custom Date Picker */}
             {showCustomPicker && (
-                <div className="absolute z-[60] mt-2 bg-white border border-gray-200 rounded-xl shadow-xl p-4 min-w-[280px]">
+                <div className="absolute z-[80] mt-2 bg-white border border-gray-200 rounded-xl shadow-xl p-4 min-w-[280px]">
                     <h4 className="text-sm font-semibold text-gray-900 mb-3">Pilih Periode Pembanding</h4>
                     <div className="space-y-3">
                         <div>

@@ -233,7 +233,7 @@ async function runOpenAILoop(
 ): Promise<{ message: string; usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number }; steps?: ThinkingStep[] }> {
     const conversation: any[] = [
         { role: 'system', content: systemContent },
-        ...userMessages.map((m: any) => ({ role: m.role, content: m.content })),
+        ...userMessages.map((m: any) => ({ role: m.role, content: Array.isArray(m.content) ? [...m.content] : m.content })),
     ];
     let totalUsage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
     const steps: ThinkingStep[] = [];
@@ -410,7 +410,7 @@ async function runAnthropicLoop(
 ): Promise<{ message: string; usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number } }> {
     let conversation: any[] = userMessages.map((m: any) => ({
         role: m.role,
-        content: m.content,
+        content: Array.isArray(m.content) ? [...m.content] : m.content,
     }));
     let totalUsage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
 
@@ -933,7 +933,7 @@ async function runOpenAIStream(
     const headers = getOpenAIHeaders(cfg);
     const conversation: any[] = [
         { role: 'system', content: systemContent },
-        ...messages.map((m: any) => ({ role: m.role, content: m.content })),
+        ...messages.map((m: any) => ({ role: m.role, content: Array.isArray(m.content) ? [...m.content] : m.content })),
     ];
     let totalUsage: Record<string, unknown> = {};
 
@@ -1087,7 +1087,7 @@ async function runAnthropicStream(
 ): Promise<void> {
     let conversation: any[] = messages.map((m: any) => ({
         role: m.role,
-        content: m.content,
+        content: Array.isArray(m.content) ? [...m.content] : m.content,
     }));
     let totalUsage: Record<string, unknown> = {};
 

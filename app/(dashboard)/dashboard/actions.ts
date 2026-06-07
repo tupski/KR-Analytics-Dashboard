@@ -8,6 +8,7 @@ import type { ReportPeriodRange } from '@/lib/shared/report-period';
 import { getLiveOccupancy, getDailyOccupancyTrend } from '@/lib/services/occupancy';
 import { getRevenueTrend, getRevenueSummary as getServiceRevenueSummary } from '@/lib/services/revenue';
 import { getLocations } from '@/lib/services/location';
+import { getTodayCheckins, getUpcomingCheckouts } from '@/lib/services/stays';
 import { applyLocationHealthStatuses } from '@/lib/dashboard/location-health';
 import { getIdleSeverity } from '@/lib/dashboard/unit-performance';
 import type { LocationHealthItem, IdleUnitItem, UnitPerformanceItem, MarketingPerformanceItem, MarketingPerformanceStatus } from '@/types/dashboard';
@@ -85,69 +86,81 @@ export async function fetchUnitStatus(): Promise<UnitStatusCounts> {
 
 /**
  * Fetch today's check-ins
- * 
- * Queries transactions with checkin_at = today, sorted by time ascending.
+ *
+ * Uses canonical getTodayCheckins() from stays.ts for effective-date logic.
+ * Sorted by effective check-in date descending (newest first).
  * Returns up to 5 check-in items with formatted time in HH:mm format.
- * 
+ *
  * @returns Array of check-in items for today, limited to 5 items
  * @throws Error if data fetching fails
- * 
+ *
  */
 export async function fetchTodayCheckins(dateParams?: DateFilterParams): Promise<CheckinItem[]> {
-    const supabase = createServerClient();
-    // Use dateParams if provided, otherwise fall back to today
-    let start: string;
-    let exclusEnd: string;
-    if (dateParams?.rangePreset || (dateParams?.startDate && dateParams?.endDate)) {
-        const { getReportPeriodSetting } = await import('@/lib/get-report-period-setting');
-        const mode = await getReportPeriodSetting();
-        const range = computeDateRange(dateParams.rangePreset || 'custom', dateParams.startDate, dateParams.endDate, mode);
-        start = range.start;
-        exclusEnd = range.endExclusiveISO ?? (() => { throw new Error('endExclusiveISO missing from date range'); })();
-    } else {
-        const todayRange = await getTodayReportRange();
-        start = todayRange.start;
-        exclusEnd = todayRange.endExclusiveISO;
-    }
-
     try {
-        // Use COALESCE: checkin_at >= start OR (checkin IS NULL AND created_at >= start)
-        // Exclusive end boundaries for correct `<` filtering
-        const { data, error } = await supabase
-            .from('transactions')
-            .select('id, apartment_location, room_number, customer_name, checkin_at, created_at')
-            .or(
-                `and(checkin_at.gte.${start},checkin_at.lt.${exclusEnd}),` +
-                `and(checkin_at.is.null,created_at.gte.${start},created_at.lt.${exclusEnd})`
-            )
-            .order('checkin_at', { ascending: false })
-            .limit(100);
+        const supabase = createServerClient();
 
-        if (error) {
-            console.error('Error fetching check-ins:', error);
-            throw new Error(`Gagal mengambil data check-in: ${error.message}`);
+        // If dateParams specify a different range, fall back to direct Supabase query
+        if (dateParams?.rangePreset || (dateParams?.startDate && dateParams?.endDate)) {
+            const { getReportPeriodSetting } = await import('@/lib/get-report-period-setting');
+            const mode = await getReportPeriodSetting();
+            const range = computeDateRange(dateParams.rangePreset || 'custom', dateParams.startDate, dateParams.endDate, mode);
+            const start = range.start;
+            const exclusEnd = range.endExclusiveISO ?? (() => { throw new Error('endExclusiveISO missing from date range'); })();
+
+            const { data, error } = await supabase
+                .from('transactions')
+                .select('id, apartment_location, room_number, customer_name, checkin_at, created_at')
+                .or(
+                    `and(checkin_at.gte.${start},checkin_at.lt.${exclusEnd}),` +
+                    `and(checkin_at.is.null,created_at.gte.${start},created_at.lt.${exclusEnd})`
+                )
+                .order('checkin_at', { ascending: false })
+                .limit(100);
+
+            if (error) {
+                console.error('Error fetching check-ins:', error);
+                throw new Error(`Gagal mengambil data check-in: ${error.message}`);
+            }
+
+            if (!data) return [];
+
+            const filtered = data.filter((item: any) => {
+                const effDate = item.checkin_at || item.created_at;
+                return effDate && effDate >= start && effDate < exclusEnd;
+            });
+
+            // Sort by effective check-in date descending (newest first)
+            const sorted = filtered.sort((a: any, b: any) => {
+                const aDate = a.checkin_at || a.created_at;
+                const bDate = b.checkin_at || b.created_at;
+                return new Date(bDate).getTime() - new Date(aDate).getTime();
+            });
+
+            return sorted.map((item: any) => ({
+                id: item.id,
+                apartmentLocation: item.apartment_location,
+                roomNumber: item.room_number,
+                customerName: item.customer_name,
+                time: format(new Date(item.checkin_at || item.created_at), 'HH:mm'),
+                checkinAt: new Date(item.checkin_at || item.created_at)
+            }));
         }
 
-        if (!data) return [];
+        // Default: use canonical getTodayCheckins() from stays.ts
+        const stays = await getTodayCheckins({ supabase });
 
-        // JS filter: keep only where effective_date < exclusive end
-        const filtered = data.filter((item: any) => {
-            const effDate = item.checkin_at || item.created_at;
-            return effDate && effDate >= start && effDate < exclusEnd;
+        // Sort by effective check-in date descending (newest first)
+        stays.sort((a, b) => {
+            const aDate = a.checkin_at || a.created_at;
+            const bDate = b.checkin_at || b.created_at;
+            return new Date(bDate).getTime() - new Date(aDate).getTime();
         });
 
-        return filtered.map((item: {
-            id: string;
-            apartment_location: string;
-            room_number: string;
-            customer_name: string;
-            checkin_at: string;
-            created_at: string;
-        }) => ({
-            id: item.id,
+        return stays.map((item) => ({
+            id: String(item.id),
             apartmentLocation: item.apartment_location,
             roomNumber: item.room_number,
-            customerName: item.customer_name,
+            customerName: item.customer_name ?? '-',
             time: format(new Date(item.checkin_at || item.created_at), 'HH:mm'),
             checkinAt: new Date(item.checkin_at || item.created_at)
         }));
@@ -158,66 +171,35 @@ export async function fetchTodayCheckins(dateParams?: DateFilterParams): Promise
 }
 
 /**
- * Fetch today's check-outs
- * 
- * Queries transactions with checkout_at = today, sorted by time descending.
- * Returns up to 5 check-out items with formatted time in HH:mm format.
- * 
- * @returns Array of check-out items for today, limited to 5 items
+ * Fetch upcoming check-outs
+ *
+ * Uses canonical getUpcomingCheckouts() from stays.ts for active-stay logic.
+ * Returns active stays that will check out in the future, sorted by
+ * estimated checkout time ascending (nearest first).
+ *
+ * @returns Array of upcoming check-out items, limited to 10
  * @throws Error if data fetching fails
- * 
+ *
  */
 export async function fetchTodayCheckouts(dateParams?: DateFilterParams): Promise<CheckoutItem[]> {
     const supabase = createServerClient();
-    // Use dateParams if provided, otherwise fall back to today
-    let start: string;
-    let exclusEnd: string;
-    if (dateParams?.rangePreset || (dateParams?.startDate && dateParams?.endDate)) {
-        const { getReportPeriodSetting } = await import('@/lib/get-report-period-setting');
-        const mode = await getReportPeriodSetting();
-        const range = computeDateRange(dateParams.rangePreset || 'custom', dateParams.startDate, dateParams.endDate, mode);
-        start = range.start;
-        exclusEnd = range.endExclusiveISO ?? (() => { throw new Error('endExclusiveISO missing from date range'); })();
-    } else {
-        const todayRange = await getTodayReportRange();
-        start = todayRange.start;
-        exclusEnd = todayRange.endExclusiveISO;
-    }
 
     try {
-        const { data, error } = await supabase
-            .from('transactions')
-            .select('id, apartment_location, room_number, customer_name, checkout_at, checkin_at, created_at')
-            .gte('checkout_at', start)
-            .lt('checkout_at', exclusEnd)
-            .order('checkout_at', { ascending: true })
-            .limit(10);
+        // Use canonical getUpcomingCheckouts() from stays.ts
+        const upcoming = await getUpcomingCheckouts({ supabase, limit: 10 });
 
-        if (error) {
-            console.error('Error fetching check-outs:', error);
-            throw new Error(`Gagal mengambil data check-out: ${error.message}`);
+        if (!upcoming || upcoming.length === 0) {
+            return [];
         }
 
-        if (!data) return [];
-
-        const filtered = data.filter((item: any) => {
-            const checkoutDate = item.checkout_at;
-            return checkoutDate && checkoutDate >= start && checkoutDate < exclusEnd;
-        });
-
-        return filtered.map((item: {
-            id: string;
-            apartment_location: string;
-            room_number: string;
-            customer_name: string;
-            checkout_at: string;
-        }) => ({
-            id: item.id,
-            apartmentLocation: item.apartment_location,
-            roomNumber: item.room_number,
-            customerName: item.customer_name,
-            time: format(new Date(item.checkout_at), 'HH:mm'),
-            checkoutAt: new Date(item.checkout_at)
+        // Map ActiveStay → CheckoutItem
+        return upcoming.map((stay) => ({
+            id: String(stay.transactionId),
+            apartmentLocation: stay.location,
+            roomNumber: stay.roomNumber,
+            customerName: stay.customerName ?? '-',
+            time: format(new Date(stay.estimatedCheckoutAt), 'HH:mm'),
+            checkoutAt: new Date(stay.estimatedCheckoutAt)
         }));
     } catch (error) {
         console.error('Error in fetchTodayCheckouts:', error);
@@ -654,14 +636,15 @@ export async function getExpenseTrendAction(
 function zeroFillDateRange(
     data: { transaction_date: string; total_revenue: number; transaction_count: number }[],
     startDateStr: string,
-    endDateStr: string
+    endDateExclusiveStr: string
 ) {
     const result: typeof data = [];
     const current = new Date(startDateStr + 'T00:00:00+07:00');
-    const end = new Date(endDateStr + 'T00:00:00+07:00');
+    const end = new Date(endDateExclusiveStr + 'T00:00:00+07:00');
     const dataMap = new Map(data.map(d => [d.transaction_date, d]));
 
-    while (current <= end) {
+    // endDateExclusiveStr is exclusive — stop BEFORE it
+    while (current < end) {
         const key = format(toZonedTime(current, 'Asia/Jakarta'), 'yyyy-MM-dd');
         const existing = dataMap.get(key);
         result.push(existing || { transaction_date: key, total_revenue: 0, transaction_count: 0 });
@@ -693,8 +676,9 @@ export async function fetchRevenueData(filter: RevenueFilter): Promise<RevenueDa
 
     // Convert to WIB-aware date strings
     const startWIB = format(toZonedTime(startDate, 'Asia/Jakarta'), 'yyyy-MM-dd');
-    // Use exclusive end: today+1 so end date is exclusive (< tomorrow)
-    const todayWIB = format(toZonedTime(addDays(today, 1), 'Asia/Jakarta'), 'yyyy-MM-dd');
+    // endExclusive = tomorrow (for query), but zero-fill MUST stop at today
+    const todayExclusiveWIB = format(toZonedTime(addDays(today, 1), 'Asia/Jakarta'), 'yyyy-MM-dd');
+    const todayWIB = format(toZonedTime(today, 'Asia/Jakarta'), 'yyyy-MM-dd');
 
     try {
         // Build chart period explicitly: last 30 days
@@ -718,7 +702,8 @@ export async function fetchRevenueData(filter: RevenueFilter): Promise<RevenueDa
 
         if (filter === 'daily') {
             // Zero-fill raw data before aggregation to catch missing dates
-            const zeroFilled = zeroFillDateRange(mapped, startWIB, todayWIB);
+            // todayExclusiveWIB = tomorrow — zero-fill stops at today (exclusive end)
+            const zeroFilled = zeroFillDateRange(mapped, startWIB, todayExclusiveWIB);
             aggregated = aggregateRevenueData(zeroFilled, filter);
         }
 

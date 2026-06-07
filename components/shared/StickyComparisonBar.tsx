@@ -197,7 +197,7 @@ export default function StickyComparisonBar({
 
             {/* ── Expanded filter panel ── */}
             {expanded && (
-                <div className="px-3 sm:px-4 pb-3 sm:pb-4 space-y-2 border-t border-gray-100 pt-2 overflow-visible" role="region" aria-label="Panel filter">
+                <div className="px-3 sm:px-4 pb-3 sm:pb-4 space-y-2 border-t border-gray-100 pt-2 overflow-visible z-[70]" role="region" aria-label="Panel filter">
                     <div className="flex flex-wrap items-start gap-2">
                         <div aria-label="Pilih rentang tanggal">
                             <DateRangePicker

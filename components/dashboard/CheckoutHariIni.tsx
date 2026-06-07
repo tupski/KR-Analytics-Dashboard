@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState } from 'react';
+import Link from 'next/link';
 import { ArrowUp } from 'lucide-react';
 import { CheckoutItem } from '@/types';
 import { useAppSettings } from '@/lib/contexts/AppSettingsContext';
@@ -64,7 +65,7 @@ export default function CheckoutHariIni({ items, isLoading = false }: CheckoutHa
                     <div className="inline-flex items-center justify-center w-12 h-12 rounded-full bg-gray-100 mb-3">
                         <ArrowUp className="w-6 h-6 text-gray-400" />
                     </div>
-                    <p className="text-gray-500 text-sm">Tidak ada check-out hari ini</p>
+                    <p className="text-gray-500 text-sm">Tidak ada tamu yang akan check-out</p>
                 </div>
             </div>
         );
@@ -120,9 +121,13 @@ export default function CheckoutHariIni({ items, isLoading = false }: CheckoutHa
             </div>
 
             {hasMore && (
-                <p className="mt-3 text-xs text-gray-400 text-center">
+                <Link
+                    href="/booking?rangePreset=today&status=checkout"
+                    className="mt-3 text-xs text-blue-500 hover:text-blue-700 text-center block"
+                    title="Lihat semua check-out"
+                >
                     +{items.length - 5} check-out lainnya
-                </p>
+                </Link>
             )}
 
             <p className="mt-3 text-xs text-gray-400 text-center">
@@ -134,7 +139,8 @@ export default function CheckoutHariIni({ items, isLoading = false }: CheckoutHa
                 <RoomDetailModal
                     location={selectedTx.apartmentLocation}
                     room={selectedTx.roomNumber}
-                    filter={'today' as DateFilter}
+                    isOccupied={true}
+                    mode="active_or_period"
                     onClose={() => setModalOpen(false)}
                 />
             )}

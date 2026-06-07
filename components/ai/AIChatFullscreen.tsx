@@ -80,7 +80,7 @@ export default function AIChatFullscreen({ conversationId, forceNew }: Props) {
                     setMessages(existing.messages || []);
                     // If conversation already has messages, remove ?new=1
                     if (existing.messages && existing.messages.length > 0) {
-                        router.replace(`/chat/${targetId}`);
+                        router.replace(`/chat/${targetId}`, { scroll: false });
                     }
                 } else {
                     const newConv = createConversation(targetId);
@@ -151,7 +151,7 @@ export default function AIChatFullscreen({ conversationId, forceNew }: Props) {
         }
         // Clean ?new=1 after first real message is sent
         if (msgs.length > 0) {
-            router.replace(`/chat/${convId}`);
+            router.replace(`/chat/${convId}`, { scroll: false });
         }
     }, [activeConv, router]);
 
@@ -297,7 +297,7 @@ export default function AIChatFullscreen({ conversationId, forceNew }: Props) {
             <div className="flex min-h-0 flex-1 flex-col min-w-0 overflow-hidden">
                 {/* ── Top bar header ── */}
                 <div
-                    className="flex items-center justify-between px-3 py-2 border-b border-gray-100 bg-white/95 backdrop-blur-sm flex-shrink-0 z-30"
+                    className="flex items-center justify-between px-3 py-2 border-b border-gray-100 bg-white/95 backdrop-blur-sm flex-shrink-0 z-30 sticky top-0"
                 >
                     <div className="flex items-center gap-2 min-w-0">
                         {/* Mobile: toggle sidebar */}

@@ -76,7 +76,7 @@ function calcEndAt(tx: OccupancyTx): Date {
     if (tx.checkout_at) return new Date(tx.checkout_at);
 
     const start = new Date(tx.checkin_at || tx.created_at || new Date());
-    const hours = Number(tx.rental_duration || 1);
+    const hours = Number(tx.rental_duration) || 24;
 
     return new Date(start.getTime() + hours * 60 * 60 * 1000);
 }
@@ -369,7 +369,7 @@ async function getDailyOccupancyTrendLegacy(days: number = 30): Promise<DailyOcc
 
         const { data: transactions, error: txError } = await supabase
             .from('transactions')
-            .select('room_number, apartment_location, checkin_at, checkout_at')
+            .select('room_number, apartment_location, checkin_at, checkout_at, rental_duration, created_at')
             .lte('checkin_at', rangeEnd)
             .or(`checkout_at.gte.${rangeStart},checkout_at.is.null`);
 
@@ -380,20 +380,33 @@ async function getDailyOccupancyTrendLegacy(days: number = 30): Promise<DailyOcc
 
         // Step 3: For each day, count unique occupied rooms (stay-span model)
         // Calendar-day boundaries are intentional — a room occupies a FULL calendar day regardless of report_period_mode.
+        // Uses getEstimatedEnd() logic: checkout_at IS NULL is NOT "active forever" — cap at rental_duration (default 24h).
         const result: DailyOccupancyTrendPoint[] = formattedDays.map((day) => {
-            const dayStart = `${day}T00:00:00`;
-            const dayEnd = `${day}T23:59:59`;
+            const dayStart = new Date(`${day}T00:00:00`);
+            const dayEndExclusive = new Date(dayStart.getTime() + 86400000);
 
             const occupiedOnDay = new Set<string>();
 
             if (transactions) {
                 for (const tx of transactions) {
-                    const checkin = (tx as any).checkin_at as string;
-                    const checkout = (tx as any).checkout_at as string | null;
+                    const t = tx as any;
+                    const checkin = t.checkin_at as string | null;
+                    const checkout = t.checkout_at as string | null;
 
-                    // Overlap: checkin <= dayEnd AND (checkout >= dayStart OR checkout IS NULL)
-                    if (checkin <= dayEnd && (checkout === null || checkout >= dayStart)) {
-                        occupiedOnDay.add(`${(tx as any).apartment_location}-${(tx as any).room_number}`);
+                    // Compute effective start (checkin_at ?? created_at)
+                    const stayStart = new Date(checkin || t.created_at);
+                    // Compute estimated end (checkout_at ?? start + rental_duration hours, default 24h)
+                    let stayEnd: Date;
+                    if (checkout) {
+                        stayEnd = new Date(checkout);
+                    } else {
+                        const hours = Number(t.rental_duration) || 24;
+                        stayEnd = new Date(stayStart.getTime() + hours * 60 * 60 * 1000);
+                    }
+
+                    // Overlap: stayStart < dayEndExclusive AND stayEnd > dayStart
+                    if (stayStart < dayEndExclusive && stayEnd > dayStart) {
+                        occupiedOnDay.add(`${t.apartment_location}-${t.room_number}`);
                     }
                 }
             }

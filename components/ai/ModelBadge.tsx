@@ -63,7 +63,7 @@ export default function ModelBadge({ type, size = 'sm' }: ModelBadgeProps) {
             title={config.label}
         >
             {config.icon}
-            <span className="hidden sm:inline">{config.label}</span>
+            <span className="hidden">{config.label}</span>
         </span>
     );
 }
