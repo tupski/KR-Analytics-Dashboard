@@ -11,15 +11,17 @@ import {
 } from '@/lib/ai/historyServer';
 
 /**
- * GET /api/krai/history            — list all conversations (no messages)
- * GET /api/krai/history?id=xxx     — get single conversation with messages
- * GET /api/krai/history?action=settings — get krai settings
+ * GET /api/krai/history                  — list all conversations (no messages)
+ * GET /api/krai/history?id=xxx           — get single conversation with messages
+ * GET /api/krai/history?id=xxx&new=1     — skip DB, return empty (fresh conversation)
+ * GET /api/krai/history?action=settings  — get krai settings
  */
 export async function GET(request: NextRequest) {
     try {
         const { searchParams } = new URL(request.url);
         const id = searchParams.get('id');
         const action = searchParams.get('action');
+        const isNew = searchParams.get('new') === '1';
 
         if (action === 'settings') {
             const retentionDays = await getRetentionDays();
@@ -27,16 +29,50 @@ export async function GET(request: NextRequest) {
         }
 
         if (id) {
-            const conv = await getConversationDb(id);
-            if (!conv) return NextResponse.json({ error: 'Not found' }, { status: 404 });
-            return NextResponse.json({ conversation: conv });
+            // new=1 means this is a fresh conversation — skip DB, return empty
+            if (isNew) {
+                console.debug('[KRAI History API]', {
+                    method: 'GET',
+                    id,
+                    mode: 'new',
+                    foundConversation: false,
+                    messageCount: 0,
+                });
+                return NextResponse.json({ ok: true, conversationId: id, messages: [] });
+            }
+
+            const conversation = await getConversationDb(id);
+            const messages = conversation?.messages ?? [];
+
+            console.debug('[KRAI History API]', {
+                method: 'GET',
+                id,
+                mode: 'messages',
+                foundConversation: !!conversation,
+                messageCount: messages.length,
+            });
+
+            // Conversation exists in DB but has no messages yet → return empty gracefully
+            if (conversation && messages.length === 0) {
+                return NextResponse.json({ ok: true, conversationId: id, messages: [] });
+            }
+
+            // Conversation not found in DB → 404
+            if (!conversation) {
+                return NextResponse.json({ error: 'Not found' }, { status: 404 });
+            }
+
+            return NextResponse.json({ conversation });
         }
 
         const conversations = await listConversationsDb();
         return NextResponse.json({ conversations });
     } catch (err: any) {
         console.error('GET /api/krai/history error:', err);
-        return NextResponse.json({ error: err.message }, { status: 500 });
+        return NextResponse.json(
+            { ok: false, error: 'Gagal memuat riwayat chat.' },
+            { status: 500 },
+        );
     }
 }
 
@@ -89,6 +125,9 @@ export async function POST(request: NextRequest) {
         }
     } catch (err: any) {
         console.error('POST /api/krai/history error:', err);
-        return NextResponse.json({ error: err.message }, { status: 500 });
+        return NextResponse.json(
+            { ok: false, error: 'Gagal menyimpan riwayat chat.' },
+            { status: 500 },
+        );
     }
 }
