@@ -96,7 +96,7 @@ export default async function UnitPage({
                 />
 
                 {/* Metric Cards — replacing UnitOverview */}
-                <div className={`grid gap-3 sm:gap-4 ${isNonToday ? 'grid-cols-4' : 'grid-cols-3'}`}>
+                <div className={`grid gap-3 sm:gap-4 ${isNonToday ? 'grid-cols-2 sm:grid-cols-4' : 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-3'}`}>
                     <MetricCardHorizontal
                         icon={<Building className="w-5 h-5" />}
                         title="Total Unit"
