@@ -1,6 +1,6 @@
 'use client';
 
-import { Suspense } from 'react';
+import { Suspense, useEffect } from 'react';
 import { Settings, Palette } from 'lucide-react';
 import dynamic from 'next/dynamic';
 import SettingsTabs, { useActiveTab } from './SettingsTabs';
@@ -15,6 +15,15 @@ interface Props {
 
 function Inner({ initialSettings }: Props) {
     const activeTab = useActiveTab();
+
+    useEffect(() => {
+        console.debug('[Runtime Layout Check]', {
+            innerWidth: window.innerWidth,
+            bodyScrollWidth: document.body.scrollWidth,
+            documentClientWidth: document.documentElement.clientWidth,
+            hasHorizontalOverflow: document.body.scrollWidth > document.documentElement.clientWidth,
+        });
+    }, []);
 
     return (
         <div className="p-4 lg:p-6 space-y-6 max-w-6xl">
@@ -76,6 +85,11 @@ function Inner({ initialSettings }: Props) {
                     <AISettingsPage section="sistem" />
                 )}
             </div>
+            {process.env.NODE_ENV === 'development' && (
+                <div className="fixed bottom-2 right-2 z-[9999] rounded bg-black px-2 py-1 text-xs text-white">
+                    SettingsPageClient v2 loaded
+                </div>
+            )}
         </div>
     );
 }

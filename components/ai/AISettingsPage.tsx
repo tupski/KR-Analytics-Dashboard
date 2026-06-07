@@ -605,7 +605,7 @@ export default function AISettingsPage({ section = 'ai' }: AISettingsPageProps) 
     };
 
     return (
-        <div className="w-full max-w-5xl space-y-5 overflow-x-hidden min-w-0">
+        <div className="w-full min-w-0 max-w-full max-w-5xl space-y-5 overflow-x-hidden">
             {/* ── Section: AI (Provider Config) ── */}
             {section === 'ai' && (
                 <>
@@ -614,7 +614,7 @@ export default function AISettingsPage({ section = 'ai' }: AISettingsPageProps) 
                         <div className="flex items-start justify-between gap-3 flex-wrap">
                             <div>
                                 <p className="text-xs text-blue-700 uppercase font-semibold tracking-wide mb-1">Provider Aktif</p>
-                                <p className="text-base font-bold text-gray-900">
+                                <p className="text-base font-bold text-gray-900 min-w-0 truncate break-words">
                                     {config.activeProvider === 'auto'
                                         ? 'Auto (pilih otomatis)'
                                         : PROVIDERS.find(p => p.id === config.activeProvider)?.name || config.activeProvider}
@@ -630,7 +630,7 @@ export default function AISettingsPage({ section = 'ai' }: AISettingsPageProps) 
                     </div>
 
                     {/* Provider tabs */}
-                    <div className="bg-white rounded-xl border border-gray-200 overflow-hidden shadow-sm">
+                    <div className="w-full min-w-0 max-w-full bg-white rounded-xl border border-gray-200 overflow-hidden shadow-sm">
                         <div className="border-b border-gray-200 overflow-x-auto">
                             <div className="flex gap-1 px-2 py-2 min-w-max">
                                 {PROVIDERS.map(p => {
@@ -659,7 +659,7 @@ export default function AISettingsPage({ section = 'ai' }: AISettingsPageProps) 
                             {/* Provider info */}
                             <div className="flex items-start justify-between gap-3 flex-wrap">
                                 <div>
-                                    <h3 className="text-base font-semibold text-gray-900">{provider.name}</h3>
+                                    <h3 className="text-base font-semibold text-gray-900 min-w-0 truncate">{provider.name}</h3>
                                     <p className="text-xs text-gray-500 mt-0.5">{provider.description}</p>
                                 </div>
                                 {provider.signupUrl && (
@@ -681,7 +681,7 @@ export default function AISettingsPage({ section = 'ai' }: AISettingsPageProps) 
 
                                 {apiKeySet && !isEditingApiKey ? (
                                     /* Key exists + not editing → show masked preview + Edit/Delete */
-                                    <div className="flex items-center gap-2 flex-wrap">
+                                    <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center flex-wrap">
                                         <div className="flex items-center gap-2 px-3 py-2 border rounded-lg bg-gray-50 font-mono text-sm select-all min-w-0">
                                             <span className="text-gray-600 truncate" title="API Key tersimpan (enkripsi AES-256-GCM)">
                                                 {maskApiKey(apiKeyPreview) || '••••••••••••••••'}
@@ -770,7 +770,7 @@ export default function AISettingsPage({ section = 'ai' }: AISettingsPageProps) 
                             )}
 
                             {/* ── Model Fetch & Select (new) ─────────────────────────── */}
-                            <div className="pt-2 border-t border-gray-100">
+                            <div className="pt-2 border-t border-gray-100 w-full min-w-0 max-w-full overflow-hidden">
                                 <label className="block text-xs font-medium text-gray-700 mb-1.5">
                                     Model <span className="text-gray-400 font-normal">(pilih atau ketik manual)</span>
                                 </label>

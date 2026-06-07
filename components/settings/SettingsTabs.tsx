@@ -32,7 +32,7 @@ export default function SettingsTabs() {
     };
 
     return (
-        <div className="border-b border-gray-200 overflow-x-auto -mx-4 lg:-mx-6 px-4 lg:px-6">
+        <div className="border-b border-gray-200 overflow-x-auto -mx-4 lg:-mx-6 px-4 lg:px-6 w-full max-w-full">
             <div className="flex gap-1 min-w-max pb-px">
                 {TABS.map(t => {
                     const active = activeTab === t.id;

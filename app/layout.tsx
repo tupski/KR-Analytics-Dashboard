@@ -40,7 +40,7 @@ export async function generateMetadata(): Promise<Metadata> {
                 shortcut: faviconUrl,
                 apple: faviconUrl,
             }
-            : undefined,
+            : { icon: '/favicon.svg' },
     };
 }
 

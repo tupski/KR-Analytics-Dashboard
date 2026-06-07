@@ -219,16 +219,11 @@ export default function Sidebar({ isMobileOpen = false, onClose, userEmail }: Si
         </aside>
     );
 
-    // ── Mobile overlay sidebar ────────────────────────────────────────────────
-    const mobileSidebar = (
-        <div
-            className={`lg:hidden fixed inset-0 z-50 transition-opacity duration-300 ${isMobileOpen ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'}`}
-            aria-hidden={!isMobileOpen}
-        >
+    // ── Mobile overlay sidebar (conditionally rendered to avoid aria-hidden focus trap) ─
+    const mobileSidebar = isMobileOpen && (
+        <div className="lg:hidden fixed inset-0 z-50 transition-opacity duration-300 opacity-100 pointer-events-auto">
             <div className="absolute inset-0 bg-black/40" onClick={onClose} />
-            <aside
-                className={`absolute inset-y-0 left-0 w-72 max-w-[85vw] flex flex-col bg-gradient-to-b from-white to-blue-50/50 border-r border-blue-100 shadow-xl transform transition-transform duration-300 ${isMobileOpen ? 'translate-x-0' : '-translate-x-full'}`}
-            >
+            <aside className="absolute inset-y-0 left-0 w-72 max-w-[85vw] flex flex-col bg-gradient-to-b from-white to-blue-50/50 border-r border-blue-100 shadow-xl transform transition-transform duration-300 translate-x-0">
                 <MobileSidebarHeader onClose={onClose!} />
 
                 <nav className="flex-1 px-3 py-3 overflow-y-auto">
