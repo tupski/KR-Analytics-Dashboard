@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
     RefreshCw,
     Sparkles,
@@ -21,6 +21,11 @@ import type { KraiPageContext } from '@/lib/ai/followUpQuestions';
 import { normalizeAiText } from '@/lib/ai/normalizeAiText';
 import { suggestionToUserPrompt } from '@/lib/ai/suggestionHelper';
 import { splitThinkingSteps } from '@/lib/ai/kraiResponseParser';
+
+// ─── Batch streaming constants (prevents DOM freeze from per-token re-renders) ─
+const INSIGHT_WORD_BATCH_SIZE = 10;
+const INSIGHT_FLUSH_INTERVAL_MS = 150;
+const THINKING_STEP_FLUSH_INTERVAL_MS = 300;
 
 // ─── Types ───────────────────────────────────────────────────────
 
@@ -170,6 +175,19 @@ export default function KraiInsightCard({
     const abortRef = useRef<AbortController | null>(null);
     const streamStateRef = useRef<InsightStreamState>('idle');
 
+    // ── Batch streaming refs (prevents per-token DOM re-renders) ──
+    const streamBufferRef = useRef('');
+    const flushTimerRef = useRef<number | null>(null);
+    const lastFlushRef = useRef(0);
+    // ── Thinking step throttle ──
+    const thinkingBufferRef = useRef('');
+    const thinkingTimerRef = useRef<number | null>(null);
+    const lastThinkingFlushRef = useRef(0);
+    // ── Active request tracking to prevent duplicate generation ──
+    const activeRequestRef = useRef(false);
+    // ── Cached insight guard: avoid auto-regenerate if already cached ──
+    const hasCachedInsightRef = useRef(false);
+
     // ── Streaming state for main insight ──
     const [mainThinkingSteps, setMainThinkingSteps] = useState<string[]>([]);
     const [mainStreaming, setMainStreaming] = useState(false);
@@ -179,7 +197,13 @@ export default function KraiInsightCard({
     const [followUpAnswers, setFollowUpAnswers] = useState<FollowUpAnswer[]>([]);
     const [activeFollowUpIndex, setActiveFollowUpIndex] = useState(0);
 
-    const dataHash = hashData(dataSummary);
+    // ── Stable memoized derivations to prevent effect re-triggers ──
+    const dataHash = useMemo(() => hashData(dataSummary), [dataSummary]);
+    const stableFiltersKey = useMemo(() => {
+        if (!filters) return '';
+        const { comparisonMode, rangePreset, startDate, endDate, comparisonStartDate, comparisonEndDate, reportPeriodMode } = filters;
+        return `${rangePreset || ''}|${startDate || ''}|${endDate || ''}|${comparisonMode || ''}|${comparisonStartDate || ''}|${comparisonEndDate || ''}|${reportPeriodMode || ''}`;
+    }, [filters]);
 
     // Build prompt from page context + optional data summary
     const buildPrompt = useCallback((): string => {
@@ -226,8 +250,48 @@ export default function KraiInsightCard({
         }
     }, []);
 
+    // ── Flush helpers: batch insight text to prevent per-token re-renders ──
+    const countWords = useCallback((text: string) => text.trim().split(/\s+/).filter(Boolean).length, []);
+
+    const flushInsightBuffer = useCallback((force = false) => {
+        const now = Date.now();
+        const buffered = streamBufferRef.current;
+        if (!buffered) return;
+        const enoughWords = countWords(buffered) >= INSIGHT_WORD_BATCH_SIZE;
+        const enoughTime = now - lastFlushRef.current >= INSIGHT_FLUSH_INTERVAL_MS;
+        if (!force && !enoughWords && !enoughTime) return;
+        streamBufferRef.current = '';
+        lastFlushRef.current = now;
+        setInsight(prev => {
+            const current = prev ?? '';
+            return normalizeAiText(current + buffered);
+        });
+    }, [countWords]);
+
+    const flushThinkingBuffer = useCallback((accumulated: string) => {
+        const now = Date.now();
+        const enoughTime = now - lastThinkingFlushRef.current >= THINKING_STEP_FLUSH_INTERVAL_MS;
+        if (!enoughTime && thinkingBufferRef.current.length > 0) return;
+        thinkingBufferRef.current = '';
+        lastThinkingFlushRef.current = now;
+        setMainThinkingSteps(splitThinkingSteps(accumulated));
+    }, []);
+
     const fetchInsight = useCallback(async (forceRefresh = false) => {
-        // Check cache (skip when forceRefresh OR regenerate)
+        console.debug('[KRAI Insight Generate Trigger]', {
+            pageContext,
+            forceRefresh,
+            dataHash,
+            reason: forceRefresh ? 'manual refresh' : 'initial fetch',
+        });
+
+        // ── Guard: prevent concurrent requests ──
+        if (activeRequestRef.current) {
+            console.debug('[KRAI Insight] Skipped — request already in flight');
+            return;
+        }
+
+        // Check cache (skip when forceRefresh)
         if (!forceRefresh) {
             const cached = getCached(pageContext, dataHash);
             if (cached) {
@@ -238,6 +302,7 @@ export default function KraiInsightCard({
                 setMainThinkingSteps([]);
                 setMainStreaming(false);
                 setStreamState('complete');
+                hasCachedInsightRef.current = true;
                 return;
             }
         }
@@ -247,9 +312,19 @@ export default function KraiInsightCard({
             abortRef.current.abort();
         }
         abortRef.current = new AbortController();
+        activeRequestRef.current = true;
+
+        // Reset batch buffers
+        streamBufferRef.current = '';
+        thinkingBufferRef.current = '';
+        lastFlushRef.current = 0;
+        lastThinkingFlushRef.current = 0;
+        if (flushTimerRef.current) { clearTimeout(flushTimerRef.current); flushTimerRef.current = null; }
+        if (thinkingTimerRef.current) { clearTimeout(thinkingTimerRef.current); thinkingTimerRef.current = null; }
 
         setLoading(true);
         setError(null);
+        setInsight(null); // Clear stale insight during streaming
         setMainThinkingSteps([]);
         setMainStreaming(true);
         setStreamState('streaming');
@@ -258,11 +333,9 @@ export default function KraiInsightCard({
 
         // Start 30-second timeout for answer event
         let gotAnswer = false;
-        let timedOut = false;
         clearAnswerTimeout();
         timeoutRef.current = setTimeout(() => {
             if (!gotAnswer) {
-                timedOut = true;
                 streamStateRef.current = 'timeout';
                 setStreamState('timeout');
                 setError('KRAI butuh waktu lebih lama dari biasanya. Coba regenerate jawaban ini.');
@@ -272,9 +345,11 @@ export default function KraiInsightCard({
                     timeoutMs: 30000,
                     hasDataSummary: !!dataSummary,
                 });
+                flushInsightBuffer(true);
                 setMainStreaming(false);
                 setLoading(false);
                 setIsSegarkanLoading(false);
+                activeRequestRef.current = false;
                 if (abortRef.current) {
                     abortRef.current.abort();
                 }
@@ -282,7 +357,6 @@ export default function KraiInsightCard({
         }, 30000);
 
         try {
-            // Use regenerate:true to always bypass server cache
             const res = await fetch('/api/ai/insight', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -299,7 +373,7 @@ export default function KraiInsightCard({
                     reportPeriodMode: filters?.reportPeriodMode,
                     title,
                     forceRefresh,
-                    regenerate: true, // Always bypass server cache
+                    regenerate: true,
                     dataSummary,
                     stream: true,
                 }),
@@ -311,6 +385,7 @@ export default function KraiInsightCard({
                 setLoading(false);
                 setMainStreaming(false);
                 setIsSegarkanLoading(false);
+                activeRequestRef.current = false;
                 return;
             }
 
@@ -324,20 +399,39 @@ export default function KraiInsightCard({
                 await readInsightNDJSON(reader, {
                     onThinking: (delta) => {
                         accumulatedThinking += delta;
-                        setMainThinkingSteps(splitThinkingSteps(accumulatedThinking));
+                        thinkingBufferRef.current += delta;
+                        // Throttle thinking step updates — only flush periodically
+                        flushThinkingBuffer(accumulatedThinking);
+                        // Also schedule a delayed flush if no more thinking events come
+                        if (thinkingTimerRef.current) clearTimeout(thinkingTimerRef.current);
+                        thinkingTimerRef.current = window.setTimeout(() => {
+                            thinkingTimerRef.current = null;
+                            thinkingBufferRef.current = '';
+                            setMainThinkingSteps(splitThinkingSteps(accumulatedThinking));
+                        }, THINKING_STEP_FLUSH_INTERVAL_MS);
                     },
                     onAnswer: (delta) => {
                         gotAnswer = true;
                         clearAnswerTimeout();
                         accumulatedAnswer += delta;
-                        setInsight(normalizeAiText(accumulatedAnswer));
-                        // If answer is short but thinking is long, keep waiting
-                        // (answer may still be streaming — don't mark complete yet)
+                        // ── Batch stream buffer: don't render per-token ──
+                        streamBufferRef.current += delta;
+                        if (!flushTimerRef.current) {
+                            flushTimerRef.current = window.setTimeout(() => {
+                                flushTimerRef.current = null;
+                                flushInsightBuffer(true);
+                            }, INSIGHT_FLUSH_INTERVAL_MS);
+                        }
+                        flushInsightBuffer(false);
                     },
                     onDone: (_finishReason, _isTruncated) => {
                         doneCalled = true;
                         gotAnswer = true;
                         clearAnswerTimeout();
+                        flushInsightBuffer(true); // Force flush remaining
+                        if (flushTimerRef.current) { clearTimeout(flushTimerRef.current); flushTimerRef.current = null; }
+                        if (thinkingTimerRef.current) { clearTimeout(thinkingTimerRef.current); thinkingTimerRef.current = null; }
+                        // Build final from accumulated to ensure completeness
                         const final = normalizeAiText(accumulatedAnswer);
                         setInsight(final);
                         setMainStreaming(false);
@@ -349,10 +443,14 @@ export default function KraiInsightCard({
                         }
                         setLoading(false);
                         setIsSegarkanLoading(false);
+                        activeRequestRef.current = false;
                     },
                     onError: (message) => {
                         gotAnswer = true;
                         clearAnswerTimeout();
+                        flushInsightBuffer(true);
+                        if (flushTimerRef.current) { clearTimeout(flushTimerRef.current); flushTimerRef.current = null; }
+                        if (thinkingTimerRef.current) { clearTimeout(thinkingTimerRef.current); thinkingTimerRef.current = null; }
                         console.debug('[KRAI Insight] Stream error', {
                             pageContext,
                             error: message,
@@ -362,6 +460,7 @@ export default function KraiInsightCard({
                         setMainStreaming(false);
                         setLoading(false);
                         setIsSegarkanLoading(false);
+                        activeRequestRef.current = false;
                     },
                 });
 
@@ -369,6 +468,9 @@ export default function KraiInsightCard({
                 if (!doneCalled) {
                     gotAnswer = true;
                     clearAnswerTimeout();
+                    flushInsightBuffer(true);
+                    if (flushTimerRef.current) { clearTimeout(flushTimerRef.current); flushTimerRef.current = null; }
+                    if (thinkingTimerRef.current) { clearTimeout(thinkingTimerRef.current); thinkingTimerRef.current = null; }
                     const final = normalizeAiText(accumulatedAnswer);
                     if (final && final.length > 5) {
                         setInsight(final);
@@ -380,6 +482,7 @@ export default function KraiInsightCard({
                     setMainStreaming(false);
                     setLoading(false);
                     setIsSegarkanLoading(false);
+                    activeRequestRef.current = false;
                 }
                 return;
             }
@@ -393,6 +496,7 @@ export default function KraiInsightCard({
                 setLoading(false);
                 setMainStreaming(false);
                 setIsSegarkanLoading(false);
+                activeRequestRef.current = false;
                 return;
             }
             if (data.error && !data.fallback) {
@@ -401,6 +505,7 @@ export default function KraiInsightCard({
                 setLoading(false);
                 setMainStreaming(false);
                 setIsSegarkanLoading(false);
+                activeRequestRef.current = false;
                 return;
             }
             const raw = data.response?.message || data.response?.text || '';
@@ -414,6 +519,7 @@ export default function KraiInsightCard({
                 setStreamState('error');
                 setError('Insight belum selesai dibuat. Coba segarkan kembali.');
             }
+            activeRequestRef.current = false;
         } catch (err: any) {
             // Ignore abort errors (from timeout or manual cancel)
             if (err.name === 'AbortError') {
@@ -424,28 +530,55 @@ export default function KraiInsightCard({
                 setLoading(false);
                 setMainStreaming(false);
                 setIsSegarkanLoading(false);
+                activeRequestRef.current = false;
                 return;
             }
             clearAnswerTimeout();
             setStreamState('error');
             setError(err.message || 'KRAI mengalami kendala. Coba segarkan kembali.');
+            activeRequestRef.current = false;
         } finally {
             if (!gotAnswer) clearAnswerTimeout();
             setLoading(false);
             setMainStreaming(false);
             setIsSegarkanLoading(false);
+            activeRequestRef.current = false;
         }
-    }, [pageContext, buildPrompt, filters, title, dataHash, dataSummary, updateFollowUps, clearAnswerTimeout]);
+    }, [pageContext, buildPrompt, filters, title, dataHash, dataSummary, updateFollowUps, clearAnswerTimeout, flushInsightBuffer, flushThinkingBuffer]);
 
-    // Fetch on mount
+    // ── Fetch on mount with lazy generation (T9: kill switch) ──
     useEffect(() => {
-        fetchInsight();
+        // If already has cached insight for same period, don't auto-generate
+        if (hasCachedInsightRef.current) {
+            return;
+        }
+        // Check session cache first
+        const cached = getCached(pageContext, dataHash);
+        if (cached) {
+            const normalized = normalizeAiText(cached);
+            setInsight(normalized);
+            setMainThinkingSteps([]);
+            setMainStreaming(false);
+            setStreamState('complete');
+            hasCachedInsightRef.current = true;
+            updateFollowUps(normalized);
+            return;
+        }
+        // Lazy generation: defer to when browser is idle
+        const timer = window.setTimeout(() => {
+            fetchInsight();
+        }, 400);
         // Cleanup on unmount
         return () => {
+            clearTimeout(timer);
             if (abortRef.current) abortRef.current.abort();
             if (timeoutRef.current) clearTimeout(timeoutRef.current);
+            if (flushTimerRef.current) clearTimeout(flushTimerRef.current);
+            if (thinkingTimerRef.current) clearTimeout(thinkingTimerRef.current);
+            activeRequestRef.current = false;
         };
-    }, [fetchInsight]);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [pageContext, dataHash]);
 
     /** In-card follow-up: generate answer inside card via streaming */
     const handleFollowUp = useCallback(async (q: string) => {
@@ -632,7 +765,7 @@ export default function KraiInsightCard({
                     : fa,
             ));
         }
-    }, [insight, pageContext]);
+    }, [insight, pageContext, dataSummary, filters]);
 
     const activeFollowUp = followUpAnswers[activeFollowUpIndex];
 
@@ -729,7 +862,14 @@ export default function KraiInsightCard({
                     {(insight || mainStreaming) && !error && (
                         <>
                             <div className={`relative ${!contentExpanded ? 'max-h-[260px] overflow-hidden' : ''}`}>
-                                <MarkdownRenderer content={insight || ''} className="text-sm text-gray-800 leading-relaxed" />
+                                {mainStreaming ? (
+                                    /* T8: Lightweight rendering during streaming — plain text, no Markdown parse */
+                                    <div className="whitespace-pre-wrap text-sm text-gray-800 leading-relaxed">
+                                        {insight || ''}
+                                    </div>
+                                ) : (
+                                    <MarkdownRenderer content={insight || ''} className="text-sm text-gray-800 leading-relaxed" />
+                                )}
                                 {!contentExpanded && insight && insight.length > 400 && (
                                     <div className="absolute bottom-0 left-0 right-0 h-16 bg-gradient-to-t from-white to-transparent pointer-events-none" />
                                 )}
