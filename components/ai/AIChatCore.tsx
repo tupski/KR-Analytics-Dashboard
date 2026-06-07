@@ -13,7 +13,7 @@
  * - Italic foreign word emphasis (handled in MarkdownRenderer)
  */
 
-import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { Send, Bot, Brain, X, ChevronRight, ChevronDown, Copy, Check, AlertTriangle, Eye, Lightbulb, Wrench, Zap, RotateCw, Pencil, Search, Loader2 } from 'lucide-react';
 import MarkdownRenderer from './MarkdownRenderer';
 import ChatModelSelector from './ChatModelSelector';
@@ -188,6 +188,7 @@ async function sendChat(
         onDone: (finishReason: string, isTruncated: boolean) => void;
         onError: (message: string) => void;
     },
+    signal?: AbortSignal,
 ): Promise<{ message: string; model?: string; provider?: string; usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number }; steps?: any[]; isTruncated?: boolean; finishReason?: string } | null> {
     // Always request streaming
     const res = await fetch('/api/ai/chat', {
@@ -204,6 +205,7 @@ async function sendChat(
             verbose: true,
             stream: true,
         }),
+        signal,
     });
 
     if (!res.ok) {
@@ -367,6 +369,251 @@ function formatTimestamp(ts: number): string {
     return d.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
 }
 
+// ── Memoized message item ────────────────────────────────────────────────────
+
+interface MemoMessageItemProps {
+    msg: ChatMessage;
+    idx: number;
+    isFloat: boolean;
+    isFull: boolean;
+    loading: boolean;
+    expandedStepsIdx: number | null;
+    setExpandedStepsIdx: (idx: number | null) => void;
+    expandedSugg: Record<string, boolean>;
+    setExpandedSugg: React.Dispatch<React.SetStateAction<Record<string, boolean>>>;
+    copiedIdx: number | null;
+    handleCopy: (text: string, idx: number) => void;
+    handleFillInput: (text: string) => void;
+    setInputAndNotify: (val: string) => void;
+    setShowModelPicker: (v: boolean) => void;
+    inputRef: React.RefObject<HTMLInputElement | HTMLTextAreaElement | null>;
+}
+
+const MemoMessageItem = React.memo(function MemoMessageItem({
+    msg,
+    idx,
+    isFloat,
+    isFull,
+    loading,
+    expandedStepsIdx,
+    setExpandedStepsIdx,
+    expandedSugg,
+    setExpandedSugg,
+    copiedIdx,
+    handleCopy,
+    handleFillInput,
+    setInputAndNotify,
+    setShowModelPicker,
+    inputRef,
+}: MemoMessageItemProps) {
+    return (
+        <div className="space-y-1.5 group">
+            <div className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                {msg.role === 'assistant' && (
+                    <div className={`rounded-xl bg-blue-600 flex items-center justify-center mr-2 flex-shrink-0 mt-1 ${isFloat ? 'w-6 h-6' : 'w-7 h-7'}`}>
+                        <Bot className={`text-white ${isFloat ? 'w-3.5 h-3.5' : 'w-4 h-4'}`} />
+                    </div>
+                )}
+                <div className={`flex flex-col gap-1 max-w-[85%] ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
+                    {/* Image preview (user) */}
+                    {msg.role === 'user' && msg.imageDataUrl && (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={msg.imageDataUrl} alt="lampiran" className="rounded-lg max-w-[200px] max-h-[200px] border border-gray-200" />
+                    )}
+                    <div
+                        className={`rounded-xl text-sm shadow-sm ${msg.role === 'user'
+                            ? 'bg-blue-600 text-white rounded-br-sm whitespace-pre-wrap px-3 py-2'
+                            : `bg-white text-gray-800 rounded-bl-sm border border-gray-200 ${isFloat ? 'px-3 py-2.5' : 'px-4 py-3'}`
+                            }`}
+                    >
+                        {msg.role === 'assistant' ? (
+                            <>
+                                {/* ── NDJSON thinking steps ── */}
+                                {msg.thinkingSteps && msg.thinkingSteps.length > 0 && (
+                                    <div className="mb-2">
+                                        <KraiThinkingSteps
+                                            steps={msg.thinkingSteps}
+                                            isStreaming={!!msg.isStreaming}
+                                            isComplete={!msg.isStreaming}
+                                            maxPreviewLines={isFloat ? 2 : 5}
+                                        />
+                                    </div>
+                                )}
+                                {/* Verbose thinking steps (non-NDJSON) */}
+                                {(msg as any).steps && (msg as any).steps.length > 0 && !msg.thinkingSteps?.length && (
+                                    <div className="mb-2">
+                                        <button
+                                            onClick={() => setExpandedStepsIdx(expandedStepsIdx === idx ? null : idx)}
+                                            className="flex items-center gap-1 text-[10px] text-gray-500 hover:text-blue-600 transition-colors w-full"
+                                        >
+                                            <ChevronRight className={`w-3 h-3 transition-transform ${expandedStepsIdx === idx ? 'rotate-90' : ''}`} />
+                                            <Search className="w-2.5 h-2.5" />
+                                            <span>Langkah berpikir ({(msg as any).steps.length})</span>
+                                        </button>
+                                        {expandedStepsIdx === idx && (
+                                            <div className="mt-1.5 space-y-1 border-l-2 border-blue-200 pl-3">
+                                                {(msg as any).steps.map((s: any, si: number) => (
+                                                    <div key={si} className="text-[10px] leading-relaxed">
+                                                        <div className="flex items-start gap-1.5">
+                                                            <span className="flex-shrink-0 mt-0.5">
+                                                                {s.type === 'think' && <Loader2 className="w-2.5 h-2.5 text-blue-400 animate-spin" />}
+                                                                {s.type === 'tool_call' && <span className="text-amber-500">🔍</span>}
+                                                                {s.type === 'tool_result' && <span className="text-emerald-500">📊</span>}
+                                                                {s.type === 'compose' && <Brain className="w-2.5 h-2.5 text-purple-400" />}
+                                                            </span>
+                                                            <div className="flex-1 min-w-0">
+                                                                <span className="font-medium text-gray-600">{s.label}</span>
+                                                                {s.detail && <span className="text-gray-400 ml-1">— {s.detail}</span>}
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+                                {/* Loading state before answer starts */}
+                                {msg.isStreaming && !msg.content && (
+                                    <div className="flex items-center gap-1.5 text-sm text-gray-400 py-1">
+                                        <span className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-pulse" />
+                                        <span className="text-xs italic">Menulis jawaban...</span>
+                                    </div>
+                                )}
+                                {/* Answer content */}
+                                {msg.content && <AssistantMessage content={msg.content} />}
+                                {/* Streaming cursor */}
+                                {msg.isStreaming && msg.content && (
+                                    <span className="inline-block w-1.5 h-4 bg-gray-400 animate-pulse ml-0.5 align-text-bottom" />
+                                )}
+                                {/* Truncation warning */}
+                                {msg.isTruncated && !msg.isStreaming && (
+                                    <div className="text-xs text-amber-600 mt-1 flex items-center gap-1">
+                                        <AlertTriangle className="w-3 h-3" />
+                                        Jawaban terpotong karena batas token. Coba naikkan max token atau gunakan model lain.
+                                    </div>
+                                )}
+                            </>
+                        ) : (
+                            <span>{msg.content}</span>
+                        )}
+                    </div>
+
+                    {/* Footer: token usage + timestamp + model + copy (assistant) */}
+                    {msg.role === 'assistant' && msg.typed && (
+                        <div className="flex flex-col gap-1 px-1">
+                            {/* Token usage info - centered */}
+                            {msg.usage && (
+                                <div className="flex items-center justify-center gap-2 text-[9px] text-gray-400 bg-gray-50 px-2 py-1 rounded border border-gray-100">
+                                    <span className="font-mono">
+                                        <span className="text-gray-500">In:</span> <span className="font-semibold text-gray-700">{msg.usage.prompt_tokens.toLocaleString()}</span>
+                                    </span>
+                                    <span className="text-gray-300">•</span>
+                                    <span className="font-mono">
+                                        <span className="text-gray-500">Out:</span> <span className="font-semibold text-gray-700">{msg.usage.completion_tokens.toLocaleString()}</span>
+                                    </span>
+                                    <span className="text-gray-300">•</span>
+                                    <span className="font-mono">
+                                        <span className="text-gray-500">Total:</span> <span className="font-semibold text-blue-600">{msg.usage.total_tokens.toLocaleString()}</span> <span className="text-gray-400">tokens</span>
+                                    </span>
+                                </div>
+                            )}
+                            {/* Model name, timestamp, and copy button */}
+                            <div className="flex items-center justify-between gap-2 text-[10px] text-gray-400">
+                                <div className="flex items-center gap-2">
+                                    {msg.timestamp && <span>{formatTimestamp(msg.timestamp)}</span>}
+                                    {msg.model && (
+                                        <span className="inline-flex items-center gap-0.5 bg-gray-100 px-1.5 py-0.5 rounded text-gray-600">
+                                            <Brain className="w-2.5 h-2.5" />
+                                            {msg.model}
+                                        </span>
+                                    )}
+                                </div>
+                                <button
+                                    onClick={() => handleCopy(msg.content, idx)}
+                                    className="inline-flex items-center gap-0.5 hover:text-blue-600 transition-colors"
+                                    title="Salin teks"
+                                >
+                                    {copiedIdx === idx ? <Check className="w-3 h-3 text-emerald-500" /> : <Copy className="w-3 h-3" />}
+                                    <span>{copiedIdx === idx ? 'Tersalin' : 'Salin'}</span>
+                                </button>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Timestamp + Edit for user message */}
+                    {msg.role === 'user' && msg.timestamp && (
+                        <div className="flex items-center gap-2 px-1">
+                            <span className="text-[10px] text-gray-400">{formatTimestamp(msg.timestamp)}</span>
+                            <button
+                                onClick={() => {
+                                    setInputAndNotify(msg.content);
+                                    setShowModelPicker(true);
+                                    if (inputRef.current) {
+                                        inputRef.current.focus();
+                                        const len = msg.content.length;
+                                        if ('setSelectionRange' in inputRef.current) {
+                                            inputRef.current.setSelectionRange(len, len);
+                                        }
+                                    }
+                                }}
+                                disabled={loading}
+                                className="opacity-0 group-hover:opacity-100 inline-flex items-center gap-0.5 text-[10px] text-gray-400 hover:text-blue-600 transition-colors"
+                                title="Edit pesan"
+                            >
+                                <Pencil className="w-3 h-3" />
+                                Edit
+                            </button>
+                        </div>
+                    )}
+                </div>
+            </div>
+
+            {/* Follow-up suggestions */}
+            {msg.role === 'assistant' && msg.typed && msg.suggestions && msg.suggestions.length > 0 && (
+                <div className={`flex flex-col gap-1.5 ${isFloat ? 'pl-8' : 'pl-9'}`}>
+                    {msg.suggestions.map((q, qi) => {
+                        const suggKey = `${msg.timestamp || idx}-${qi}`;
+                        const isExpanded = !!expandedSugg[suggKey];
+                        const isLong = q.length > 80;
+                        return (
+                            <div
+                                key={suggKey}
+                                className={`flex items-start gap-1.5 text-xs px-3 py-2 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-xl text-blue-700 transition-colors ${isFloat ? 'max-w-[260px]' : 'max-w-md'}`}
+                            >
+                                {/* Chevron icon — click to expand/collapse */}
+                                {isLong && (
+                                    <button
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            setExpandedSugg(prev => ({ ...prev, [suggKey]: !prev[suggKey] }));
+                                        }}
+                                        className="flex-shrink-0 mt-0.5 cursor-pointer hover:bg-blue-200 rounded p-0.5 transition-colors"
+                                        aria-label={isExpanded ? 'Ciutkan' : 'Perluas'}
+                                        title={isExpanded ? 'Ciutkan' : 'Perluas'}
+                                    >
+                                        <ChevronRight className={`w-3.5 h-3.5 transition-transform duration-200 ${isExpanded ? 'rotate-90' : ''}`} />
+                                    </button>
+                                )}
+                                {!isLong && (
+                                    <ChevronRight className="w-3.5 h-3.5 flex-shrink-0 mt-0.5 text-blue-400" />
+                                )}
+                                {/* Suggestion body — click to fill input */}
+                                <button
+                                    onClick={() => handleFillInput(q)}
+                                    disabled={loading}
+                                    className="flex-1 text-left disabled:opacity-50 cursor-pointer min-w-0"
+                                >
+                                    <span className={isExpanded ? '' : 'line-clamp-2'}>{q}</span>
+                                </button>
+                            </div>
+                        );
+                    })}
+                </div>
+            )}
+        </div>
+    );
+});
+
 // ── Main component ────────────────────────────────────────────────────────────
 
 export interface AIChatCoreProps {
@@ -408,8 +655,21 @@ export default function AIChatCore({
     const [retryingIdx, setRetryingIdx] = useState<number | null>(null);
     const [editingIdx, setEditingIdx] = useState<number | null>(null);
     const [expandedStepsIdx, setExpandedStepsIdx] = useState<number | null>(null);
+    const streamStartRef = useRef(0);
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const inputRef = useRef<HTMLInputElement | HTMLTextAreaElement>(null);
+    // ── Streaming batching refs ──
+    const WORD_BATCH_SIZE = 8;
+    const FLUSH_INTERVAL_MS = 120;
+    const streamBufferRef = useRef('');
+    const flushTimerRef = useRef<number | null>(null);
+    const lastFlushRef = useRef(0);
+    // ── Auto-scroll guard refs ──
+    const scrollRef = useRef<HTMLDivElement>(null);
+    const shouldAutoScrollRef = useRef(true);
+    const rafRef = useRef<number | null>(null);
+    // ── Abort controller ref ──
+    const abortControllerRef = useRef<AbortController | null>(null);
     const onMessagesChangeRef = useRef(onMessagesChange);
     onMessagesChangeRef.current = onMessagesChange;
     const onInputChangeRef = useRef(onInputChange);
@@ -421,6 +681,62 @@ export default function AIChatCore({
     const setInputAndNotify = useCallback((val: string) => {
         setInput(val);
         inputSyncRef.current?.(val);
+    }, []);
+
+    // ── Streaming buffer helpers ──
+    const countWords = useCallback((text: string) => {
+        return text.trim().split(/\s+/).filter(Boolean).length;
+    }, []);
+
+    const flushStreamBuffer = useCallback((force = false) => {
+        const now = Date.now();
+        const buffered = streamBufferRef.current;
+        if (!buffered) return;
+        const enoughWords = countWords(buffered) >= WORD_BATCH_SIZE;
+        const enoughTime = now - lastFlushRef.current >= FLUSH_INTERVAL_MS;
+        if (!force && !enoughWords && !enoughTime) return;
+
+        const textToFlush = buffered;
+        streamBufferRef.current = '';
+        lastFlushRef.current = now;
+
+        // Batch the content update into the last assistant message
+        setMessages(prev => {
+            const next = [...prev];
+            const last = next[next.length - 1];
+            if (last?.role === 'assistant' && last.isStreaming) {
+                next[next.length - 1] = {
+                    ...last,
+                    content: last.content + textToFlush,
+                };
+            }
+            return next;
+        });
+
+        // Schedule scroll after flush
+        scheduleScrollToBottom();
+    }, [countWords]);
+
+    // ── Auto-scroll guard helpers ──
+    const isNearBottom = useCallback((el: HTMLElement, threshold = 120) => {
+        return el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
+    }, []);
+
+    const handleScroll = useCallback(() => {
+        const el = scrollRef.current;
+        if (!el) return;
+        shouldAutoScrollRef.current = isNearBottom(el);
+    }, [isNearBottom]);
+
+    const scheduleScrollToBottom = useCallback(() => {
+        if (!shouldAutoScrollRef.current) return;
+        if (rafRef.current) return;
+        rafRef.current = requestAnimationFrame(() => {
+            rafRef.current = null;
+            const el = scrollRef.current;
+            if (!el) return;
+            el.scrollTop = el.scrollHeight;
+        });
     }, []);
 
     // Sync messages with external store (e.g., conversation switch via key prop in parent)
@@ -545,9 +861,22 @@ export default function AIChatCore({
         loadConfiguredModels();
     }, [config]);
 
+    // ── Scroll effect: only initial scroll when not streaming (not on every message change) ──
     useEffect(() => {
-        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-    }, [messages, loading]);
+        if (!loading && messages.length > 0) {
+            const el = scrollRef.current;
+            if (el) el.scrollTop = el.scrollHeight;
+        }
+    }, [loading]); // Only depend on loading, not messages
+
+    // ── Cleanup on unmount: abort fetch, clear timers/RAF ──
+    useEffect(() => {
+        return () => {
+            abortControllerRef.current?.abort();
+            if (flushTimerRef.current) clearTimeout(flushTimerRef.current);
+            if (rafRef.current) cancelAnimationFrame(rafRef.current);
+        };
+    }, []);
 
     useEffect(() => {
         onMessagesChangeRef.current?.(messages);
@@ -641,12 +970,24 @@ export default function AIChatCore({
                 return { role: m.role, content: m.content };
             });
 
+            // Abort previous request if any
+            abortControllerRef.current?.abort();
+            const controller = new AbortController();
+            abortControllerRef.current = controller;
+
             // Streaming accumulators
             let accumulatedAnswer = '';
             let accumulatedThinking = '';
             let streamModel: string | undefined;
             let streamProvider: string | undefined;
             let streamUsage: ChatMessage['usage'] | undefined;
+            let chunkCount = 0;
+            let flushCount = 0;
+            streamStartRef.current = Date.now();
+
+            // Reset stream buffer for new stream
+            streamBufferRef.current = '';
+            lastFlushRef.current = 0;
 
             const updateAssistant = (patch: Partial<ChatMessage>) => {
                 setMessages(prev => {
@@ -659,6 +1000,48 @@ export default function AIChatCore({
                 });
             };
 
+            function onStreamChunk(delta: string) {
+                streamBufferRef.current += delta;
+
+                if (countWords(streamBufferRef.current) >= WORD_BATCH_SIZE) {
+                    flushStreamBuffer();
+                    return;
+                }
+
+                if (!flushTimerRef.current) {
+                    flushTimerRef.current = window.setTimeout(() => {
+                        flushTimerRef.current = null;
+                        flushStreamBuffer(true);
+                    }, FLUSH_INTERVAL_MS);
+                }
+            }
+
+            function onStreamDone() {
+                flushStreamBuffer(true); // Force flush remaining buffer
+                if (flushTimerRef.current) {
+                    clearTimeout(flushTimerRef.current);
+                    flushTimerRef.current = null;
+                }
+                abortControllerRef.current = null;
+
+                if (process.env.NODE_ENV === 'development') {
+                    console.debug('[AI Chat Stream Summary]', {
+                        chunkCount,
+                        flushCount: flushCount + 1,
+                        durationMs: Date.now() - streamStartRef.current,
+                        finalChars: accumulatedAnswer.length,
+                        finalWords: countWords(accumulatedAnswer),
+                    });
+                    console.debug('[AI Chat Layout Check]', {
+                        bodyScrollHeight: document.body.scrollHeight,
+                        viewportHeight: document.documentElement.clientHeight,
+                        bodyIsScrolling: document.body.scrollHeight > document.documentElement.clientHeight,
+                        messageContainerScrollHeight: scrollRef.current?.scrollHeight,
+                        messageContainerClientHeight: scrollRef.current?.clientHeight,
+                    });
+                }
+            }
+
             const result = await sendChat(apiMessages, memCtx, thinkingMode, !!pendingImage, activeProviderId, activeModelId, {
                 onThinking: (delta: string) => {
                     accumulatedThinking += delta;
@@ -669,11 +1052,9 @@ export default function AIChatCore({
                     });
                 },
                 onAnswer: (delta: string) => {
+                    chunkCount++;
                     accumulatedAnswer += delta;
-                    updateAssistant({
-                        content: accumulatedAnswer,
-                        isStreaming: true,
-                    });
+                    onStreamChunk(delta);
                 },
                 onUsage: (data: Record<string, unknown>) => {
                     streamUsage = {
@@ -683,6 +1064,8 @@ export default function AIChatCore({
                     };
                 },
                 onDone: (finishReason: string, isTruncated: boolean) => {
+                    flushCount++;
+                    onStreamDone();
                     const finalContent = accumulatedAnswer || 'KRAI mengalami kendala. Coba tanyakan ulang.';
                     updateAssistant({
                         content: normalizeAiText(finalContent),
@@ -700,13 +1083,14 @@ export default function AIChatCore({
                     setTimeout(() => addSuggestions(msg, finalContent), 300);
                 },
                 onError: (message: string) => {
+                    onStreamDone();
                     updateAssistant({
                         content: `KRAI mengalami kendala. Coba tanyakan ulang.`,
                         isStreaming: false,
                         typed: true,
                     });
                 },
-            });
+            }, controller.signal);
 
             // Non-streaming fallback result
             if (result !== null) {
@@ -857,12 +1241,12 @@ export default function AIChatCore({
         }
     };
 
-    const handleCopy = (text: string, idx: number) => {
+    const [copiedIdx, setCopiedIdx] = useState<number | null>(null);
+    const handleCopy = useCallback((text: string, idx: number) => {
         navigator.clipboard.writeText(text).catch(() => { });
         setCopiedIdx(idx);
         setTimeout(() => setCopiedIdx(null), 2000);
-    };
-    const [copiedIdx, setCopiedIdx] = useState<number | null>(null);
+    }, []);
 
     const handleThinkingChange = async (mode: ThinkingMode) => {
         setThinkingModeState(mode);
@@ -914,7 +1298,7 @@ export default function AIChatCore({
             {showMemory && <MemoryPanel onClose={() => setShowMemory(false)} />}
 
             {/* Message list */}
-            <div className={`flex-1 min-h-0 overflow-y-auto pb-16 md:pb-0 ${isFloat ? 'p-3 space-y-3 bg-slate-50' : 'px-4 py-4 space-y-4 bg-slate-50/50'}`}>
+            <div ref={scrollRef} onScroll={handleScroll} className={`flex-1 min-h-0 overflow-y-auto pb-16 md:pb-0 ${isFloat ? 'p-3 space-y-3 bg-slate-50' : 'px-4 py-4 space-y-4 bg-slate-50/50'}`}>
                 {/* Only show greeting in float mode - full mode has its own welcome screen */}
                 {messages.length === 0 && !loading && isFloat && (
                     <div className="text-center py-6">
@@ -929,210 +1313,24 @@ export default function AIChatCore({
                 )}
 
                 {messages.map((msg, idx) => (
-                    <div key={idx} className="space-y-1.5 group">
-                        <div className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                            {msg.role === 'assistant' && (
-                                <div className={`rounded-xl bg-blue-600 flex items-center justify-center mr-2 flex-shrink-0 mt-1 ${isFloat ? 'w-6 h-6' : 'w-7 h-7'}`}>
-                                    <Bot className={`text-white ${isFloat ? 'w-3.5 h-3.5' : 'w-4 h-4'}`} />
-                                </div>
-                            )}
-                            <div className={`flex flex-col gap-1 max-w-[85%] ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
-                                {/* Image preview (user) */}
-                                {msg.role === 'user' && msg.imageDataUrl && (
-                                    // eslint-disable-next-line @next/next/no-img-element
-                                    <img src={msg.imageDataUrl} alt="lampiran" className="rounded-lg max-w-[200px] max-h-[200px] border border-gray-200" />
-                                )}
-                                <div
-                                    className={`rounded-xl text-sm shadow-sm ${msg.role === 'user'
-                                        ? 'bg-blue-600 text-white rounded-br-sm whitespace-pre-wrap px-3 py-2'
-                                        : `bg-white text-gray-800 rounded-bl-sm border border-gray-200 ${isFloat ? 'px-3 py-2.5' : 'px-4 py-3'}`
-                                        }`}
-                                >
-                                    {msg.role === 'assistant' ? (
-                                        <>
-                                            {/* ── NDJSON thinking steps ── */}
-                                            {msg.thinkingSteps && msg.thinkingSteps.length > 0 && (
-                                                <div className="mb-2">
-                                                    <KraiThinkingSteps
-                                                        steps={msg.thinkingSteps}
-                                                        isStreaming={!!msg.isStreaming}
-                                                        isComplete={!msg.isStreaming}
-                                                        maxPreviewLines={isFloat ? 2 : 5}
-                                                    />
-                                                </div>
-                                            )}
-                                            {/* Verbose thinking steps (non-NDJSON) */}
-                                            {(msg as any).steps && (msg as any).steps.length > 0 && !msg.thinkingSteps?.length && (
-                                                <div className="mb-2">
-                                                    <button
-                                                        onClick={() => setExpandedStepsIdx(expandedStepsIdx === idx ? null : idx)}
-                                                        className="flex items-center gap-1 text-[10px] text-gray-500 hover:text-blue-600 transition-colors w-full"
-                                                    >
-                                                        <ChevronRight className={`w-3 h-3 transition-transform ${expandedStepsIdx === idx ? 'rotate-90' : ''}`} />
-                                                        <Search className="w-2.5 h-2.5" />
-                                                        <span>Langkah berpikir ({(msg as any).steps.length})</span>
-                                                    </button>
-                                                    {expandedStepsIdx === idx && (
-                                                        <div className="mt-1.5 space-y-1 border-l-2 border-blue-200 pl-3">
-                                                            {(msg as any).steps.map((s: any, si: number) => (
-                                                                <div key={si} className="text-[10px] leading-relaxed">
-                                                                    <div className="flex items-start gap-1.5">
-                                                                        <span className="flex-shrink-0 mt-0.5">
-                                                                            {s.type === 'think' && <Loader2 className="w-2.5 h-2.5 text-blue-400 animate-spin" />}
-                                                                            {s.type === 'tool_call' && <span className="text-amber-500">🔍</span>}
-                                                                            {s.type === 'tool_result' && <span className="text-emerald-500">📊</span>}
-                                                                            {s.type === 'compose' && <Brain className="w-2.5 h-2.5 text-purple-400" />}
-                                                                        </span>
-                                                                        <div className="flex-1 min-w-0">
-                                                                            <span className="font-medium text-gray-600">{s.label}</span>
-                                                                            {s.detail && <span className="text-gray-400 ml-1">— {s.detail}</span>}
-                                                                        </div>
-                                                                    </div>
-                                                                </div>
-                                                            ))}
-                                                        </div>
-                                                    )}
-                                                </div>
-                                            )}
-                                            {/* Loading state before answer starts */}
-                                            {msg.isStreaming && !msg.content && (
-                                                <div className="flex items-center gap-1.5 text-sm text-gray-400 py-1">
-                                                    <span className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-pulse" />
-                                                    <span className="text-xs italic">Menulis jawaban...</span>
-                                                </div>
-                                            )}
-                                            {/* Answer content */}
-                                            {msg.content && <AssistantMessage content={msg.content} />}
-                                            {/* Streaming cursor */}
-                                            {msg.isStreaming && msg.content && (
-                                                <span className="inline-block w-1.5 h-4 bg-gray-400 animate-pulse ml-0.5 align-text-bottom" />
-                                            )}
-                                            {/* Truncation warning */}
-                                            {msg.isTruncated && !msg.isStreaming && (
-                                                <div className="text-xs text-amber-600 mt-1 flex items-center gap-1">
-                                                    <AlertTriangle className="w-3 h-3" />
-                                                    Jawaban terpotong karena batas token. Coba naikkan max token atau gunakan model lain.
-                                                </div>
-                                            )}
-                                        </>
-                                    ) : (
-                                        <span>{msg.content}</span>
-                                    )}
-                                </div>
-
-                                {/* Footer: token usage + timestamp + model + copy (assistant) */}
-                                {msg.role === 'assistant' && msg.typed && (
-                                    <div className="flex flex-col gap-1 px-1">
-                                        {/* Token usage info - centered */}
-                                        {msg.usage && (
-                                            <div className="flex items-center justify-center gap-2 text-[9px] text-gray-400 bg-gray-50 px-2 py-1 rounded border border-gray-100">
-                                                <span className="font-mono">
-                                                    <span className="text-gray-500">In:</span> <span className="font-semibold text-gray-700">{msg.usage.prompt_tokens.toLocaleString()}</span>
-                                                </span>
-                                                <span className="text-gray-300">•</span>
-                                                <span className="font-mono">
-                                                    <span className="text-gray-500">Out:</span> <span className="font-semibold text-gray-700">{msg.usage.completion_tokens.toLocaleString()}</span>
-                                                </span>
-                                                <span className="text-gray-300">•</span>
-                                                <span className="font-mono">
-                                                    <span className="text-gray-500">Total:</span> <span className="font-semibold text-blue-600">{msg.usage.total_tokens.toLocaleString()}</span> <span className="text-gray-400">tokens</span>
-                                                </span>
-                                            </div>
-                                        )}
-                                        {/* Model name, timestamp, and copy button */}
-                                        <div className="flex items-center justify-between gap-2 text-[10px] text-gray-400">
-                                            <div className="flex items-center gap-2">
-                                                {msg.timestamp && <span>{formatTimestamp(msg.timestamp)}</span>}
-                                                {msg.model && (
-                                                    <span className="inline-flex items-center gap-0.5 bg-gray-100 px-1.5 py-0.5 rounded text-gray-600">
-                                                        <Brain className="w-2.5 h-2.5" />
-                                                        {msg.model}
-                                                    </span>
-                                                )}
-                                            </div>
-                                            <button
-                                                onClick={() => handleCopy(msg.content, idx)}
-                                                className="inline-flex items-center gap-0.5 hover:text-blue-600 transition-colors"
-                                                title="Salin teks"
-                                            >
-                                                {copiedIdx === idx ? <Check className="w-3 h-3 text-emerald-500" /> : <Copy className="w-3 h-3" />}
-                                                <span>{copiedIdx === idx ? 'Tersalin' : 'Salin'}</span>
-                                            </button>
-                                        </div>
-                                    </div>
-                                )}
-
-                                {/* Timestamp + Edit for user message */}
-                                {msg.role === 'user' && msg.timestamp && (
-                                    <div className="flex items-center gap-2 px-1">
-                                        <span className="text-[10px] text-gray-400">{formatTimestamp(msg.timestamp)}</span>
-                                        <button
-                                            onClick={() => {
-                                                setInputAndNotify(msg.content);
-                                                setShowModelPicker(true);
-                                                if (inputRef.current) {
-                                                    inputRef.current.focus();
-                                                    const len = msg.content.length;
-                                                    if ('setSelectionRange' in inputRef.current) {
-                                                        inputRef.current.setSelectionRange(len, len);
-                                                    }
-                                                }
-                                            }}
-                                            disabled={loading}
-                                            className="opacity-0 group-hover:opacity-100 inline-flex items-center gap-0.5 text-[10px] text-gray-400 hover:text-blue-600 transition-colors"
-                                            title="Edit pesan"
-                                        >
-                                            <Pencil className="w-3 h-3" />
-                                            Edit
-                                        </button>
-                                    </div>
-                                )}
-                            </div>
-                        </div>
-
-                        {/* Follow-up suggestions */}
-                        {msg.role === 'assistant' && msg.typed && msg.suggestions && msg.suggestions.length > 0 && (
-                            <div className={`flex flex-col gap-1.5 ${isFloat ? 'pl-8' : 'pl-9'}`}>
-                                {msg.suggestions.map((q, qi) => {
-                                    const suggKey = `${msg.timestamp || idx}-${qi}`;
-                                    const isExpanded = !!expandedSugg[suggKey];
-                                    const isLong = q.length > 80;
-                                    return (
-                                        <div
-                                            key={suggKey}
-                                            className={`flex items-start gap-1.5 text-xs px-3 py-2 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-xl text-blue-700 transition-colors ${isFloat ? 'max-w-[260px]' : 'max-w-md'}`}
-                                        >
-                                            {/* Chevron icon — click to expand/collapse */}
-                                            {isLong && (
-                                                <button
-                                                    onClick={(e) => {
-                                                        e.stopPropagation();
-                                                        setExpandedSugg(prev => ({ ...prev, [suggKey]: !prev[suggKey] }));
-                                                    }}
-                                                    className="flex-shrink-0 mt-0.5 cursor-pointer hover:bg-blue-200 rounded p-0.5 transition-colors"
-                                                    aria-label={isExpanded ? 'Ciutkan' : 'Perluas'}
-                                                    title={isExpanded ? 'Ciutkan' : 'Perluas'}
-                                                >
-                                                    <ChevronRight className={`w-3.5 h-3.5 transition-transform duration-200 ${isExpanded ? 'rotate-90' : ''}`} />
-                                                </button>
-                                            )}
-                                            {!isLong && (
-                                                <ChevronRight className="w-3.5 h-3.5 flex-shrink-0 mt-0.5 text-blue-400" />
-                                            )}
-                                            {/* Suggestion body — click to fill input */}
-                                            <button
-                                                onClick={() => handleFillInput(q)}
-                                                disabled={loading}
-                                                className="flex-1 text-left disabled:opacity-50 cursor-pointer min-w-0"
-                                            >
-                                                <span className={isExpanded ? '' : 'line-clamp-2'}>{q}</span>
-                                            </button>
-                                        </div>
-                                    );
-                                })}
-                            </div>
-                        )}
-                    </div>
+                    <MemoMessageItem
+                        key={idx}
+                        msg={msg}
+                        idx={idx}
+                        isFloat={isFloat}
+                        isFull={isFull}
+                        loading={loading}
+                        expandedStepsIdx={expandedStepsIdx}
+                        setExpandedStepsIdx={setExpandedStepsIdx}
+                        expandedSugg={expandedSugg}
+                        setExpandedSugg={setExpandedSugg}
+                        copiedIdx={copiedIdx}
+                        handleCopy={handleCopy}
+                        handleFillInput={handleFillInput}
+                        setInputAndNotify={setInputAndNotify}
+                        setShowModelPicker={setShowModelPicker}
+                        inputRef={inputRef}
+                    />
                 ))}
 
                 {loading && <LoadingBubble thinking={thinkingMode === 'thinking'} />}

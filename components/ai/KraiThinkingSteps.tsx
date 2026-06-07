@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useMemo, memo } from 'react'
 import { ChevronDown, Check } from 'lucide-react'
 import { sanitizeThinkingStep } from '@/lib/ai/normalizeAiText'
 
@@ -11,13 +11,15 @@ interface KraiThinkingStepsProps {
   maxPreviewLines?: number
 }
 
-export function KraiThinkingSteps({
+const MAX_VISIBLE_STEPS = 20
+
+const KraiThinkingSteps = memo(function KraiThinkingSteps({
   steps,
   isStreaming,
   isComplete,
   maxPreviewLines = 5
 }: KraiThinkingStepsProps) {
-  const [isExpanded, setIsExpanded] = useState(true)
+  const [isExpanded, setIsExpanded] = useState(false)
 
   // Filter out raw model reasoning (English chain-of-thought)
   const sanitizedSteps = useMemo(
@@ -25,16 +27,14 @@ export function KraiThinkingSteps({
     [steps],
   )
 
-  // Auto-expand while streaming, collapse when complete
-  useEffect(() => {
-    if (isStreaming) setIsExpanded(true)
-    if (isComplete && steps.length > 0) setIsExpanded(false)
-  }, [isStreaming, isComplete, steps.length])
-
   if (!sanitizedSteps.length && !isStreaming) return null
 
-  const displaySteps = isExpanded ? sanitizedSteps : sanitizedSteps.slice(0, maxPreviewLines)
-  const hasMore = sanitizedSteps.length > maxPreviewLines
+  const displaySteps = isExpanded
+    ? sanitizedSteps.slice(0, MAX_VISIBLE_STEPS)
+    : sanitizedSteps.slice(0, maxPreviewLines)
+  const hasMore = isExpanded
+    ? sanitizedSteps.length > MAX_VISIBLE_STEPS
+    : sanitizedSteps.length > maxPreviewLines
 
   return (
     <div className="bg-gray-50/50 border border-gray-100 rounded-lg overflow-hidden mb-2">
@@ -56,7 +56,7 @@ export function KraiThinkingSteps({
           {displaySteps.map((step, i) => (
             <div
               key={i}
-              className={`flex gap-2 ${isStreaming && i === sanitizedSteps.length - 1 ? 'animate-fade-in' : ''}`}
+              className={`flex gap-2 ${isStreaming && i === displaySteps.length - 1 && i === sanitizedSteps.length - 1 ? 'animate-fade-in' : ''}`}
             >
               <span className="text-gray-400 shrink-0 text-xs w-4 text-right">{i + 1}.</span>
               <p className="text-xs text-gray-600 leading-relaxed">{step}</p>
@@ -86,4 +86,6 @@ export function KraiThinkingSteps({
       )}
     </div>
   )
-}
+})
+
+export { KraiThinkingSteps }

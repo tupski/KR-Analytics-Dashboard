@@ -43,7 +43,7 @@ export default function ContentWrapper({ children }: { children: React.ReactNode
 
     return (
         <div
-            className={`flex-1 flex flex-col transition-all duration-200 ${collapsed ? 'lg:ml-16' : 'lg:ml-64'}`}
+            className={`flex min-h-0 flex-1 flex-col overflow-hidden transition-all duration-200 ${collapsed ? 'lg:ml-16' : 'lg:ml-64'}`}
         >
             {/* Mobile sticky header — placed here so it's inside the flex column */}
             <MobileHeader />

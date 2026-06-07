@@ -47,7 +47,7 @@ export async function generateMetadata(): Promise<Metadata> {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
     return (
         <html lang="id">
-            <body className={inter.className} suppressHydrationWarning>
+            <body className={`${inter.className} flex min-h-dvh flex-col overflow-hidden`} suppressHydrationWarning>
                 <NavigationProgress />
                 <ServerActionRecovery />
                 <ErrorBoundary>
