@@ -12,6 +12,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@/lib/supabase/server';
 import { fetchProviderModels } from '@/lib/ai/modelFetcher';
 import { normalizeModels } from '@/lib/ai/modelNormalizer';
+import { normalizeOpenAICompatibleBaseUrl } from '@/lib/ai/providerAdapter';
 import { decryptApiKey } from '@/lib/ai/configServer';
 import type { FetchModelsResponse } from '@/types/ai-models';
 
@@ -155,28 +156,13 @@ export async function POST(request: NextRequest) {
             } as FetchModelsResponse);
         }
 
-        // Store models in database: delete non-custom models, insert fresh fetched ones
-        // This preserves any custom models (is_custom = true) that user added manually.
+        // Store models in database: insert freshly fetched models first,
+        // then clean up stale non-custom models that are no longer in the
+        // new fetched set. This preserves custom models (is_custom = true).
+        // Cleanup is non-blocking — failure logs a warning, not an error.
         const now = new Date().toISOString();
 
-        // 1. Delete all non-custom models for this provider
-        const { error: deleteError } = await supabase
-            .from('ai_provider_models')
-            .delete()
-            .eq('provider_slug', providerId)
-            .eq('is_custom', false);
-
-        if (deleteError) {
-            console.error('[POST /api/ai/fetch-models] Delete error:', deleteError);
-            return NextResponse.json({
-                success: false,
-                models: [],
-                fetchedAt: now,
-                error: 'Gagal membersihkan model lama.',
-            } as FetchModelsResponse);
-        }
-
-        // 2. Insert freshly fetched models
+        // 1. Upsert fetched models (insert or update on model_id conflict)
         const dbRecords = normalizedModels.map((model) => ({
             provider_slug: model.providerSlug,
             provider_name: model.providerName,
@@ -192,10 +178,10 @@ export async function POST(request: NextRequest) {
 
         const { error: insertError } = await supabase
             .from('ai_provider_models')
-            .insert(dbRecords);
+            .upsert(dbRecords, { onConflict: 'provider_slug,model_id' });
 
         if (insertError) {
-            console.error('[POST /api/ai/fetch-models] Insert error:', insertError);
+            console.error('[POST /api/ai/fetch-models] Upsert error:', insertError);
             return NextResponse.json({
                 success: false,
                 models: [],
@@ -204,7 +190,42 @@ export async function POST(request: NextRequest) {
             } as FetchModelsResponse);
         }
 
-        console.log(`[POST /api/ai/fetch-models] Successfully stored ${normalizedModels.length} models for ${providerId}`);
+        // 2. Clean up stale non-custom models (those no longer returned by provider).
+        //    This is non-blocking: only models NOT in the newly fetched set are removed.
+        let cleanupError: Error | null = null;
+        let cleanupSkipped = false;
+        try {
+            const newModelIds = normalizedModels.map((m) => m.modelId);
+            const { error: deleteError } = await supabase
+                .from('ai_provider_models')
+                .delete()
+                .eq('provider_slug', providerId)
+                .eq('is_custom', false)
+                .not('model_id', 'in', `(${newModelIds.join(',')})`);
+
+            if (deleteError) {
+                cleanupError = new Error(deleteError.message);
+            }
+        } catch (err) {
+            cleanupError = err instanceof Error ? err : new Error(String(err));
+        }
+
+        if (cleanupError) {
+            console.warn('[POST /api/ai/fetch-models] Cleanup warning (non-blocking):', cleanupError.message);
+        }
+
+        // 3. Debug log
+        console.debug('[AI Models Fetch]', {
+            provider: providerId,
+            baseUrl: configData.base_url,
+            normalizedBaseUrl: configData.base_url
+                ? (() => { try { return normalizeOpenAICompatibleBaseUrl(configData.base_url); } catch { return configData.base_url; } })()
+                : undefined,
+            fetchedCount: normalizedModels.length,
+            upsertedCount: normalizedModels.length,
+            cleanupSkipped,
+            cleanupError: cleanupError?.message,
+        });
 
         return NextResponse.json({
             success: true,

@@ -11,6 +11,23 @@
  *   Anthropic        (anthropic)                                                   → Anthropic messages[]
  */
 
+// ── URL Normalization ──────────────────────────────────────────────────────────
+
+/**
+ * Normalizes a base URL for OpenAI-compatible providers.
+ * Ensures the URL ends with /v1 without double-adding it.
+ *
+ * @example
+ *   normalizeOpenAICompatibleBaseUrl('https://api.deepseek.com')     → 'https://api.deepseek.com/v1'
+ *   normalizeOpenAICompatibleBaseUrl('https://api.deepseek.com/v1')  → 'https://api.deepseek.com/v1'
+ *   normalizeOpenAICompatibleBaseUrl('https://api.deepseek.com/v1/') → 'https://api.deepseek.com/v1'
+ */
+export function normalizeOpenAICompatibleBaseUrl(url: string): string {
+    const clean = url.trim().replace(/\/+$/, '');
+    if (clean.endsWith('/v1')) return clean;
+    return `${clean}/v1`;
+}
+
 // ── Types ──────────────────────────────────────────────────────────────────────
 
 export type ProviderFormat = 'openai' | 'gemini' | 'anthropic';

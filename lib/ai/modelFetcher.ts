@@ -1,17 +1,28 @@
 /**
  * Model Fetcher
- * 
+ *
  * Fetches available models from various AI provider APIs.
  * Handles provider-specific endpoints and error cases.
- * 
+ *
  * SECURITY: This module runs server-side only. API keys are never exposed to the client.
- * 
+ *
  * P0-4 FIX: Robust empty JSON handling, proper error messages, no raw parse errors.
  */
 
 import type { FetchResult, ProviderFetchConfig } from '@/types/ai-models';
+import { normalizeOpenAICompatibleBaseUrl } from './providerAdapter';
 
 const FETCH_TIMEOUT = 10000; // 10 seconds
+
+/**
+ * DeepSeek fallback models when /models endpoint is unavailable.
+ * DeepSeek's API may not expose a /models endpoint, so we provide
+ * the well-known model IDs as a fallback.
+ */
+const DEEPSEEK_FALLBACK_MODELS = [
+    { id: 'deepseek-chat', name: 'DeepSeek Chat', provider: 'deepseek' },
+    { id: 'deepseek-reasoner', name: 'DeepSeek Reasoner', provider: 'deepseek' },
+];
 
 /**
  * Safely parse JSON from a response, handling empty/malformed bodies.
@@ -65,8 +76,8 @@ export async function fetchOpenAICompatibleModels(
     apiKey: string
 ): Promise<FetchResult> {
     try {
-        // Normalize base URL (remove trailing slash)
-        const normalizedBaseUrl = baseUrl.replace(/\/$/, '');
+        // Normalize base URL ensuring /v1 suffix for OpenAI-compatible providers
+        const normalizedBaseUrl = normalizeOpenAICompatibleBaseUrl(baseUrl);
         const url = `${normalizedBaseUrl}/models`;
 
         console.log('[fetchOpenAICompatibleModels] Fetching from:', url);
@@ -265,12 +276,32 @@ export async function fetchProviderModels(
         case 'openai-compatible':
         case 'openrouter':
         case 'groq':
-        case 'deepseek':
         case 'kiro':
             if (!baseUrl) {
                 return { success: false, error: 'Base URL diperlukan untuk provider ini.' };
             }
             return fetchOpenAICompatibleModels(baseUrl, config.apiKey);
+
+        case 'deepseek':
+            if (!baseUrl) {
+                return { success: false, error: 'Base URL diperlukan untuk provider ini.' };
+            }
+            // Try /models endpoint first; fall back to known models if unavailable
+            const deepseekResult = await fetchOpenAICompatibleModels(baseUrl, config.apiKey);
+            if (deepseekResult.success) return deepseekResult;
+
+            console.warn('[fetchProviderModels] DeepSeek /models endpoint unavailable, using fallback models');
+            return {
+                success: true,
+                data: {
+                    object: 'list',
+                    data: DEEPSEEK_FALLBACK_MODELS.map(m => ({
+                        id: m.id,
+                        object: 'model',
+                        created: Date.now() / 1000,
+                    })),
+                },
+            };
 
         default:
             if (baseUrl) {
