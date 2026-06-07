@@ -59,11 +59,29 @@ export function getEffectiveStart(tx: StayTransaction): Date {
  */
 export function getEstimatedEnd(tx: StayTransaction): Date {
     const start = getEffectiveStart(tx)
+
+    // 1. checkout_at is highest priority
     if (tx.checkout_at) {
         return new Date(tx.checkout_at)
     }
-    const hours = tx.rental_duration ?? 24
-    return new Date(start.getTime() + hours * 60 * 60 * 1000)
+
+    // 2. rental_duration if valid positive number
+    if (tx.rental_duration != null && typeof tx.rental_duration === 'number' && tx.rental_duration > 0) {
+        return new Date(start.getTime() + tx.rental_duration * 60 * 60 * 1000)
+    }
+
+    // 3. Fallback to 24 hours with dev warning
+    if (process.env.NODE_ENV === 'development') {
+        console.warn(
+            `[stays] Fallback 24h for transaction ${tx.id}: ` +
+            `no checkout_at and no rental_duration. ` +
+            `effectiveStart=${start.toISOString()}, ` +
+            `customer=${tx.customer_name ?? 'unknown'}, ` +
+            `room=${tx.apartment_location}/${tx.room_number}`
+        )
+    }
+
+    return new Date(start.getTime() + 24 * 60 * 60 * 1000)
 }
 
 /**
@@ -199,7 +217,11 @@ export async function getTodayCheckins(
     const { data, error } = await supabase
         .from('transactions')
         .select('id, created_at, checkin_at, checkout_at, rental_duration, apartment_location, room_number, customer_name, status')
-        .gte('created_at', startISO)
+        // Include transactions whose checkin_at is today, OR
+        // whose created_at is today (for transactions without checkin_at)
+        .or(
+            `checkin_at.gte.${startISO},and(checkin_at.is.null,created_at.gte.${startISO})`
+        )
 
     if (error) {
         console.error('[stays] getTodayCheckins error:', error)

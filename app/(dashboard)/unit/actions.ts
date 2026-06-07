@@ -301,31 +301,36 @@ export async function fetchUnitLastCheckins(params: {
     const supabase = await createServerClient();
     const { location, room, page = 1, pageSize = 5 } = params;
 
-    const from = (page - 1) * pageSize;
-    const to = from + pageSize - 1;
-
+    // Fetch up to 100 candidates for proper sorting
     const { data, error, count } = await supabase
         .from('transactions')
         .select('id, created_at, checkin_at, checkout_at, rental_duration, customer_name, status', { count: 'exact' })
         .eq('apartment_location', location)
         .eq('room_number', room)
         .order('created_at', { ascending: false })
-        .range(from, to);
+        .limit(100); // Fetch enough to sort properly
 
     if (error) throw error;
 
-    // Sort by effective date descending
+    // Sort ALL candidates by effective date descending
     const sorted = ((data ?? []) as UnitLastCheckin[]).sort((a: any, b: any) => {
         const dateA = new Date(a.checkin_at || a.created_at).getTime();
         const dateB = new Date(b.checkin_at || b.created_at).getTime();
         return dateB - dateA;
     });
 
+    // Now paginate the sorted result
+    const from = (page - 1) * pageSize;
+    const to = from + pageSize;
+    const pageItems = sorted.slice(from, to);
+
+    const total = count ?? sorted.length;
+
     return {
-        data: sorted,
-        total: count ?? sorted.length,
+        data: pageItems,
+        total,
         page,
         pageSize,
-        hasNext: (from + pageSize) < (count ?? sorted.length),
+        hasNext: to < total,
     };
 }
