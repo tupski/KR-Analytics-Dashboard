@@ -182,7 +182,7 @@ function parseSSEResponse(raw: string): any {
  * Merge streaming tool calls (delta format) into accumulated tool calls.
  * Handles incremental tool call construction in streaming responses.
  */
-function mergeToolCalls(existing: any[], delta: any[]): any[] {
+export function mergeToolCalls(existing: any[], delta: any[]): any[] {
     const merged = [...existing];
 
     for (const deltaCall of delta) {

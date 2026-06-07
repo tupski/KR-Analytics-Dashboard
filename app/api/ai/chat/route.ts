@@ -3,7 +3,7 @@ import { createServerClient } from '@/lib/supabase/server';
 import { format, subDays } from 'date-fns';
 import { toZonedTime } from 'date-fns-tz';
 import { OPENAI_TOOLS, ANTHROPIC_TOOLS, executeTool, type ToolCall } from '@/lib/ai/tools';
-import { parseAIResponse } from '@/lib/ai/responseParser';
+import { parseAIResponse, mergeToolCalls } from '@/lib/ai/responseParser';
 import { getHeaderSafeTitle } from '@/lib/utils/headerSafe';
 import { buildKraiSystemPrompt } from '@/lib/ai/krai-system-prompt';
 import { normalizeAiText } from '@/lib/ai/normalizeAiText';
@@ -123,6 +123,94 @@ PREFERENSI TOOLS (PENTING!):
 - "Minggu lalu" = window (today-13) s/d (today-7). "Bulan lalu" = 30 hari sebelum window sekarang.
 - Tanggal SELALU format YYYY-MM-DD.
 - Jika tools error, sebutkan data tidak tersedia - jangan asumsikan.`;
+}
+
+/**
+ * Deterministic intent routing for data questions.
+ * Analyzes the user's question and returns a tool-selection hint
+ * that's injected into the system prompt, helping the AI pick the
+ * right tool on the first attempt instead of guessing.
+ *
+ * Returns an empty string if the intent cannot be confidently determined.
+ */
+function detectDataIntent(userMessage: string): string {
+    if (!userMessage) return '';
+    const q = userMessage.toLowerCase();
+
+    // ── Dashboard / KPI overview ──────────────────────────────────
+    if (
+        q.includes('dashboard') || q.includes('ringkasan') || q.includes('overview') ||
+        q.includes('sekilas') || q.includes('hari ini') || q.includes('status') ||
+        q.includes('kpi') || q.includes('indikator')
+    ) {
+        return 'TOOL HINT: Gunakan get_dashboard_kpi_panel untuk data dashboard lengkap.';
+    }
+
+    // ── Marketing / guest source ──────────────────────────────────
+    if (
+        q.includes('marketing') || q.includes('sumber tamu') || q.includes('repeat') ||
+        q.includes('tamu kembali') || q.includes('promo') || q.includes('iklan') ||
+        q.includes('guest source') || q.includes('channel')
+    ) {
+        return 'TOOL HINT: Gunakan get_marketing_panel untuk data marketing lengkap.';
+    }
+
+    // ── Operations / occupancy / shifts ───────────────────────────
+    if (
+        q.includes('operasional') || q.includes('okupansi') || q.includes('huni') ||
+        q.includes('shift') || q.includes('karyawan') || q.includes('pegawai') ||
+        q.includes('check-in') || q.includes('checkin') || q.includes('kamar kosong') ||
+        q.includes('idle') || q.includes('staf') || q.includes('kinerja')
+    ) {
+        return 'TOOL HINT: Gunakan get_operations_panel untuk data operasional lengkap.';
+    }
+
+    // ── Finance / revenue / profit ────────────────────────────────
+    if (
+        q.includes('keuangan') || q.includes('profit') || q.includes('laba') ||
+        q.includes('rugi') || q.includes('pendapatan') || q.includes('revenue') ||
+        q.includes('pengeluaran') || q.includes('expense') || q.includes('tagihan') ||
+        q.includes('yoy') || q.includes('year over year') || q.includes('bulanan') ||
+        q.includes('tren') || q.includes('trend') || q.includes('grafik')
+    ) {
+        return 'TOOL HINT: Gunakan get_financial_panel untuk data keuangan lengkap.';
+    }
+
+    // ── Period comparison ─────────────────────────────────────────
+    if (
+        q.includes('banding') || q.includes('vs') || q.includes('dibanding') ||
+        q.includes('sebelumnya') || q.includes('kemarin') || q.includes('minggu lalu') ||
+        q.includes('bulan lalu') || q.includes('tahun lalu') || q.includes('perbandingan') ||
+        q.includes('compare')
+    ) {
+        return 'TOOL HINT: Gunakan compare_periods untuk perbandingan dua periode.';
+    }
+
+    // ── Search / lookup ───────────────────────────────────────────
+    if (
+        q.includes('cari') || q.includes('search') || q.includes('temukan') ||
+        q.includes('transaksi') || q.includes('invoice') || q.includes('nota')
+    ) {
+        return 'TOOL HINT: Gunakan search_transactions atau search_expenses untuk pencarian spesifik.';
+    }
+
+    // ── Guest history ─────────────────────────────────────────────
+    if (
+        q.includes('tamu') || q.includes('guest') || q.includes('pelanggan') ||
+        q.includes('riwayat') || q.includes('history') || q.includes('pernah menginap')
+    ) {
+        return 'TOOL HINT: Gunakan get_guest_stay_history untuk riwayat tamu.';
+    }
+
+    // ── Live status ───────────────────────────────────────────────
+    if (
+        q.includes('live') || q.includes('sekarang') || q.includes('real-time') ||
+        q.includes('saat ini') || q.includes('sedang') || q.includes('aktif')
+    ) {
+        return 'TOOL HINT: Gunakan get_live_checkins untuk status live saat ini.';
+    }
+
+    return '';
 }
 
 // =========================================================
@@ -299,7 +387,7 @@ async function runOpenAILoop(
                 role: 'tool',
                 tool_call_id: tc.id,
                 name: call.name,
-                content: JSON.stringify(result).slice(0, 12000), // cap payload
+                content: JSON.stringify(result).slice(0, 25000), // cap payload
             });
         }
     }
@@ -382,7 +470,7 @@ async function runAnthropicLoop(
             toolResults.push({
                 type: 'tool_result',
                 tool_use_id: tu.id,
-                content: JSON.stringify(result).slice(0, 12000),
+                content: JSON.stringify(result).slice(0, 25000),
             });
         }
         conversation.push({ role: 'user', content: toolResults });
@@ -571,7 +659,13 @@ Owner ingin analisis mendalam. Ambil waktu untuk:
         }
         // 'auto' → no special instruction, default behavior
 
+        // ── Data intent routing hint ───────────────────────────────────────
+        const dataIntentHint = detectDataIntent(
+            Array.isArray(messages) ? messages[messages.length - 1]?.content || '' : (body as any).message || '',
+        );
+
         const systemContent = buildKraiSystemPrompt(memoryContext, quickContext)
+            + (dataIntentHint ? '\n\n' + dataIntentHint : '')
             + (thinkingInstruction ? '\n\n' + thinkingInstruction : '');
 
         // ═══════════════════════════════════════════════════════════════════
@@ -862,10 +956,9 @@ async function runOpenAIStream(
             max_tokens: 4096,
         };
 
-        // We use streamProviderResponse for the actual API call
-        // (it handles stream: true automatically)
         let answerAccumulator = '';
-        let isToolCallIteration = false;
+        let accumulatedToolCalls: any[] = [];
+        let hasEmittedAnswer = false;
 
         try {
             for await (const chunk of streamProviderResponse(
@@ -878,16 +971,25 @@ async function runOpenAIStream(
                 if (chunk.thinkingDelta) {
                     writer.writeThinking(chunk.thinkingDelta);
                 }
+                // Accumulate tool_calls from streaming deltas
+                if (chunk.toolCallsDelta) {
+                    accumulatedToolCalls = mergeToolCalls(accumulatedToolCalls, chunk.toolCallsDelta);
+                }
                 if (chunk.contentDelta) {
                     answerAccumulator += chunk.contentDelta;
-                    // Write answer in real-time, but tool calling
-                    // is detected when there's NO content (just tool_calls)
+                    // Only emit answer deltas if this is NOT a tool-call iteration.
+                    // When tool_calls are present, content is typically empty or
+                    // just the model's text intro. We defer emitting until we know
+                    // it's a final answer (tool_calls empty after stream ends).
+                    if (accumulatedToolCalls.length === 0) {
+                        writer.writeAnswer(chunk.contentDelta);
+                        hasEmittedAnswer = true;
+                    }
                 }
                 if (chunk.usage) {
                     totalUsage = chunk.usage;
                 }
                 if (chunk.done) {
-                    // Stream ended — parse the accumulated response
                     break;
                 }
             }
@@ -904,127 +1006,60 @@ async function runOpenAIStream(
             return;
         }
 
-        // The streaming response from a tool-call enabled endpoint
-        // returns tool_calls first, then content. We need to handle
-        // the case where content is empty (tool calling) vs. final answer.
-        //
-        // Since streamProviderResponse processes SSE and yields content,
-        // a tool-call response will have empty contentDelta and the tool_calls
-        // will be in the final non-streaming chunk. We need to detect this.
-        //
-        // Strategy: if accumulated content is empty/short and we haven't
-        // finished after a tool call, treat as tool iteration.
-        // Otherwise, it's the final answer.
+        // Tool-call iteration: tool_calls detected from streaming deltas
+        if (accumulatedToolCalls.length > 0) {
+            conversation.push({
+                role: 'assistant',
+                content: answerAccumulator || '',
+                tool_calls: accumulatedToolCalls,
+            });
 
-        // Check if this was a tool-call response by making a non-streaming
-        // request with the same conversation to detect tool calls
-        // (streaming tool_calls are complex to extract from SSE)
-        if (!answerAccumulator || answerAccumulator.length < 5) {
-            // It might be a tool call — verify with a non-streaming parse
-            const detectBody = {
-                model: cfg.model,
-                messages: conversation,
-                tools: OPENAI_TOOLS,
-                tool_choice: 'auto',
-                temperature: 0.7,
-                max_tokens: 4096,
-            };
+            if (verbose) {
+                writer.writeThinking(`AI akan menggunakan ${accumulatedToolCalls.length} tool...\n`);
+            }
 
-            let toolCallDetected = false;
-            try {
-                // Quick non-streaming request just for tool call detection
-                const detectRes = await fetch(apiUrl, {
-                    method: 'POST',
-                    headers,
-                    body: JSON.stringify(detectBody),
+            for (const tc of accumulatedToolCalls) {
+                let parsedArgs: Record<string, any> = {};
+                try {
+                    parsedArgs = JSON.parse(tc.function?.arguments || '{}');
+                } catch { /* ignore */ }
+
+                const call: ToolCall = {
+                    name: tc.function?.name || '',
+                    arguments: parsedArgs,
+                };
+
+                if (verbose) {
+                    const prettyArgs = JSON.stringify(parsedArgs).slice(0, 200);
+                    writer.writeThinking(`🔍 ${call.name}(${prettyArgs})\n`);
+                }
+
+                const result = await executeTool(call);
+
+                conversation.push({
+                    role: 'tool',
+                    tool_call_id: tc.id,
+                    name: call.name,
+                    content: JSON.stringify(result).slice(0, 25000),
                 });
-
-                if (detectRes.ok) {
-                    const detectText = await detectRes.text();
-                    const detectData = parseAIResponse(detectText);
-                    const detectChoice = detectData?.choices?.[0];
-                    const detectMessage = detectChoice?.message;
-                    const toolCalls = detectMessage?.tool_calls;
-
-                    if (toolCalls && toolCalls.length > 0) {
-                        toolCallDetected = true;
-
-                        // Accumulate usage
-                        if (detectData.usage) {
-                            totalUsage = {
-                                ...totalUsage,
-                                ...(detectData.usage as Record<string, unknown>),
-                            };
-                        }
-
-                        // Execute tools
-                        conversation.push({
-                            role: 'assistant',
-                            content: detectMessage.content || '',
-                            tool_calls: toolCalls,
-                        });
-
-                        if (verbose) {
-                            writer.writeThinking(`AI akan menggunakan ${toolCalls.length} tool...\n`);
-                        }
-
-                        for (const tc of toolCalls) {
-                            let parsedArgs: Record<string, any> = {};
-                            try {
-                                parsedArgs = JSON.parse(tc.function?.arguments || '{}');
-                            } catch { /* ignore */ }
-
-                            const call: ToolCall = {
-                                name: tc.function?.name || '',
-                                arguments: parsedArgs,
-                            };
-
-                            if (verbose) {
-                                const prettyArgs = JSON.stringify(parsedArgs).slice(0, 200);
-                                writer.writeThinking(`🔍 ${call.name}(${prettyArgs})\n`);
-                            }
-
-                            const result = await executeTool(call);
-
-                            conversation.push({
-                                role: 'tool',
-                                tool_call_id: tc.id,
-                                name: call.name,
-                                content: JSON.stringify(result).slice(0, 12000),
-                            });
-                        }
-
-                        // Continue loop for next iteration
-                        continue;
-                    }
-                }
-            } catch {
-                // Non-streaming fallback
             }
 
-            if (!toolCallDetected) {
-                // No tool calls, no answer — emit what we have as answer and finish
-                if (answerAccumulator) {
-                    writer.writeAnswer(answerAccumulator);
-                } else {
-                    writer.writeAnswer('Tidak ada respons dari AI.');
-                }
-                if (totalUsage && Object.keys(totalUsage).length > 0) {
-                    writer.writeUsage(totalUsage);
-                }
-                writer.writeDone('stop');
-                return;
-            }
-        } else {
-            // We got content — this is the final answer
-            const normalized = normalizeAiText(answerAccumulator);
-            writer.writeAnswer(normalized);
-            if (totalUsage && Object.keys(totalUsage).length > 0) {
-                writer.writeUsage(totalUsage);
-            }
-            writer.writeDone('stop');
-            return;
+            // Continue loop for next iteration
+            continue;
         }
+
+        // No tool calls — emit final answer
+        if (!hasEmittedAnswer && answerAccumulator) {
+            writer.writeAnswer(answerAccumulator);
+        }
+        if (!answerAccumulator) {
+            writer.writeAnswer('Tidak ada respons dari AI.');
+        }
+        if (totalUsage && Object.keys(totalUsage).length > 0) {
+            writer.writeUsage(totalUsage);
+        }
+        writer.writeDone('stop');
+        return;
     }
 
     // Max iterations reached
@@ -1037,6 +1072,12 @@ async function runOpenAIStream(
 
 /**
  * Streaming version of runAnthropicLoop.
+ *
+ * Anthropic SSE streams tool_use blocks as content_block_start/content_block_delta
+ * events with partial JSON. Since streamProviderResponse doesn't yet reconstruct
+ * full tool_use blocks from the stream, we use a non-streaming detection call as
+ * a fallback after every streaming iteration — not just when the answer is empty.
+ * This prevents empty final answers when the model intended tool calls.
  */
 async function runAnthropicStream(
     writer: NDJSONStreamWriter,
@@ -1101,96 +1142,97 @@ async function runAnthropicStream(
             return;
         }
 
-        // Check for tool calls (Anthropic returns them in the response)
-        // Since we're streaming, we need to parse the final accumulated content
-        // For simplicity, if no answer content, make a quick non-streaming
-        // detect call, similar to runOpenAIStream
-        if (!answerAccumulator || answerAccumulator.length < 5) {
-            const detectBody = {
-                model: cfg.model,
-                max_tokens: 4096,
-                system: systemContent,
-                tools: ANTHROPIC_TOOLS,
-                messages: conversation,
-            };
+        // Non-streaming detection: verify tool calls since Anthropic SSE
+        // doesn't expose complete tool_use blocks via streamProviderResponse.
+        // Always run this check — not just when answer is empty — to avoid
+        // false "Tidak ada respons" when the model intended tool calls.
+        const detectBody = {
+            model: cfg.model,
+            max_tokens: 4096,
+            system: systemContent,
+            tools: ANTHROPIC_TOOLS,
+            messages: conversation,
+        };
 
-            try {
-                const detectRes = await fetch(
-                    cfg.baseUrl || 'https://api.anthropic.com/v1/messages',
-                    {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                            'x-api-key': cfg.apiKey,
-                            'anthropic-version': '2023-06-01',
-                        },
-                        body: JSON.stringify(detectBody),
+        let toolCallDetected = false;
+        try {
+            const detectRes = await fetch(
+                cfg.baseUrl || 'https://api.anthropic.com/v1/messages',
+                {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'x-api-key': cfg.apiKey,
+                        'anthropic-version': '2023-06-01',
                     },
-                );
+                    body: JSON.stringify(detectBody),
+                },
+            );
 
-                if (detectRes.ok) {
-                    const detectText = await detectRes.text();
-                    const detectData = JSON.parse(detectText);
-                    const blocks = detectData.content || [];
-                    const textBlocks = blocks.filter((b: any) => b.type === 'text');
-                    const toolUseBlocks = blocks.filter((b: any) => b.type === 'tool_use');
+            if (detectRes.ok) {
+                const detectText = await detectRes.text();
+                const detectData = JSON.parse(detectText);
+                const blocks = detectData.content || [];
+                const textBlocks = blocks.filter((b: any) => b.type === 'text');
+                const toolUseBlocks = blocks.filter((b: any) => b.type === 'tool_use');
 
-                    if (toolUseBlocks.length > 0) {
-                        // Tool call iteration
-                        if (detectData.usage) {
-                            totalUsage = {
-                                ...totalUsage,
-                                ...(detectData.usage as Record<string, unknown>),
-                            };
-                        }
+                if (toolUseBlocks.length > 0) {
+                    toolCallDetected = true;
 
-                        conversation.push({ role: 'assistant', content: blocks });
-
-                        const toolResults: any[] = [];
-                        for (const tu of toolUseBlocks) {
-                            const call: ToolCall = {
-                                name: tu.name,
-                                arguments: tu.input || {},
-                            };
-                            const result = await executeTool(call);
-                            toolResults.push({
-                                type: 'tool_result',
-                                tool_use_id: tu.id,
-                                content: JSON.stringify(result).slice(0, 12000),
-                            });
-                        }
-                        conversation.push({ role: 'user', content: toolResults });
-                        continue; // Loop again
+                    if (detectData.usage) {
+                        totalUsage = {
+                            ...totalUsage,
+                            ...(detectData.usage as Record<string, unknown>),
+                        };
                     }
 
-                    // No tool calls — this is the final answer
-                    const text = textBlocks.map((b: any) => b.text).join('\n').trim();
-                    if (text) {
-                        writer.writeAnswer(normalizeAiText(text));
-                        if (Object.keys(totalUsage).length > 0) {
-                            writer.writeUsage(totalUsage);
-                        }
-                        writer.writeDone('stop');
-                        return;
+                    conversation.push({ role: 'assistant', content: blocks });
+
+                    const toolResults: any[] = [];
+                    for (const tu of toolUseBlocks) {
+                        const call: ToolCall = {
+                            name: tu.name,
+                            arguments: tu.input || {},
+                        };
+                        const result = await executeTool(call);
+                        toolResults.push({
+                            type: 'tool_result',
+                            tool_use_id: tu.id,
+                            content: JSON.stringify(result).slice(0, 25000),
+                        });
                     }
+                    conversation.push({ role: 'user', content: toolResults });
+                    continue; // Loop again
                 }
-            } catch {
-                // Fallback
-            }
 
-            // No answer available
-            writer.writeAnswer('Tidak ada respons dari AI.');
+                // No tool calls — use the non-streaming text as the final answer
+                const text = textBlocks.map((b: any) => b.text).join('\n').trim();
+                if (text) {
+                    writer.writeAnswer(normalizeAiText(text));
+                    if (Object.keys(totalUsage).length > 0) {
+                        writer.writeUsage(totalUsage);
+                    }
+                    writer.writeDone('stop');
+                    return;
+                }
+            }
+        } catch {
+            // Fallback
+        }
+
+        if (!toolCallDetected) {
+            // No tool calls detected — emit streaming answer if any
+            if (answerAccumulator) {
+                writer.writeAnswer(normalizeAiText(answerAccumulator));
+            } else {
+                writer.writeAnswer('Tidak ada respons dari AI.');
+            }
+            if (Object.keys(totalUsage).length > 0) {
+                writer.writeUsage(totalUsage);
+            }
             writer.writeDone('stop');
             return;
         }
-
-        // Have answer content — final answer
-        writer.writeAnswer(normalizeAiText(answerAccumulator));
-        if (Object.keys(totalUsage).length > 0) {
-            writer.writeUsage(totalUsage);
-        }
-        writer.writeDone('stop');
-        return;
     }
 
     writer.writeAnswer('Maaf, saya butuh terlalu banyak tool calls untuk menjawab. Coba persempit pertanyaan.');

@@ -51,12 +51,14 @@ export interface ProviderResponse {
 export interface StreamChunk {
     contentDelta?: string;
     thinkingDelta?: string;
+    toolCallsDelta?: any[];
     usage?: Record<string, unknown>;
     done?: boolean;
     finishReason?: string;
 }
 
 import { normalizeAiText } from './normalizeAiText';
+import { mergeToolCalls } from './responseParser';
 
 // ── Detect format ──────────────────────────────────────────────────────────────
 
@@ -417,6 +419,11 @@ function parseOpenAISSELine(line: string): StreamChunk {
                 if (typeof msg.content === 'string' && msg.content) {
                     result.contentDelta = msg.content;
                 }
+                // Extract tool_calls from delta (streaming) — enables
+                // tool-call detection without a second non-streaming API call.
+                if (Array.isArray(msg.tool_calls)) {
+                    result.toolCallsDelta = msg.tool_calls;
+                }
             }
             if (choice.finish_reason && choice.finish_reason !== 'null') {
                 result.done = true;
@@ -623,6 +630,7 @@ export async function* streamProviderResponse(
             const chunk = parseOpenAISSELine(line);
             if (chunk.thinkingDelta) yield { thinkingDelta: chunk.thinkingDelta };
             if (chunk.contentDelta) yield { contentDelta: chunk.contentDelta };
+            if (chunk.toolCallsDelta) yield { toolCallsDelta: chunk.toolCallsDelta };
             if (chunk.usage) yield { usage: chunk.usage };
             if (chunk.done && !hasEmittedDone) {
                 hasEmittedDone = true;

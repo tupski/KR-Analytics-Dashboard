@@ -2137,142 +2137,152 @@ export const ANTHROPIC_TOOLS = OPENAI_TOOLS.map(t => ({
 }));
 
 /** Execute a single tool call. Returns the result object that should be JSON-stringified back to the LLM. */
+export const TOOL_TIMEOUT_MS = 15_000;
+
 export async function executeTool(call: ToolCall): Promise<any> {
     try {
-        switch (call.name) {
-            // ── COMPOSITE PANEL TOOLS ─────────────────────────────────────────
-            case 'get_dashboard_kpi_panel':
-                return await fetchDashboardKpiPanel(
-                    call.arguments.start_date,
-                    call.arguments.end_date,
-                    call.arguments.location,
-                );
+        const result = await Promise.race([
+            (async () => {
+                switch (call.name) {
+                    // ── COMPOSITE PANEL TOOLS ─────────────────────────────────────────
+                    case 'get_dashboard_kpi_panel':
+                        return await fetchDashboardKpiPanel(
+                            call.arguments.start_date,
+                            call.arguments.end_date,
+                            call.arguments.location,
+                        );
 
-            case 'get_marketing_panel':
-                return await fetchMarketingPanel(
-                    call.arguments.start_date,
-                    call.arguments.end_date,
-                    call.arguments.location,
-                );
+                    case 'get_marketing_panel':
+                        return await fetchMarketingPanel(
+                            call.arguments.start_date,
+                            call.arguments.end_date,
+                            call.arguments.location,
+                        );
 
-            case 'get_operations_panel':
-                return await fetchOperationsPanel(
-                    call.arguments.start_date,
-                    call.arguments.end_date,
-                    call.arguments.location,
-                );
+                    case 'get_operations_panel':
+                        return await fetchOperationsPanel(
+                            call.arguments.start_date,
+                            call.arguments.end_date,
+                            call.arguments.location,
+                        );
 
-            case 'get_financial_panel':
-                return await fetchFinancialPanel(
-                    call.arguments.start_date,
-                    call.arguments.end_date,
-                    call.arguments.location,
-                );
+                    case 'get_financial_panel':
+                        return await fetchFinancialPanel(
+                            call.arguments.start_date,
+                            call.arguments.end_date,
+                            call.arguments.location,
+                        );
 
-            // ── CORE TOOLS ──────────────────────────────────────────────────────
-            case 'compare_periods': {
-                const { a_start, a_end, b_start, b_end, location, mode, timezone } = call.arguments;
+                    // ── CORE TOOLS ──────────────────────────────────────────────────────
+                    case 'compare_periods': {
+                        const { a_start, a_end, b_start, b_end, location, mode, timezone } = call.arguments;
 
-                const [summaryA, summaryB] = await Promise.all([
-                    getCanonicalPeriodSummary({ startDate: a_start, endDate: a_end, mode, timezone }),
-                    getCanonicalPeriodSummary({ startDate: b_start, endDate: b_end, mode, timezone }),
-                ]);
+                        const [summaryA, summaryB] = await Promise.all([
+                            getCanonicalPeriodSummary({ startDate: a_start, endDate: a_end, mode, timezone }),
+                            getCanonicalPeriodSummary({ startDate: b_start, endDate: b_end, mode, timezone }),
+                        ]);
 
-                console.debug('[KRAI Tool compare_periods]', {
-                    input: { a_start, a_end, b_start, b_end, mode, timezone },
-                    periodA: {
-                        startISO: summaryA.period.startISO,
-                        endExclusiveISO: summaryA.period.endExclusiveISO,
-                    },
-                    periodB: {
-                        startISO: summaryB.period.startISO,
-                        endExclusiveISO: summaryB.period.endExclusiveISO,
-                    },
-                    revenueA: { total: summaryA.revenue.totalRevenue, count: summaryA.revenue.transactionCount },
-                    revenueB: { total: summaryB.revenue.totalRevenue, count: summaryB.revenue.transactionCount },
-                });
+                        console.debug('[KRAI Tool compare_periods]', {
+                            input: { a_start, a_end, b_start, b_end, mode, timezone },
+                            periodA: {
+                                startISO: summaryA.period.startISO,
+                                endExclusiveISO: summaryA.period.endExclusiveISO,
+                            },
+                            periodB: {
+                                startISO: summaryB.period.startISO,
+                                endExclusiveISO: summaryB.period.endExclusiveISO,
+                            },
+                            revenueA: { total: summaryA.revenue.totalRevenue, count: summaryA.revenue.transactionCount },
+                            revenueB: { total: summaryB.revenue.totalRevenue, count: summaryB.revenue.transactionCount },
+                        });
 
-                const pct = (cur: number, prev: number) => {
-                    if (prev === 0) return cur === 0 ? 0 : null;
-                    return Math.round(((cur - prev) / prev) * 10000) / 100;
-                };
+                        const pct = (cur: number, prev: number) => {
+                            if (prev === 0) return cur === 0 ? 0 : null;
+                            return Math.round(((cur - prev) / prev) * 10000) / 100;
+                        };
 
-                return {
-                    period_a: {
-                        start: summaryA.period.startISO,
-                        end: summaryA.period.endExclusiveISO,
-                        revenue: summaryA.revenue.totalRevenue,
-                        transaction_count: summaryA.revenue.transactionCount,
-                        cash_amount: summaryA.revenue.cashAmount,
-                        transfer_amount: summaryA.revenue.transferAmount,
-                        expenses: summaryA.expenses.totalAmount,
-                        net_profit: summaryA.netProfit,
-                    },
-                    period_b: {
-                        start: summaryB.period.startISO,
-                        end: summaryB.period.endExclusiveISO,
-                        revenue: summaryB.revenue.totalRevenue,
-                        transaction_count: summaryB.revenue.transactionCount,
-                        cash_amount: summaryB.revenue.cashAmount,
-                        transfer_amount: summaryB.revenue.transferAmount,
-                        expenses: summaryB.expenses.totalAmount,
-                        net_profit: summaryB.netProfit,
-                    },
-                    deltas: {
-                        revenue_change_pct: pct(summaryA.revenue.totalRevenue, summaryB.revenue.totalRevenue),
-                        expense_change_pct: pct(summaryA.expenses.totalAmount, summaryB.expenses.totalAmount),
-                        transaction_change_pct: pct(summaryA.revenue.transactionCount, summaryB.revenue.transactionCount),
-                        net_change_pct: pct(summaryA.netProfit, summaryB.netProfit),
-                        revenue_diff: summaryA.revenue.totalRevenue - summaryB.revenue.totalRevenue,
-                        expense_diff: summaryA.expenses.totalAmount - summaryB.expenses.totalAmount,
-                        transaction_diff: summaryA.revenue.transactionCount - summaryB.revenue.transactionCount,
-                    },
-                };
-            }
-            case 'get_unit_inventory':
-                return await fetchUnitInventory(call.arguments.location);
-            case 'search_transactions':
-                return await fetchSearchTransactions(
-                    call.arguments.query,
-                    call.arguments.start_date,
-                    call.arguments.end_date,
-                    call.arguments.location,
-                    call.arguments.limit || 20,
-                );
-            case 'search_expenses':
-                return await fetchSearchExpenses(
-                    call.arguments.query,
-                    call.arguments.start_date,
-                    call.arguments.end_date,
-                    call.arguments.location,
-                    call.arguments.category,
-                    call.arguments.limit || 20,
-                );
-            case 'get_live_checkins':
-                return await fetchLiveCheckins(
-                    call.arguments.location,
-                    call.arguments.limit || 50,
-                );
-            case 'get_unpaid_bills_detail':
-                return await fetchUnpaidBillsDetail(
-                    call.arguments.location,
-                    call.arguments.limit || 50,
-                );
+                        return {
+                            period_a: {
+                                start: summaryA.period.startISO,
+                                end: summaryA.period.endExclusiveISO,
+                                revenue: summaryA.revenue.totalRevenue,
+                                transaction_count: summaryA.revenue.transactionCount,
+                                cash_amount: summaryA.revenue.cashAmount,
+                                transfer_amount: summaryA.revenue.transferAmount,
+                                expenses: summaryA.expenses.totalAmount,
+                                net_profit: summaryA.netProfit,
+                            },
+                            period_b: {
+                                start: summaryB.period.startISO,
+                                end: summaryB.period.endExclusiveISO,
+                                revenue: summaryB.revenue.totalRevenue,
+                                transaction_count: summaryB.revenue.transactionCount,
+                                cash_amount: summaryB.revenue.cashAmount,
+                                transfer_amount: summaryB.revenue.transferAmount,
+                                expenses: summaryB.expenses.totalAmount,
+                                net_profit: summaryB.netProfit,
+                            },
+                            deltas: {
+                                revenue_change_pct: pct(summaryA.revenue.totalRevenue, summaryB.revenue.totalRevenue),
+                                expense_change_pct: pct(summaryA.expenses.totalAmount, summaryB.expenses.totalAmount),
+                                transaction_change_pct: pct(summaryA.revenue.transactionCount, summaryB.revenue.transactionCount),
+                                net_change_pct: pct(summaryA.netProfit, summaryB.netProfit),
+                                revenue_diff: summaryA.revenue.totalRevenue - summaryB.revenue.totalRevenue,
+                                expense_diff: summaryA.expenses.totalAmount - summaryB.expenses.totalAmount,
+                                transaction_diff: summaryA.revenue.transactionCount - summaryB.revenue.transactionCount,
+                            },
+                        };
+                    }
+                    case 'get_unit_inventory':
+                        return await fetchUnitInventory(call.arguments.location);
+                    case 'search_transactions':
+                        return await fetchSearchTransactions(
+                            call.arguments.query,
+                            call.arguments.start_date,
+                            call.arguments.end_date,
+                            call.arguments.location,
+                            call.arguments.limit || 20,
+                        );
+                    case 'search_expenses':
+                        return await fetchSearchExpenses(
+                            call.arguments.query,
+                            call.arguments.start_date,
+                            call.arguments.end_date,
+                            call.arguments.location,
+                            call.arguments.category,
+                            call.arguments.limit || 20,
+                        );
+                    case 'get_live_checkins':
+                        return await fetchLiveCheckins(
+                            call.arguments.location,
+                            call.arguments.limit || 50,
+                        );
+                    case 'get_unpaid_bills_detail':
+                        return await fetchUnpaidBillsDetail(
+                            call.arguments.location,
+                            call.arguments.limit || 50,
+                        );
 
-            case 'get_guest_stay_history':
-                return await getGuestStayHistory(
-                    call.arguments.guestName,
-                    call.arguments.startDate,
-                    call.arguments.endDate,
-                    call.arguments.location,
-                    call.arguments.roomNumber,
-                    call.arguments.fuzzyMatch,
-                    call.arguments.limit,
-                );
+                    case 'get_guest_stay_history':
+                        return await getGuestStayHistory(
+                            call.arguments.guestName,
+                            call.arguments.startDate,
+                            call.arguments.endDate,
+                            call.arguments.location,
+                            call.arguments.roomNumber,
+                            call.arguments.fuzzyMatch,
+                            call.arguments.limit,
+                        );
 
-            default:
-                return { error: `Unknown tool: ${call.name}` };
-        }
+                    default:
+                        return { error: `Unknown tool: ${call.name}` };
+                }
+            })(),
+            new Promise<never>((_, reject) =>
+                setTimeout(() => reject(new Error(`Tool ${call.name} timeout (${TOOL_TIMEOUT_MS / 1000}s)`)), TOOL_TIMEOUT_MS),
+            ),
+        ]);
+        return result;
     } catch (err: any) {
         return { error: err?.message || 'Tool execution failed' };
     }

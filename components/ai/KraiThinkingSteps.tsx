@@ -1,7 +1,8 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { ChevronDown, Check } from 'lucide-react'
+import { sanitizeThinkingStep } from '@/lib/ai/normalizeAiText'
 
 interface KraiThinkingStepsProps {
   steps: string[]
@@ -18,16 +19,22 @@ export function KraiThinkingSteps({
 }: KraiThinkingStepsProps) {
   const [isExpanded, setIsExpanded] = useState(true)
 
+  // Filter out raw model reasoning (English chain-of-thought)
+  const sanitizedSteps = useMemo(
+    () => steps.map(s => sanitizeThinkingStep(s)).filter(Boolean) as string[],
+    [steps],
+  )
+
   // Auto-expand while streaming, collapse when complete
   useEffect(() => {
     if (isStreaming) setIsExpanded(true)
     if (isComplete && steps.length > 0) setIsExpanded(false)
   }, [isStreaming, isComplete, steps.length])
 
-  if (!steps.length && !isStreaming) return null
+  if (!sanitizedSteps.length && !isStreaming) return null
 
-  const displaySteps = isExpanded ? steps : steps.slice(0, maxPreviewLines)
-  const hasMore = steps.length > maxPreviewLines
+  const displaySteps = isExpanded ? sanitizedSteps : sanitizedSteps.slice(0, maxPreviewLines)
+  const hasMore = sanitizedSteps.length > maxPreviewLines
 
   return (
     <div className="bg-gray-50/50 border border-gray-100 rounded-lg overflow-hidden mb-2">
@@ -37,7 +44,7 @@ export function KraiThinkingSteps({
       >
         <div className="flex items-center gap-1.5">
           <ChevronDown className={`w-3 h-3 transition-transform duration-200 ${isExpanded ? '' : '-rotate-90'}`} />
-          <span>🧠 Langkah KRAI {steps.length > 0 && <span className="font-medium">({steps.length})</span>}</span>
+          <span>🧠 Langkah KRAI {sanitizedSteps.length > 0 && <span className="font-medium">({sanitizedSteps.length})</span>}</span>
         </div>
         {isComplete && !isStreaming && (
           <Check className="w-3 h-3 text-emerald-500" />
@@ -49,7 +56,7 @@ export function KraiThinkingSteps({
           {displaySteps.map((step, i) => (
             <div
               key={i}
-              className={`flex gap-2 ${isStreaming && i === steps.length - 1 ? 'animate-fade-in' : ''}`}
+              className={`flex gap-2 ${isStreaming && i === sanitizedSteps.length - 1 ? 'animate-fade-in' : ''}`}
             >
               <span className="text-gray-400 shrink-0 text-xs w-4 text-right">{i + 1}.</span>
               <p className="text-xs text-gray-600 leading-relaxed">{step}</p>
@@ -60,7 +67,7 @@ export function KraiThinkingSteps({
               onClick={() => setIsExpanded(true)}
               className="text-xs text-blue-600 hover:text-blue-700 font-medium"
             >
-              Lihat semua langkah ({steps.length})
+              Lihat semua langkah ({sanitizedSteps.length})
             </button>
           )}
           {isStreaming && (
@@ -69,7 +76,7 @@ export function KraiThinkingSteps({
               <span>Sedang berpikir...</span>
             </div>
           )}
-          {isComplete && !isStreaming && steps.length > 0 && (
+          {isComplete && !isStreaming && sanitizedSteps.length > 0 && (
             <div className="text-xs text-emerald-600 flex items-center gap-1 pt-1">
               <Check className="w-3 h-3" />
               Selesai berpikir

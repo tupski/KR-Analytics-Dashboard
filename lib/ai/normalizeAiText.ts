@@ -375,3 +375,98 @@ export function isJsonWrapped(input: unknown): boolean {
     }
     return false;
 }
+
+// ─── Thinking Step Sanitizer ──────────────────────────────────────────────
+
+/**
+ * Banned phrases that indicate raw model chain-of-thought reasoning.
+ * Thinking steps containing these are filtered out from the UI.
+ * Case-insensitive matching.
+ */
+const BANNED_THINKING_PHRASES: string[] = [
+    'let me',
+    'actually',
+    'wait',
+    'i need',
+    'user is asking',
+    "i don't know",
+    'i should',
+    'looking more carefully',
+];
+
+/**
+ * Sanitize a single thinking step text.
+ * Returns null if the step is raw model reasoning (English chain-of-thought)
+ * that should be filtered out from the UI.
+ * Returns the original text if clean.
+ */
+export function sanitizeThinkingStep(step: string): string | null {
+    if (!step) return null;
+    const lower = step.toLowerCase();
+    for (const phrase of BANNED_THINKING_PHRASES) {
+        if (lower.includes(phrase.toLowerCase())) return null;
+    }
+    return step;
+}
+
+// ─── Stuck Answer Detection ───────────────────────────────────────────────
+
+/**
+ * Phrases that indicate the AI is "thinking/checking" without providing data.
+ * Answers containing ONLY these promises (and no actual data indicators)
+ * should not be shown to users.
+ */
+const STUCK_CHECKING_PHRASES: string[] = [
+    'mari saya cek',
+    'saya cek',
+    'saya akan cek',
+    'saya lihat dulu',
+    'akan saya lihat',
+    'let me check',
+    'i will check',
+    'i need to check',
+];
+
+/**
+ * Data indicators suggesting the answer contains real data,
+ * not just a promise to check. Answer must contain at least
+ * one of these to be considered non-stuck.
+ */
+const DATA_INDICATORS: string[] = [
+    'Rp',
+    '%',
+    'transaksi',
+    'kamar',
+    'lokasi',
+];
+
+/**
+ * Detect "stuck" answers — responses that promise to check
+ * but contain no actual data or findings.
+ *
+ * Returns true if the answer is just a promise/stalling message
+ * with no concrete data, and should be hidden from users.
+ */
+export function isStuckCheckingAnswer(text: string): boolean {
+    if (!text || text.length < 5) return true;
+    const lower = text.toLowerCase();
+
+    // Check for data indicators first — if present, not stuck
+    for (const indicator of DATA_INDICATORS) {
+        if (lower.includes(indicator.toLowerCase())) return false;
+    }
+
+    // Check for stuck phrases
+    let hasStuckPhrase = false;
+    for (const phrase of STUCK_CHECKING_PHRASES) {
+        if (lower.includes(phrase.toLowerCase())) {
+            hasStuckPhrase = true;
+            break;
+        }
+    }
+
+    if (!hasStuckPhrase) return false;
+
+    // Has stuck phrase but NO data indicators → stuck
+    return true;
+}

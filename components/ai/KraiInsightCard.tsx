@@ -492,11 +492,34 @@ export default function KraiInsightCard({
                     messages: [
                         {
                             role: 'user',
-                            content: `Konteks halaman: ${pageContext}\n\nBerdasarkan insight berikut:\n\n${insight}\n\nJawab pertanyaan lanjutan ini: ${userPrompt}`,
+                            content: `Konteks halaman: ${pageContext}\n\nBerdasarkan insight berikut:\n\n${insight?.slice(0, 3000) || ''}\n\nJawab pertanyaan lanjutan ini: ${userPrompt}`,
                         },
                     ],
                     config: { provider: 'auto', model: 'auto' },
                     stream: true,
+                    // ── Enhanced context payload ──────────────────────────
+                    pageContext,
+                    currentInsightText: insight?.slice(0, 3000) || '',
+                    dataSummary: dataSummary || undefined,
+                    filters: filters ? {
+                        startDate: filters.startDate,
+                        endDate: filters.endDate,
+                        comparisonStartDate: filters.comparisonStartDate,
+                        comparisonEndDate: filters.comparisonEndDate,
+                        reportPeriodMode: filters.reportPeriodMode,
+                    } : undefined,
+                    allowedTools: [
+                        'get_dashboard_kpi_panel',
+                        'get_marketing_panel',
+                        'get_operations_panel',
+                        'get_financial_panel',
+                        'compare_periods',
+                        'search_transactions',
+                        'search_expenses',
+                        'get_live_checkins',
+                        'get_guest_stay_history',
+                        'get_unpaid_bills_detail',
+                    ],
                 }),
             });
 
