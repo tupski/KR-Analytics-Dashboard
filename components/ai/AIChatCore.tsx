@@ -379,6 +379,8 @@ export interface AIChatCoreProps {
     showMemoryButton?: boolean;
     /** Show top toolbar with model selector + thinking mode (always shown in 'full', optional in 'float') */
     showTopBar?: boolean;
+    /** Called when loading state changes — parent can disable templates while streaming */
+    onLoadingChange?: (loading: boolean) => void;
 }
 
 export default function AIChatCore({
@@ -390,6 +392,7 @@ export default function AIChatCore({
     onSendRef,
     showMemoryButton = false,
     showTopBar = true,
+    onLoadingChange,
 }: AIChatCoreProps) {
     const [messages, setMessages] = useState<ChatMessage[]>(initialMessages);
     const [input, setInput] = useState(initialInput);
@@ -680,7 +683,7 @@ export default function AIChatCore({
                     };
                 },
                 onDone: (finishReason: string, isTruncated: boolean) => {
-                    const finalContent = accumulatedAnswer || 'KRAI gagal menghasilkan jawaban. Coba tanyakan ulang.';
+                    const finalContent = accumulatedAnswer || 'KRAI mengalami kendala. Coba tanyakan ulang.';
                     updateAssistant({
                         content: normalizeAiText(finalContent),
                         thinking: accumulatedThinking,
@@ -698,7 +701,7 @@ export default function AIChatCore({
                 },
                 onError: (message: string) => {
                     updateAssistant({
-                        content: `⚠️ ${message}`,
+                        content: `KRAI mengalami kendala. Coba tanyakan ulang.`,
                         isStreaming: false,
                         typed: true,
                     });
@@ -740,18 +743,25 @@ export default function AIChatCore({
                 if (lastIdx >= 0 && updated[lastIdx].role === 'assistant' && updated[lastIdx].isStreaming) {
                     updated[lastIdx] = {
                         ...updated[lastIdx],
-                        content: `⚠️ ${err.message || 'Gagal menghubungi KR·AI'}`,
+                        content: `KRAI mengalami kendala. Coba tanyakan ulang.`,
                         isStreaming: false,
                         typed: true,
                     };
                 }
                 return updated;
             });
-            setError(err.message || 'Gagal menghubungi KR·AI');
+            setError('KRAI mengalami kendala. Coba tanyakan ulang.');
         } finally {
             setLoading(false);
         }
     }, [input, pendingImage, loading, messages, thinkingMode, visionCapable, addSuggestions, activeProviderId, activeModelId, setInputAndNotify]);
+
+    // ── Notify parent of loading changes ───────────────────────────────────
+    const onLoadingChangeRef = useRef(onLoadingChange);
+    onLoadingChangeRef.current = onLoadingChange;
+    useEffect(() => {
+        onLoadingChangeRef.current?.(loading);
+    }, [loading]);
 
     /** Track expanded suggestions per index */
     const [expandedSugg, setExpandedSugg] = useState<Record<string, boolean>>({});
@@ -811,6 +821,21 @@ export default function AIChatCore({
     };
 
     const handleKeyDown = (e: React.KeyboardEvent) => {
+        // Shift+Enter → insert newline (in both float and full modes)
+        if (e.key === 'Enter' && e.shiftKey && !e.ctrlKey && !e.metaKey) {
+            e.preventDefault();
+            if ('selectionStart' in e.currentTarget) {
+                const target = e.currentTarget as HTMLTextAreaElement | HTMLInputElement;
+                const start = target.selectionStart ?? input.length;
+                const end = target.selectionEnd ?? input.length;
+                const newValue = input.substring(0, start) + '\n' + input.substring(end);
+                setInputAndNotify(newValue);
+                requestAnimationFrame(() => {
+                    target.selectionStart = target.selectionEnd = start + 1;
+                });
+            }
+            return;
+        }
         // Enter alone → send
         if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
             e.preventDefault();

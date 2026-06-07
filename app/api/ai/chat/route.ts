@@ -581,8 +581,8 @@ Owner ingin analisis mendalam. Ambil waktu untuk:
 
                 // All candidates exhausted
                 const msg = lastError
-                    ? `Gagal menghubungi AI: ${lastError.message}`
-                    : 'Tidak ada provider AI yang tersedia.';
+                    ? 'KRAI mengalami kendala. Coba tanyakan ulang.'
+                    : 'Belum ada provider AI yang dikonfigurasi. Buka Pengaturan untuk menambahkan.';
                 writer.writeError(msg);
                 writer.writeDone('error');
             });
@@ -620,7 +620,7 @@ Owner ingin analisis mendalam. Ambil waktu untuk:
                 }
                 // 401/403 = auth error (fatal, don't retry with other keys for same endpoint)
                 if (status === 401 || status === 403) {
-                    throw new Error(`${cand.label}: Auth error — periksa API key di Pengaturan.`);
+                    throw new Error(`${cand.label}: Kunci API tidak valid. Periksa kembali di Pengaturan.`);
                 }
                 // Other errors (4xx, parsing errors, etc.) → also try next unless it's the last candidate
                 if (candidates.indexOf(cand) + 1 < candidates.length) continue;
@@ -631,12 +631,12 @@ Owner ingin analisis mendalam. Ambil waktu untuk:
         // All candidates exhausted
         throw new Error(
             lastError
-                ? `Gagal menghubungi AI: ${lastError.message}`
-                : 'Tidak ada provider AI yang tersedia.',
+                ? 'KRAI mengalami kendala. Coba tanyakan ulang.'
+                : 'Belum ada provider AI yang dikonfigurasi. Buka Pengaturan untuk menambahkan.',
         );
     } catch (error: any) {
         return NextResponse.json(
-            { error: `Gagal menghubungi AI: ${error.message}` },
+            { error: 'KRAI mengalami kendala. Coba tanyakan ulang.' },
             { status: 500 },
         );
     }

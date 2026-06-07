@@ -169,7 +169,7 @@ export default function AIInsightCard({
             });
 
             if (!res.ok) {
-                setFetchError('Gagal menghubungi server insight');
+                setFetchError('KRAI mengalami kendala. Coba segarkan kembali.');
                 setLoading(false);
                 return;
             }
@@ -183,13 +183,13 @@ export default function AIInsightCard({
             }
 
             if (data.error && data.fallback) {
-                setFetchError(data.message || 'Gagal mendapatkan insight AI');
+                setFetchError(data.message || 'KRAI mengalami kendala. Coba segarkan kembali.');
                 setLoading(false);
                 return;
             }
 
             if (data.error && !data.fallback) {
-                setError(data.message || 'Gagal mendapatkan insight');
+                setError(data.message || 'KRAI mengalami kendala. Coba segarkan kembali.');
                 setLoading(false);
                 return;
             }
@@ -203,10 +203,10 @@ export default function AIInsightCard({
                 setAiEnabled(true);
                 generateDynamicSuggestions(p, msg);
             } else {
-                setFetchError('Insight kosong');
+                setFetchError('Insight belum selesai dibuat. Coba segarkan kembali.');
             }
         } catch (err: any) {
-            setFetchError(err.message || 'Gagal menghubungi server');
+            setFetchError(err.message || 'KRAI mengalami kendala. Coba segarkan kembali.');
         } finally {
             setLoading(false);
         }
@@ -294,7 +294,7 @@ export default function AIInsightCard({
                                     setFollowUpAnswer(accumulatedAnswer);
                                     break;
                                 case 'done':
-                                    setFollowUpAnswer(normalizeAiText(accumulatedAnswer || 'KRAI belum menerima jawaban...'));
+                                    setFollowUpAnswer(normalizeAiText(accumulatedAnswer || 'Insight sedang dibuat. Tunggu sebentar dulu, lalu coba lagi.'));
                                     setFollowUpThinkingSteps(splitThinkingSteps(accumulatedThinking));
                                     setFollowUpLoading(false);
                                     break;

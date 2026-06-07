@@ -38,6 +38,7 @@ export default function AIChatFullscreen({ conversationId, forceNew }: Props) {
     const [inputDraft, setInputDraft] = useState('');
     const [memoryCount, setMemoryCount] = useState(0);
     const [historyLoaded, setHistoryLoaded] = useState(false);
+    const [isStreaming, setIsStreaming] = useState(false);
 
     // Sidebar
     const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -172,6 +173,7 @@ export default function AIChatFullscreen({ conversationId, forceNew }: Props) {
 
     // ── Templates ─────────────────────────────────────────────────────────────
     const handleTemplateClick = (question: string) => {
+        if (isStreaming) return;
         window.dispatchEvent(new CustomEvent('ai-chat-send', { detail: question }));
         setSidebarOpen(false);
     };
@@ -380,7 +382,8 @@ export default function AIChatFullscreen({ conversationId, forceNew }: Props) {
                                         <button
                                             key={qi}
                                             onClick={() => handleTemplateClick(q)}
-                                            className="w-full text-left text-xs px-2.5 py-2 bg-white hover:bg-blue-50 rounded-lg text-blue-700 transition-colors flex items-start gap-1.5 leading-snug border border-blue-100"
+                                            disabled={isStreaming}
+                                            className="w-full text-left text-xs px-2.5 py-2 bg-white hover:bg-blue-50 rounded-lg text-blue-700 transition-colors flex items-start gap-1.5 leading-snug border border-blue-100 disabled:opacity-50 disabled:cursor-not-allowed"
                                         >
                                             <ChevronRight className="w-3 h-3 flex-shrink-0 mt-0.5" />
                                             <span>{q}</span>
@@ -391,7 +394,8 @@ export default function AIChatFullscreen({ conversationId, forceNew }: Props) {
                                             <button
                                                 key={qi}
                                                 onClick={() => handleTemplateClick(q)}
-                                                className="w-full text-left text-xs px-2.5 py-2 bg-white hover:bg-blue-50 rounded-lg text-blue-700 transition-colors flex items-start gap-1.5 leading-snug border border-blue-100"
+                                                disabled={isStreaming}
+                                                className="w-full text-left text-xs px-2.5 py-2 bg-white hover:bg-blue-50 rounded-lg text-blue-700 transition-colors flex items-start gap-1.5 leading-snug border border-blue-100 disabled:opacity-50 disabled:cursor-not-allowed"
                                             >
                                                 <ChevronRight className="w-3 h-3 flex-shrink-0 mt-0.5" />
                                                 <span>{q}</span>
@@ -423,6 +427,7 @@ export default function AIChatFullscreen({ conversationId, forceNew }: Props) {
                             initialInput={inputDraft}
                             onMessagesChange={handleMessagesChange}
                             onInputChange={handleInputChange}
+                            onLoadingChange={setIsStreaming}
                         />
                     )}
                 </div>
@@ -436,11 +441,13 @@ function AIChatCoreWithDispatch({
     initialInput,
     onMessagesChange,
     onInputChange,
+    onLoadingChange,
 }: {
     messages: ChatMessage[];
     initialInput?: string;
     onMessagesChange: (msgs: ChatMessage[]) => void;
     onInputChange?: (val: string) => void;
+    onLoadingChange?: (loading: boolean) => void;
 }) {
     const sendRef = useRef<((q: string) => void) | null>(null);
 
@@ -462,6 +469,7 @@ function AIChatCoreWithDispatch({
             onSendRef={sendRef}
             showMemoryButton
             showTopBar
+            onLoadingChange={onLoadingChange}
         />
     );
 }

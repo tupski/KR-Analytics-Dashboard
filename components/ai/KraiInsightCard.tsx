@@ -307,7 +307,7 @@ export default function KraiInsightCard({
 
             if (!res.ok) {
                 setStreamState('error');
-                setError('Gagal mendapatkan insight');
+                setError('KRAI mengalami kendala. Coba segarkan kembali.');
                 setLoading(false);
                 setMainStreaming(false);
                 setIsSegarkanLoading(false);
@@ -358,7 +358,7 @@ export default function KraiInsightCard({
                             error: message,
                         });
                         setStreamState('error');
-                        setError(message || 'KRAI gagal membuat insight. Coba regenerate.');
+                        setError(message || 'KRAI mengalami kendala. Coba segarkan kembali.');
                         setMainStreaming(false);
                         setLoading(false);
                         setIsSegarkanLoading(false);
@@ -397,7 +397,7 @@ export default function KraiInsightCard({
             }
             if (data.error && !data.fallback) {
                 setStreamState('error');
-                setError(data.message || 'Gagal mendapatkan insight');
+                setError(data.message || 'KRAI mengalami kendala. Coba segarkan kembali.');
                 setLoading(false);
                 setMainStreaming(false);
                 setIsSegarkanLoading(false);
@@ -412,7 +412,7 @@ export default function KraiInsightCard({
                 setStreamState('complete');
             } else {
                 setStreamState('error');
-                setError('Insight kosong');
+                setError('Insight belum selesai dibuat. Coba segarkan kembali.');
             }
         } catch (err: any) {
             // Ignore abort errors (from timeout or manual cancel)
@@ -428,7 +428,7 @@ export default function KraiInsightCard({
             }
             clearAnswerTimeout();
             setStreamState('error');
-            setError(err.message || 'Gagal menghubungi server');
+            setError(err.message || 'KRAI mengalami kendala. Coba segarkan kembali.');
         } finally {
             if (!gotAnswer) clearAnswerTimeout();
             setLoading(false);
