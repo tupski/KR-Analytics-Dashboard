@@ -15,7 +15,18 @@ import {
     fetchUnitPerformanceData,
     fetchMarketingPerformanceData,
 } from './actions';
+import {
+    getDailyRevenueTrend,
+    getProfitPerLocation,
+    getGuestSourceSummary,
+    getOccupancyPerUnit,
+    getCheckinHeatmap,
+    getLocationFullness,
+    getStayDurationSummary,
+    getRepeatGuests,
+} from '@/lib/analytics/analytics-service';
 import { generateInsights } from '@/lib/dashboard/insights';
+import { computeDateRange } from '@/lib/services/date-range';
 import type { KPICompareMode } from '@/types/dashboard';
 
 const VALID_COMPARE: KPICompareMode[] = ['yesterday', 'lastweek', 'lastmonth', 'lastyear'];
@@ -49,6 +60,11 @@ export default async function DashboardPage({
 
     const dateParams = rangePreset ? { rangePreset, startDate, endDate, comparisonMode, comparisonStartDate, comparisonEndDate } : undefined;
 
+    // Compute the actual date range for analytics
+    const analyticsRange = computeDateRange(rangePreset, startDate, endDate);
+    const analyticsStartDate = analyticsRange.start.split('T')[0];
+    const analyticsEndDate = analyticsRange.end.split('T')[0];
+
     // Fetch all dashboard data in parallel
     const [
         kpiData,
@@ -60,6 +76,14 @@ export default async function DashboardPage({
         locationHealthData,
         unitPerformanceData,
         marketingPerformanceData,
+        dailyRevenueTrend,
+        profitPerLocation,
+        guestSourceSummary,
+        occupancyPerUnit,
+        checkinHeatmap,
+        locationFullness,
+        stayDurationSummary,
+        repeatGuests,
     ] = await Promise.all([
         fetchKPIData(compareMode || undefined, dateParams),
         fetchRevenueData('daily'),
@@ -70,7 +94,18 @@ export default async function DashboardPage({
         fetchLocationHealthData(),
         fetchUnitPerformanceData(),
         fetchMarketingPerformanceData(),
+        getDailyRevenueTrend(analyticsStartDate, analyticsEndDate, null).catch(() => []),
+        getProfitPerLocation(analyticsStartDate, analyticsEndDate, null).catch(() => []),
+        getGuestSourceSummary(analyticsStartDate, analyticsEndDate, null, 10, 0).catch(() => []),
+        getOccupancyPerUnit(analyticsStartDate, analyticsEndDate, null, 10, 0).catch(() => []),
+        getCheckinHeatmap(analyticsStartDate, analyticsEndDate, null).catch(() => []),
+        getLocationFullness(analyticsStartDate, analyticsEndDate, null).catch(() => []),
+        getStayDurationSummary(analyticsStartDate, analyticsEndDate, null).catch(() => []),
+        getRepeatGuests(analyticsStartDate, analyticsEndDate, null, 10, 0).catch(() => []),
     ]);
+
+    // Compute periodLabel from URL params
+    const periodLabel = rangePreset || (startDate && endDate ? `${startDate} - ${endDate}` : '30 Hari Terakhir');
 
     // Compute data summary for contextual AI insights
     const dashboardDataSummary = {
@@ -113,7 +148,7 @@ export default async function DashboardPage({
                 <HeaderDashboard />
 
                 {/* Main Content */}
-                <main className="px-4 sm:px-6 lg:px-8 py-4 sm:py-6">
+                <main className="px-4 sm:px-6 lg:px-8 py-4 sm:py-6 pb-20">
                     {/* KraiInsightCard — collapsed by default, at very top */}
                     <div className="mb-4">
                         <KraiInsightCard
@@ -153,6 +188,17 @@ export default async function DashboardPage({
                         unitPerformanceData={unitPerformanceData}
                         marketingPerformanceData={marketingPerformanceData}
                         filterRangePreset={rangePreset}
+                        dailyRevenueTrend={dailyRevenueTrend}
+                        profitPerLocation={profitPerLocation}
+                        guestSourceSummary={guestSourceSummary}
+                        occupancyPerUnit={occupancyPerUnit}
+                        checkinHeatmap={checkinHeatmap}
+                        locationFullness={locationFullness}
+                        stayDurationSummary={stayDurationSummary}
+                        repeatGuests={repeatGuests}
+                        analyticsPeriodLabel={periodLabel}
+                        analyticsStartDate={analyticsStartDate || ''}
+                        analyticsEndDate={analyticsEndDate || ''}
                     />
                 </main>
             </div>

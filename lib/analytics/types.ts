@@ -109,3 +109,68 @@ export interface MonthlyComparison {
     paidBills: number;
     unpaidBills: number;
 }
+
+// ─── Analytics KR RPC types (1:1 with KR Supabase RPCs) ───
+
+export interface DailyRevenueTrend {
+    transaction_date: string;
+    total_revenue: number;
+    transaction_count: number;
+    avg_revenue_per_transaction: number;
+    total_count: number;
+}
+
+export interface ProfitPerLocation {
+    apartment_location: string;
+    total_revenue: number;
+    total_transactions: number;
+    avg_revenue_per_transaction: number;
+}
+
+export interface GuestSourceSummary {
+    source_name: string;
+    transaction_count: number;
+    total_revenue: number;
+    percentage: number;
+    total_count: number;
+}
+
+export interface OccupancyPerUnit {
+    room_number: string;
+    apartment_location: string;
+    total_transactions: number;
+    total_revenue: number;
+    occupancy_rate: number;
+    total_count: number;
+}
+
+export interface CheckinHeatmap {
+    hour: number;
+    transaction_count: number;
+    percentage: number;
+}
+
+export interface LocationFullness {
+    apartment_location: string;
+    total_rooms: number;
+    peak_occupancy_rate: number | null;
+    avg_occupancy_rate: number | null;
+    total_transactions: number;
+    total_count: number;
+}
+
+export interface StayDurationSummary {
+    duration_category: string;
+    transaction_count: number;
+    percentage: number;
+    total_revenue: number;
+}
+
+export interface RepeatGuest {
+    customer_name: string;
+    visit_count: number;
+    total_revenue: number;
+    first_visit: string;
+    last_visit: string;
+    total_count: number;
+}
