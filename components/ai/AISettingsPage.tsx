@@ -1312,8 +1312,8 @@ export default function AISettingsPage({ section = 'ai' }: AISettingsPageProps) 
                             <div className="flex-1">
                                 <label className="block text-xs font-medium text-gray-700 mb-1">Simpan riwayat selama</label>
                                 <div className="flex items-center gap-3">
-                                    <input type="range" min={1} max={365} value={retentionDays} onChange={e => setRetentionDays(Number(e.target.value))} className="flex-1 accent-blue-600" aria-label="Durasi penyimpanan riwayat chat dalam hari" title="Geser untuk mengatur berapa lama riwayat chat disimpan" />
-                                    <span className="text-sm font-semibold text-gray-900 w-20 text-right">{retentionDays} hari</span>
+                        <input type="number" min={0} max={365} step={1} value={retentionDays} onChange={e => setRetentionDays(Number(e.target.value))} className="w-20 px-2 py-1 border border-gray-300 rounded text-sm text-center" aria-label="Retensi Riwayat Chat KR·AI (hari)" />
+                        <span className="text-xs text-gray-500 ml-2">Retensi Riwayat Chat KR·AI (hari). Isi 0 untuk nonaktifkan penyimpanan otomatis.</span>
                                 </div>
                                 <div className="flex justify-between text-[10px] text-gray-400 mt-0.5">
                                     <span>1 hari</span>

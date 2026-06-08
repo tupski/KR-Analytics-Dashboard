@@ -138,8 +138,8 @@ export function buildRoomKey(location: string, roomNumber: string): string {
  * Fetch ALL currently active stays from Supabase.
  * Uses canonical active logic: now >= start AND now < end.
  *
- * To reduce data transfer, fetches transactions from last 7 days
- * (covers max rental duration) and filters in JS.
+ * Fetches candidates using a wide OR filter then filters in JS
+ * for correctness (timezone-aware comparison).
  */
 export async function getLiveActiveStays(
     options?: {
@@ -150,14 +150,22 @@ export async function getLiveActiveStays(
     const supabase = options?.supabase ?? createServerClient()
     const now = options?.now ?? new Date()
 
-    // Fetch enough data to cover any active stay
+    // Fetch enough data to cover any active stay (7-day lookback)
     const lookback = new Date(now)
     lookback.setDate(lookback.getDate() - 7)
+    const lookbackISO = lookback.toISOString()
+    const nowISO = now.toISOString()
 
+    // Catch ALL candidates: checkin_at recent, created_at recent, checkout_at null (still open), checkout_at future
     const { data, error } = await supabase
         .from('transactions')
         .select('id, created_at, checkin_at, checkout_at, rental_duration, apartment_location, room_number, customer_name, status')
-        .gte('created_at', lookback.toISOString())
+        .or(
+            `checkin_at.gte.${lookbackISO},` +
+            `created_at.gte.${lookbackISO},` +
+            `checkout_at.is.null,` +
+            `checkout_at.gte.${nowISO}`
+        )
         .order('created_at', { ascending: false })
 
     if (error) {
@@ -165,10 +173,50 @@ export async function getLiveActiveStays(
         return []
     }
 
+    if (process.env.NODE_ENV === 'development') {
+        console.debug('[Unit Runtime Debug]', {
+            today: nowISO,
+            lookbackStart: lookbackISO,
+            totalCandidates: data?.length ?? 0,
+            allCandidates: data?.map((tx: any) => ({
+                id: tx.id,
+                customer_name: tx.customer_name,
+                location: tx.apartment_location,
+                room_number: tx.room_number,
+                checkin_at: tx.checkin_at,
+                created_at: tx.created_at,
+                checkout_at: tx.checkout_at,
+                rental_duration: tx.rental_duration,
+            })),
+        })
+    }
+
     const active: ActiveStay[] = []
 
     for (const tx of (data ?? []) as StayTransaction[]) {
-        if (!isStayActiveNow(tx, now)) continue
+        const isActive = isStayActiveNow(tx, now)
+        
+        if (process.env.NODE_ENV === 'development') {
+            console.debug('[Stays Debug]', {
+                txId: tx.id,
+                customerName: tx.customer_name,
+                location: tx.apartment_location,
+                roomNumber: tx.room_number,
+                effectiveStart: getEffectiveStart(tx).toISOString(),
+                estimatedEnd: getEstimatedEnd(tx).toISOString(),
+                now: nowISO,
+                isActive,
+                reason: !isActive
+                    ? (tx.checkout_at
+                        ? 'checked out'
+                        : now < getEffectiveStart(tx)
+                            ? 'not yet started (future check-in)'
+                            : 'ended (past end time)')
+                    : 'ACTIVE',
+            })
+        }
+
+        if (!isActive) continue
 
         const start = getEffectiveStart(tx)
         const end = getEstimatedEnd(tx)

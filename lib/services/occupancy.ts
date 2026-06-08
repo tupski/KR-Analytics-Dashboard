@@ -552,8 +552,11 @@ async function getRoomDayUtilizationLegacy(start: string, end: string): Promise<
         if (!locationUsage[loc]) locationUsage[loc] = new Set();
 
         // Determine the effective stay range within the query window
+        // If checkout_at is null, the stay is ongoing — extend to the query range end
         const txCheckinDate = format(new Date(t.checkin_at), 'yyyy-MM-dd');
-        const txCheckoutDate = format(new Date(t.checkout_at), 'yyyy-MM-dd');
+        const txCheckoutDate = t.checkout_at
+            ? format(new Date(t.checkout_at), 'yyyy-MM-dd')
+            : endDate; // ongoing stay → treat as occupying through end of query range
 
         // Clamp to the query range
         const effectiveStart = txCheckinDate > startDate ? txCheckinDate : startDate;

@@ -1314,9 +1314,19 @@ export default function AIChatCore({
         <div className="flex flex-col h-full">
             {showMemory && <MemoryPanel onClose={() => setShowMemory(false)} />}
 
-            {/* Message list */}
-            <div className="flex-1 min-h-0 relative">
-                <div ref={scrollRef} onScroll={handleScroll} className={`absolute inset-0 overflow-y-auto overscroll-contain pb-16 md:pb-0 ${isFloat ? 'p-3 space-y-3 bg-slate-50' : 'px-4 py-4 space-y-4 bg-slate-50/50'}`}>
+            {/* Message list — no absolute positioning so wheel events are received natively */}
+            <div ref={scrollRef} onScroll={handleScroll} onWheel={(e) => {
+                if (process.env.NODE_ENV === 'development') {
+                    const el = scrollRef.current;
+                    console.debug('[AI Chat Wheel Debug]', {
+                        deltaY: e.deltaY,
+                        targetClass: (e.target as HTMLElement)?.className?.slice(0, 80),
+                        scrollTop: el?.scrollTop,
+                        scrollHeight: el?.scrollHeight,
+                        clientHeight: el?.clientHeight,
+                    });
+                }
+            }} className={`flex-1 min-h-0 overflow-y-auto overscroll-contain pb-16 md:pb-0 relative ${isFloat ? 'p-3 space-y-3 bg-slate-50' : 'px-4 py-4 space-y-4 bg-slate-50/50'}`}>
                     {/* Only show greeting in float mode - full mode has its own welcome screen */}
                     {messages.length === 0 && !loading && isFloat && (
                         <div className="text-center py-6">
@@ -1387,13 +1397,12 @@ export default function AIChatCore({
                     )}
 
                     <div ref={messagesEndRef} />
-                </div>
 
-                {/* Floating scroll-down button */}
+                {/* Floating scroll-down button — sticky inside scroll area */}
                 {showScrollDown && (
                     <button
                         onClick={scrollToBottom}
-                        className="absolute bottom-4 right-4 z-30 bg-white border border-gray-200 shadow-lg rounded-full p-2 hover:bg-gray-50 hover:shadow-xl transition-all duration-200 animate-bounce"
+                        className="sticky bottom-4 float-right z-30 bg-white border border-gray-200 shadow-lg rounded-full p-2 hover:bg-gray-50 hover:shadow-xl transition-all duration-200 animate-bounce mr-0 ml-auto block"
                         aria-label="Scroll ke bawah"
                     >
                         <ChevronDown className="w-4 h-4 text-gray-600" />

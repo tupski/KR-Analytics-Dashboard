@@ -25,6 +25,8 @@ export interface AppSettings {
     ai_insight_model?: string;
     ai_insight_cache_ttl_minutes?: string;
     ai_insight_auto_refresh?: string;
+    // System tab
+    chat_history_retention_days?: number;
 }
 
 /**
@@ -143,6 +145,10 @@ export async function updateAppSettings(settings: unknown): Promise<{
         }
         if (validatedSettings.ai_insight_auto_refresh !== undefined) {
             entries.push({ key: 'ai_insight_auto_refresh', value: validatedSettings.ai_insight_auto_refresh });
+        }
+        // System tab — chat history retention
+        if (validatedSettings.chat_history_retention_days !== undefined) {
+            entries.push({ key: 'chat_history_retention_days', value: String(validatedSettings.chat_history_retention_days) });
         }
 
         for (const entry of entries) {

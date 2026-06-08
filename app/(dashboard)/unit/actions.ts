@@ -8,6 +8,7 @@ import { getReportPeriodSetting } from '@/lib/get-report-period-setting';
 import {
     getLiveActiveStays,
     getLocationActiveSummaries,
+    getTodayCheckins,
     buildRoomKey,
     getEffectiveStart,
     getEstimatedEnd,
@@ -90,15 +91,31 @@ export async function fetchUnits(
             ? computeDateRange(dateParams.rangePreset, dateParams.startDate, dateParams.endDate, mode)
             : getDateRange(dateFilter, mode);
 
-        // ── Step 1: Get canonical active stays (point-in-time) ──
-        const activeStays = await getLiveActiveStays({ supabase });
+        // ── Step 1: Get canonical active stays (point-in-time) AND today check-ins ──
+        const [activeStays, todayCheckins] = await Promise.all([
+            getLiveActiveStays({ supabase }),
+            getTodayCheckins({ supabase }),
+        ]);
 
         // Deduplicate by room — keep first (latest, since stays are sorted descending)
+        // Include both active stays AND today check-ins
         const latestPerRoom = new Map<string, string>(); // roomKey → customerName
+        const todayCheckinRooms = new Set<string>(); // rooms with booking/checkin today
+
         for (const stay of activeStays) {
             const key = buildRoomKey(stay.location, stay.roomNumber);
             if (!latestPerRoom.has(key)) {
                 latestPerRoom.set(key, stay.customerName ?? '-');
+            }
+        }
+
+        // Mark rooms with today check-ins (not yet active but booked today)
+        for (const tx of todayCheckins) {
+            const key = buildRoomKey(tx.apartment_location, tx.room_number);
+            todayCheckinRooms.add(key);
+            // Only set guest name if not already set by active stay
+            if (!latestPerRoom.has(key)) {
+                latestPerRoom.set(key, tx.customer_name ?? '-');
             }
         }
 
@@ -109,6 +126,19 @@ export async function fetchUnits(
         if (process.env.NODE_ENV === 'development') {
             console.debug('[Unit] Location summaries:', JSON.stringify(summaries, null, 2));
             console.debug('[Unit] Active stays:', JSON.stringify(activeStays, null, 2));
+            console.debug('[Unit] Today check-ins:', JSON.stringify(
+                todayCheckins.map(tx => ({
+                    id: tx.id,
+                    customer_name: tx.customer_name,
+                    location: tx.apartment_location,
+                    room_number: tx.room_number,
+                    checkin_at: tx.checkin_at,
+                    created_at: tx.created_at,
+                })),
+                null, 2
+            ));
+            console.debug('[Unit] Today checkin rooms:', [...todayCheckinRooms]);
+            console.debug('[Unit] latestPerRoom count:', latestPerRoom.size);
 
             const bintaroSummary = summaries.find(s => s.location.includes('Bintaro'));
             if (bintaroSummary) {
@@ -116,6 +146,10 @@ export async function fetchUnits(
                 console.debug(
                     '[Unit Debug] Active stays for Bintaro:',
                     activeStays.filter(s => s.location.includes('Bintaro')),
+                );
+                console.debug(
+                    '[Unit Debug] Today check-ins for Bintaro:',
+                    todayCheckins.filter(tx => tx.apartment_location?.includes('Bintaro')),
                 );
             }
         }
@@ -178,10 +212,22 @@ export async function fetchUnits(
             }))
             .sort((a, b) => b.occupancyRate - a.occupancyRate);
 
-        // ── Step 6: Top-level counts — computed from canonical summaries ──
+        // ── Step 6: Top-level counts — merge canonical summaries with today check-ins ──
         const totalUnits = summaries.reduce((sum, s) => sum + s.totalRooms, 0);
-        const occupiedToday = summaries.reduce((sum, s) => sum + s.occupiedRooms, 0);
-        const availableToday = summaries.reduce((sum, s) => sum + s.availableRooms, 0);
+        
+        // Count rooms that are EITHER live-active OR have a today check-in
+        const occupiedRoomKeys = new Set<string>();
+        // From canonical summaries (live active stays)
+        for (const stay of activeStays) {
+            occupiedRoomKeys.add(buildRoomKey(stay.location, stay.roomNumber));
+        }
+        // From today check-ins (bookings/check-ins today, may not be active yet)
+        for (const tx of todayCheckins) {
+            occupiedRoomKeys.add(buildRoomKey(tx.apartment_location, tx.room_number));
+        }
+        
+        const occupiedToday = occupiedRoomKeys.size;
+        const availableToday = totalUnits - occupiedToday;
 
         return {
             units,

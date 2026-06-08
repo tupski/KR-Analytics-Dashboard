@@ -38,7 +38,7 @@ export const AppSettingsSchema = z.object({
         .min(1, { message: 'Timezone tidak boleh kosong' })
         .optional(),
     sidebar_behavior: z
-        .enum(['default', 'collapsed', 'auto'] as const)
+        .enum(['default', 'collapsed', 'auto', 'collapse', 'hidden'] as const)
         .optional(),
     compact_display: z
         .enum(['true', 'false'] as const)
@@ -58,6 +58,13 @@ export const AppSettingsSchema = z.object({
         .optional(),
     ai_insight_auto_refresh: z
         .enum(['true', 'false'] as const)
+        .optional(),
+    // System tab — chat history retention
+    chat_history_retention_days: z.coerce
+        .number()
+        .int()
+        .min(0, { message: 'Minimal 0 hari' })
+        .max(365, { message: 'Maksimal 365 hari' })
         .optional(),
 });
 
