@@ -47,6 +47,7 @@ export interface LocationReport {
     transactions: number;
     revenue: number;
     rooms: RoomReport[];
+    totalExpenses: number;
 }
 
 export interface RoomReport {
@@ -106,6 +107,7 @@ export interface LaporanData {
     expenses: ExpenseReport[];
     totalExpenses: number;
     expensesPerLocation: Record<string, { category: string; total: number; count: number }[]>;
+    roomExpensesMap?: Record<string, { hasExpenses: boolean; count: number; total: number }>;
     // Tagihan
     tagihan: TagihanReport;
     // Fee Marketing
@@ -214,22 +216,29 @@ export async function fetchLaporanData(
     const endDate = new Date(end);
     const periodDays = Math.max(1, Math.ceil((endDate.getTime() - startDate.getTime()) / 86400000));
 
-    const locations: LocationReport[] = Object.entries(locMap)
-        .map(([name, data]) => ({
-            name,
-            totalRooms: roomsByLocation[name]?.length || 0,
-            transactions: data.transactions,
-            revenue: data.revenue,
-            rooms: Object.entries(data.rooms)
-                .map(([roomNumber, rd]) => ({
+    const locations: LocationReport[] = Object.entries(roomsByLocation)
+        .map(([name, roomList]) => {
+            const locData = locMap[name] || { transactions: 0, revenue: 0, rooms: {} };
+            const rooms: RoomReport[] = roomList.map(roomNumber => {
+                const rd = locData.rooms[roomNumber] || { tx: 0, rev: 0 };
+                return {
                     roomNumber,
                     location: name,
                     transactions: rd.tx,
                     revenue: rd.rev,
                     occupancyRate: Math.min(100, Math.round((rd.tx / periodDays) * 100)),
-                }))
-                .sort((a, b) => b.transactions - a.transactions),
-        }))
+                };
+            }).sort((a, b) => b.transactions - a.transactions);
+
+            return {
+                name,
+                totalRooms: roomList.length,
+                transactions: locData.transactions,
+                revenue: locData.revenue,
+                rooms,
+                totalExpenses: 0,
+            };
+        })
         .sort((a, b) => b.revenue - a.revenue);
 
     // ── EXPENSES (analytics-first, legacy Supabase fallback) ──
@@ -278,6 +287,9 @@ export async function fetchLaporanData(
 
     // expensesPerLocation: keep legacy Supabase (shape mismatch with analytics byLocation)
     const expPerLocation: Record<string, { category: string; total: number; count: number }[]> = {};
+    // Room-level expense map + location-level expense totals
+    const roomExpensesMap: Record<string, { hasExpenses: boolean; count: number; total: number }> = {};
+    const locationTotalExpenses: Record<string, number> = {};
     {
         const { data: expenseLocData } = await supabase
             .from('pengeluaran')
@@ -295,8 +307,26 @@ export async function fetchLaporanData(
                 if (existing) { existing.total += e.jumlah || 0; existing.count++; }
                 else expPerLocation[loc].push({ category: cat, total: e.jumlah || 0, count: 1 });
             }
+            // Build room-level expense map
+            if (e.room_number && e.apartment_location) {
+                const key = `${e.apartment_location}|${e.room_number}`;
+                if (!roomExpensesMap[key]) roomExpensesMap[key] = { hasExpenses: false, count: 0, total: 0 };
+                roomExpensesMap[key].hasExpenses = true;
+                roomExpensesMap[key].count++;
+                roomExpensesMap[key].total += e.jumlah || 0;
+            }
+            // Build location-level expense total
+            if (loc) {
+                locationTotalExpenses[loc] = (locationTotalExpenses[loc] || 0) + (e.jumlah || 0);
+            }
         });
     }
+
+    // Merge location total expenses into location reports
+    const locationsWithExpenses = locations.map(loc => ({
+        ...loc,
+        totalExpenses: locationTotalExpenses[loc.name] || 0,
+    }));
 
     // ── TAGIHAN BULANAN (analytics-first for month-aligned, legacy Supabase fallback) ──
     let tagihan: TagihanReport = {
@@ -494,10 +524,11 @@ export async function fetchLaporanData(
         totalTransactions,
         totalCash,
         totalTransfer,
-        locations,
+        locations: locationsWithExpenses,
         expenses,
         totalExpenses,
         expensesPerLocation: expPerLocation,
+        roomExpensesMap,
         tagihan,
         feeMarketing,
         comparison,
@@ -543,7 +574,7 @@ export async function fetchRoomExpenses(location: string, roomNumber: string, fi
 
     const { data } = await supabase
         .from('pengeluaran')
-        .select('id, nama_pengeluaran, jumlah, tanggal, keterangan, apartment_location, room_number')
+        .select('id, nama_pengeluaran, jumlah, tanggal, keterangan, apartment_location, room_number, category')
         .eq('apartment_location', location)
         .eq('room_number', roomNumber)
         .gte('tanggal', start.split('T')[0])
@@ -559,6 +590,7 @@ export async function fetchRoomExpenses(location: string, roomNumber: string, fi
         keterangan: e.keterangan,
         apartmentLocation: e.apartment_location,
         roomNumber: e.room_number,
+        category: e.category,
     }));
 }
 
@@ -585,6 +617,7 @@ export interface ExpenseDetail {
     keterangan: string | null;
     apartmentLocation: string | null;
     roomNumber: string | null;
+    category: string | null;
 }
 
 export type ExpenseSortKey = 'tanggal' | 'jumlah' | 'nama_pengeluaran' | 'apartment_location';
@@ -620,7 +653,7 @@ export async function fetchExpenseDetailsByCategory(
 
     let query = supabase
         .from('pengeluaran')
-        .select('id, nama_pengeluaran, jumlah, tanggal, keterangan, apartment_location, room_number', { count: 'exact' })
+        .select('id, nama_pengeluaran, jumlah, tanggal, keterangan, apartment_location, room_number, category', { count: 'exact' })
         .gte('tanggal', start.split('T')[0])
         .lte('tanggal', end.split('T')[0]);
 
@@ -648,6 +681,7 @@ export async function fetchExpenseDetailsByCategory(
             keterangan: e.keterangan,
             apartmentLocation: e.apartment_location,
             roomNumber: e.room_number,
+            category: e.category,
         })),
         total: count || 0,
         page: safePage,

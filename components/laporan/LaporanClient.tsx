@@ -10,6 +10,7 @@ import {
     X,
     Clock,
     User,
+    ChevronDown,
 } from 'lucide-react';
 import MetricCardHorizontal from '@/components/dashboard/MetricCardHorizontal';
 import type { LaporanData, RoomDetail, ExpenseDetail } from '@/app/(dashboard)/laporan/actions';
@@ -28,6 +29,7 @@ export default function LaporanClient({ data, highOccupancy }: LaporanClientProp
     const [roomExpenses, setRoomExpenses] = useState<ExpenseDetail[]>([]);
     const [loadingDetails, setLoadingDetails] = useState(false);
     const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
+    const [expandedCats, setExpandedCats] = useState<Set<string>>(new Set());
     const [activeLocation, setActiveLocation] = useState<string | null>(null);
     const locationRefs = useRef<Record<string, HTMLDivElement | null>>({});
     const locationKeys = useRef<string[]>(data.locations.map(l => l.name));
@@ -239,6 +241,16 @@ export default function LaporanClient({ data, highOccupancy }: LaporanClientProp
                                 Transaksi: <strong>{loc.transactions}</strong> · Pendapatan: <strong className="text-green-700">{formatCurrencyCompactIDR(loc.revenue)}</strong>
                             </div>
 
+                            {/* Expenses per location total */}
+                            <div className="bg-red-50/50 rounded-lg px-3 sm:px-4 py-2 mb-3 text-xs sm:text-sm">
+                                Pengeluaran {loc.name}:{" "}
+                                {loc.totalExpenses > 0 ? (
+                                    <strong className="text-red-700">{formatCurrencyCompactIDR(loc.totalExpenses)}</strong>
+                                ) : (
+                                    <span className="text-gray-400">{formatCurrencyCompactIDR(loc.totalExpenses)}</span>
+                                )}
+                            </div>
+
                             {/* Expenses per location */}
                             {data.expensesPerLocation[loc.name] && data.expensesPerLocation[loc.name].length > 0 && (
                                 <div className="bg-red-50/50 rounded-lg px-3 sm:px-4 py-3 mb-3 sm:mb-4">
@@ -255,17 +267,27 @@ export default function LaporanClient({ data, highOccupancy }: LaporanClientProp
 
                             {/* Room cards */}
                             <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-3 gap-2 sm:gap-3">
-                                {loc.rooms.map(room => (
-                                    <button
-                                        key={room.roomNumber}
-                                        onClick={() => openRoomDetail(loc.name, room.roomNumber)}
-                                        className="text-left bg-white border border-gray-200 rounded-lg p-3 sm:p-4 hover:border-blue-300 hover:shadow-md transition-all"
-                                    >
-                                        <p className="font-bold text-gray-900 text-base sm:text-lg truncate">{room.roomNumber}</p>
-                                        <p className="text-xs sm:text-sm text-gray-600">Digunakan: <strong>{room.transactions}x</strong></p>
-                                        <p className="text-xs sm:text-sm text-green-700 truncate">Pendapatan: <strong>{formatCurrencyCompactIDR(room.revenue)}</strong></p>
-                                    </button>
-                                ))}
+                                {loc.rooms.map(room => {
+                                    const roomExpenseKey = `${loc.name}|${room.roomNumber}`;
+                                    const hasExpense = data.roomExpensesMap?.[roomExpenseKey];
+                                    return (
+                                        <button
+                                            key={room.roomNumber}
+                                            onClick={() => openRoomDetail(loc.name, room.roomNumber)}
+                                            className="text-left bg-white border border-gray-200 rounded-lg p-3 sm:p-4 hover:border-blue-300 hover:shadow-md transition-all"
+                                        >
+                                            <p className="font-bold text-gray-900 text-base sm:text-lg truncate">{room.roomNumber}</p>
+                                            <p className="text-xs sm:text-sm text-gray-600">Digunakan: <strong>{room.transactions}x</strong></p>
+                                            <p className="text-xs sm:text-sm text-green-700 truncate">Pendapatan: <strong>{formatCurrencyCompactIDR(room.revenue)}</strong></p>
+                                            {hasExpense && (
+                                                <span className="inline-flex items-center gap-1 text-[10px] text-red-600 mt-1">
+                                                    <span className="w-1.5 h-1.5 rounded-full bg-red-500" />
+                                                    Pengeluaran: {formatCurrencyCompactIDR(hasExpense.total)}
+                                                </span>
+                                            )}
+                                        </button>
+                                    );
+                                })}
                             </div>
                         </div>
                     ))}
@@ -325,37 +347,53 @@ export default function LaporanClient({ data, highOccupancy }: LaporanClientProp
                                         </strong>
                                     </div>
 
-                                    {/* Room-level expenses */}
-                                    {roomExpenses.length > 0 && (
-                                        <div className="bg-red-50/50 rounded-lg px-3 sm:px-4 py-3">
-                                            <p className="text-[10px] sm:text-xs font-semibold text-red-700 uppercase mb-2">Pengeluaran Unit Ini</p>
-                                            <div className="space-y-1.5">
-                                                {(() => {
-                                                    const catMap: Record<string, { total: number; count: number; items: typeof roomExpenses }> = {};
-                                                    roomExpenses.forEach(e => {
-                                                        const cat = e.namaPengeluaran || 'Lainnya';
-                                                        if (!catMap[cat]) catMap[cat] = { total: 0, count: 0, items: [] };
-                                                        catMap[cat].total += e.jumlah;
-                                                        catMap[cat].count++;
-                                                        catMap[cat].items.push(e);
-                                                    });
-                                                    return Object.entries(catMap)
-                                                        .sort((a, b) => b[1].total - a[1].total)
-                                                        .map(([cat, d]) => (
-                                                            <div key={cat} className="text-xs text-gray-700 border-b border-red-100 pb-1 last:border-0 last:pb-0">
-                                                                <span>{cat}: <strong className="text-red-700">{formatCurrency(d.total)}</strong> ({d.count}x)</span>
-                                                                {d.items.map(item => (
-                                                                    <div key={item.id} className="ml-2 text-[11px] text-gray-500 flex justify-between">
-                                                                        <span>{new Date(item.tanggal + 'T00:00:00').toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' })}</span>
-                                                                        <span>{formatCurrency(item.jumlah)}</span>
-                                                                    </div>
-                                                                ))}
-                                                            </div>
-                                                        ));
-                                                })()}
+                                    {/* Room-level expenses grouped by category — collapsible */}
+                                    {roomExpenses.length > 0 && (() => {
+                                        // Group by category
+                                        const catGroups = new Map<string, ExpenseDetail[]>();
+                                        roomExpenses.forEach(e => {
+                                            const cat = e.category || e.namaPengeluaran || 'Lainnya';
+                                            if (!catGroups.has(cat)) catGroups.set(cat, []);
+                                            catGroups.get(cat)!.push(e);
+                                        });
+
+                                        return (
+                                            <div className="bg-red-50/50 rounded-lg px-3 sm:px-4 py-3">
+                                                <p className="text-[10px] sm:text-xs font-semibold text-red-700 uppercase mb-2">Pengeluaran Unit Ini</p>
+                                                <div className="space-y-1">
+                                                    {Array.from(catGroups.entries())
+                                                        .sort((a, b) => b[1].reduce((s, e) => s + e.jumlah, 0) - a[1].reduce((s, e) => s + e.jumlah, 0))
+                                                        .map(([cat, items]) => {
+                                                            const total = items.reduce((s, e) => s + e.jumlah, 0);
+                                                            const isExpanded = expandedCats.has(cat);
+                                                            return (
+                                                                <div key={cat} className="border-b border-red-100 pb-1 last:border-0 last:pb-0">
+                                                                    <button
+                                                                        onClick={() => {
+                                                                            setExpandedCats(prev => {
+                                                                                const next = new Set(prev);
+                                                                                next.has(cat) ? next.delete(cat) : next.add(cat);
+                                                                                return next;
+                                                                            });
+                                                                        }}
+                                                                        className="w-full flex items-center justify-between text-xs text-gray-700 py-1"
+                                                                    >
+                                                                        <span>{cat}: <strong className="text-red-700">{formatCurrency(total)}</strong> ({items.length}x)</span>
+                                                                        <ChevronDown className={`w-3.5 h-3.5 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
+                                                                    </button>
+                                                                    {isExpanded && items.map(item => (
+                                                                        <div key={item.id} className="ml-2 text-[11px] text-gray-500 flex justify-between py-0.5">
+                                                                            <span>{new Date(item.tanggal + 'T00:00:00').toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' })}</span>
+                                                                            <span>{formatCurrency(item.jumlah)}</span>
+                                                                        </div>
+                                                                    ))}
+                                                                </div>
+                                                            );
+                                                        })}
+                                                </div>
                                             </div>
-                                        </div>
-                                    )}
+                                        );
+                                    })()}
                                     {roomDetails.map(detail => (
                                         <div key={detail.id} className="border border-gray-200 rounded-xl p-4 space-y-2">
                                             <p className="text-xs text-gray-500">

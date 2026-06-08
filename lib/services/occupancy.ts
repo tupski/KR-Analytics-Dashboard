@@ -1,4 +1,4 @@
-import { format, subDays, eachDayOfInterval } from 'date-fns';
+import { format, subDays, eachDayOfInterval, addDays } from 'date-fns';
 import { createServerClient } from '@/lib/supabase/server';
 import { queryAnalytics } from '@/lib/analytics/db';
 import {
@@ -292,14 +292,19 @@ export async function getDailyOccupancyTrend(days: number = 30): Promise<DailyOc
                 // If analytics_occupancy_daily has no data for today, fallback to raw analytics mirror
                 if (dateKey === todayKey && !byDate.has(dateKey)) {
                     try {
-                        const dayStart = `${todayKey}T00:00:00`;
-                        const dayEnd = `${todayKey}T23:59:59`;
+                        // Use stay-span overlap: checkin < endOfToday AND (checkout > startOfToday OR checkout IS NULL)
+                        // Captures multi-night stays, same-day transits, active stays, etc.
+                        const nextDayStr = format(addDays(new Date(todayKey + 'T00:00:00'), 1), 'yyyy-MM-dd');
+                        const dayStartISO = `${todayKey}T00:00:00+07:00`;
+                        const nextDayISO = `${nextDayStr}T00:00:00+07:00`;
+
                         const fallbackRows = await queryAnalytics<any>(`
                             SELECT DISTINCT t.room_number, t.apartment_location
                             FROM transactions t
-                            WHERE (COALESCE(t.checkin_at, t.created_at) AT TIME ZONE 'Asia/Jakarta')::date = $1::date
+                            WHERE t.checkin_at < $2::timestamptz
+                              AND (t.checkout_at IS NULL OR t.checkout_at > $1::timestamptz)
                               AND (t.is_deleted = false OR t.is_deleted IS NULL)
-                        `, [todayKey]);
+                        `, [dayStartISO, nextDayISO]);
                         const occupiedToday = new Set(
                             (fallbackRows || []).map((r: any) => `${r.apartment_location}-${r.room_number}`)
                         ).size;
