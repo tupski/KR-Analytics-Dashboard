@@ -19,7 +19,6 @@ export interface StayTransaction {
     apartment_location: string
     room_number: string
     customer_name: string | null
-    status?: string | null
     // Allow extra fields
     [key: string]: unknown
 }
@@ -159,7 +158,7 @@ export async function getLiveActiveStays(
     // Catch ALL candidates: checkin_at recent, created_at recent, checkout_at null (still open), checkout_at future
     const { data, error } = await supabase
         .from('transactions')
-        .select('id, created_at, checkin_at, checkout_at, rental_duration, apartment_location, room_number, customer_name, status')
+        .select('id, created_at, checkin_at, checkout_at, rental_duration, apartment_location, room_number, customer_name')
         .or(
             `checkin_at.gte.${lookbackISO},` +
             `created_at.gte.${lookbackISO},` +
@@ -195,7 +194,7 @@ export async function getLiveActiveStays(
 
     for (const tx of (data ?? []) as StayTransaction[]) {
         const isActive = isStayActiveNow(tx, now)
-        
+
         if (process.env.NODE_ENV === 'development') {
             console.debug('[Stays Debug]', {
                 txId: tx.id,
@@ -264,7 +263,7 @@ export async function getTodayCheckins(
 
     const { data, error } = await supabase
         .from('transactions')
-        .select('id, created_at, checkin_at, checkout_at, rental_duration, apartment_location, room_number, customer_name, status')
+        .select('id, created_at, checkin_at, checkout_at, rental_duration, apartment_location, room_number, customer_name')
         // Include transactions whose checkin_at is today, OR
         // whose created_at is today (for transactions without checkin_at)
         .or(
@@ -285,6 +284,60 @@ export async function getTodayCheckins(
     return items.filter((tx) => {
         const start = getEffectiveStart(tx)
         return start >= todayStart && start < todayEnd
+    })
+}
+
+// ============================================================
+// Today check-out helper
+// ============================================================
+
+/**
+ * Fetch transactions whose effective checkout falls within today (WIB).
+ * Uses COALESCE(checkout_at, derived_checkout_at) for effective end time.
+ * Calendar-day boundaries via getReportPeriodRange.
+ * JS-side filtering for correctness.
+ */
+export async function getTodayCheckouts(
+    options?: {
+        supabase?: ServerSupabaseClient
+        now?: Date
+    }
+): Promise<StayTransaction[]> {
+    const supabase = options?.supabase ?? createServerClient()
+    const now = options?.now ?? new Date()
+
+    // Calendar-day boundaries for today in WIB
+    const range = getReportPeriodRange({ preset: 'today', mode: 'calendar_day' })
+    const startISO = range.startISO
+    const endExclusiveISO = range.endExclusiveISO
+
+    // Wide filter: checkout_at >= startISO OR potential checkout today (active stays)
+    const { data, error } = await supabase
+        .from('transactions')
+        .select('id, created_at, checkin_at, checkout_at, rental_duration, apartment_location, room_number, customer_name')
+        .or(
+            `checkout_at.gte.${startISO},` +
+            `and(checkout_at.is.null,checkin_at.gte.${startISO})`
+        )
+
+    if (error) {
+        console.error('[stays] getTodayCheckouts error:', error)
+        return []
+    }
+
+    const items = (data ?? []) as StayTransaction[]
+    const todayStart = new Date(startISO)
+    const todayEnd = new Date(endExclusiveISO)
+
+    return items.filter((tx) => {
+        // Derive effective end: checkout_at OR checkin_at + rental_duration hours
+        const effectiveEnd = tx.checkout_at
+            ? new Date(tx.checkout_at)
+            : tx.checkin_at
+                ? new Date(new Date(tx.checkin_at).getTime() + (tx.rental_duration ?? 24) * 60 * 60 * 1000)
+                : null
+        if (!effectiveEnd) return false
+        return effectiveEnd >= todayStart && effectiveEnd < todayEnd
     })
 }
 

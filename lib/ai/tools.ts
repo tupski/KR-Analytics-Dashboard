@@ -558,7 +558,7 @@ async function fetchLatestStatus(): Promise<LatestStatus> {
     // Today's transactions — use COALESCE(checkin_at, created_at) wide filter
     const { data: todayTx, count: txCount } = await supabase
         .from('transactions')
-        .select('cash_amount, transfer_amount, status, checkin_at, created_at', { count: 'exact' })
+        .select('cash_amount, transfer_amount, checkin_at, created_at', { count: 'exact' })
         .or(`checkin_at.gte.${dayStart},and(checkin_at.is.null,created_at.gte.${dayStart})`);
 
     // Active stays (currently checked-in) — use COALESCE for checkin
@@ -759,7 +759,6 @@ function mapTxToFlexibleSearchItem(tx: any): Record<string, unknown> {
         checkinAt: tx.checkin_at || tx.created_at || null,
         checkoutAt: tx.checkout_at || null,
         revenue: (tx.cash_amount || 0) + (tx.transfer_amount || 0),
-        status: tx.status || null,
         rentalDuration: tx.rental_duration || null,
         marketingName: tx.marketing_name || null,
     };
