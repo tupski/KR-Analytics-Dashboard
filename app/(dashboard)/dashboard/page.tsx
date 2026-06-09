@@ -16,12 +16,8 @@ import {
     fetchMarketingPerformanceData,
 } from './actions';
 import {
-    getDailyRevenueTrend,
-    getProfitPerLocation,
     getGuestSourceSummary,
     getOccupancyPerUnit,
-    getCheckinHeatmap,
-    getLocationFullness,
     getStayDurationSummary,
     getRepeatGuests,
 } from '@/lib/analytics/analytics-service';
@@ -76,12 +72,8 @@ export default async function DashboardPage({
         locationHealthData,
         unitPerformanceData,
         marketingPerformanceData,
-        dailyRevenueTrend,
-        profitPerLocation,
         guestSourceSummary,
         occupancyPerUnit,
-        checkinHeatmap,
-        locationFullness,
         stayDurationSummary,
         repeatGuests,
     ] = await Promise.all([
@@ -94,12 +86,8 @@ export default async function DashboardPage({
         fetchLocationHealthData(),
         fetchUnitPerformanceData(),
         fetchMarketingPerformanceData(),
-        getDailyRevenueTrend(analyticsStartDate, analyticsEndDate, null).catch(() => []),
-        getProfitPerLocation(analyticsStartDate, analyticsEndDate, null).catch(() => []),
         getGuestSourceSummary(analyticsStartDate, analyticsEndDate, null, 10, 0).catch(() => []),
         getOccupancyPerUnit(analyticsStartDate, analyticsEndDate, null, 10, 0).catch(() => []),
-        getCheckinHeatmap(analyticsStartDate, analyticsEndDate, null).catch(() => []),
-        getLocationFullness(analyticsStartDate, analyticsEndDate, null).catch(() => []),
         getStayDurationSummary(analyticsStartDate, analyticsEndDate, null).catch(() => []),
         getRepeatGuests(analyticsStartDate, analyticsEndDate, null, 10, 0).catch(() => []),
     ]);
@@ -188,12 +176,8 @@ export default async function DashboardPage({
                         unitPerformanceData={unitPerformanceData}
                         marketingPerformanceData={marketingPerformanceData}
                         filterRangePreset={rangePreset}
-                        dailyRevenueTrend={dailyRevenueTrend}
-                        profitPerLocation={profitPerLocation}
                         guestSourceSummary={guestSourceSummary}
                         occupancyPerUnit={occupancyPerUnit}
-                        checkinHeatmap={checkinHeatmap}
-                        locationFullness={locationFullness}
                         stayDurationSummary={stayDurationSummary}
                         repeatGuests={repeatGuests}
                         analyticsPeriodLabel={periodLabel}

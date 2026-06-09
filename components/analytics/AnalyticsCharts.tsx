@@ -1,16 +1,12 @@
 'use client';
 
 import {
-    AreaChart, Area, BarChart, Bar, PieChart, Pie, Cell, ComposedChart,
-    XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, Line,
+    BarChart, Bar, PieChart, Pie, Cell,
+    XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from 'recharts';
 import type {
-    DailyRevenueTrend,
-    ProfitPerLocation,
     GuestSourceSummary,
     OccupancyPerUnit,
-    CheckinHeatmap,
-    LocationFullness,
     StayDurationSummary,
     RepeatGuest,
 } from '@/lib/analytics/types';
@@ -19,17 +15,11 @@ import { formatDateValue, formatChartDate } from '@/lib/utils/date-format';
 // ─── Props ───────────────────────────────────────────────────────────
 
 interface AnalyticsChartsProps {
-    dailyRevenueTrend: DailyRevenueTrend[];
-    profitPerLocation: ProfitPerLocation[];
     guestSourceSummary: GuestSourceSummary[];
     occupancyPerUnit: OccupancyPerUnit[];
-    checkinHeatmap: CheckinHeatmap[];
-    locationFullness: LocationFullness[];
     stayDurationSummary: StayDurationSummary[];
     repeatGuests: RepeatGuest[];
     periodLabel: string;
-    startDate: string;
-    endDate: string;
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────
@@ -47,50 +37,9 @@ function formatPercent(value: number): string {
     return value.toFixed(1) + '%';
 }
 
-function formatCompactCurrency(value: number): string {
-    if (value >= 1_000_000_000) {
-        return `Rp ${(value / 1_000_000_000).toFixed(1)} M`;
-    }
-    if (value >= 1_000_000) {
-        return `Rp ${(value / 1_000_000).toFixed(1)} Jt`;
-    }
-    if (value >= 1_000) {
-        return `Rp ${(value / 1_000).toFixed(0)} rb`;
-    }
-    return `Rp ${value}`;
-}
+
 
 // ─── Custom Tooltips ─────────────────────────────────────────────────
-
-function DailyRevenueTooltip({ active, payload, label }: any) {
-    if (!active || !payload?.length) return null;
-    const d = payload[0]?.payload;
-    return (
-        <div className="bg-white p-3 border border-gray-200 rounded-lg shadow-lg text-xs">
-            <p className="font-semibold text-gray-900 mb-1">{formatChartDate(label)}</p>
-            <p className="text-blue-600">Pendapatan: {formatIDR(d.total_revenue)}</p>
-            <p className="text-gray-600">Transaksi: {d.transaction_count}</p>
-            <p className="text-gray-600">
-                Rata-rata: {d.avg_revenue_per_transaction ? formatIDR(d.avg_revenue_per_transaction) : '—'}
-            </p>
-        </div>
-    );
-}
-
-function ProfitLocationTooltip({ active, payload, label }: any) {
-    if (!active || !payload?.length) return null;
-    const d = payload[0]?.payload;
-    return (
-        <div className="bg-white p-3 border border-gray-200 rounded-lg shadow-lg text-xs">
-            <p className="font-semibold text-gray-900 mb-1">{label}</p>
-            <p className="text-blue-600">Pendapatan: {formatIDR(d.total_revenue)}</p>
-            <p className="text-gray-600">Transaksi: {d.total_transactions}</p>
-            <p className="text-gray-600">
-                Rata-rata/Transaksi: {d.avg_revenue_per_transaction ? formatIDR(d.avg_revenue_per_transaction) : '—'}
-            </p>
-        </div>
-    );
-}
 
 function GuestSourceTooltip({ active, payload, label }: any) {
     if (!active || !payload?.length) return null;
@@ -165,12 +114,8 @@ function SectionCard({ title, children }: { title: string; children: React.React
 // ═══════════════════════════════════════════════════════════════════
 
 export default function AnalyticsCharts({
-    dailyRevenueTrend,
-    profitPerLocation,
     guestSourceSummary,
     occupancyPerUnit,
-    checkinHeatmap,
-    locationFullness,
     stayDurationSummary,
     repeatGuests,
     periodLabel,

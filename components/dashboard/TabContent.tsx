@@ -1,7 +1,8 @@
 'use client';
 
-import { useMemo } from 'react';
-import MetricCardHorizontal from './MetricCardHorizontal';
+import { useState, useMemo } from 'react';
+import ClickableKpiCard from './ClickableKpiCard';
+import KpiDetailModal from './KpiDetailModal';
 import GrafikPendapatan from './GrafikPendapatan';
 import GrafikOkupansi from './GrafikOkupansi';
 import CheckinHariIni from './CheckinHariIni';
@@ -12,18 +13,14 @@ import AdvancedAnalyticsSection from './AdvancedAnalyticsSection';
 import type { KPIData, KPICompareMode, LocationHealthItem, MarketingPerformanceItem, DashboardInsight } from '@/types/dashboard';
 import type { UnitPerformanceData } from '@/lib/dashboard/unit-performance';
 import type {
-    DailyRevenueTrend,
-    ProfitPerLocation,
     GuestSourceSummary,
     OccupancyPerUnit,
-    CheckinHeatmap,
-    LocationFullness,
     StayDurationSummary,
     RepeatGuest,
 } from '@/lib/analytics/types';
-import { Calendar, DollarSign, TrendingUp, Home, Clock, MapPin } from 'lucide-react';
-import { formatCurrencyCompactIDR, formatCurrency } from '@/lib/utils/format';
-import MoneyValue from '@/components/shared/MoneyValue';
+import { DollarSign, Calendar, TrendingUp, Home, Clock, MapPin } from 'lucide-react';
+import { formatCurrencyCompactIDR } from '@/lib/utils/format';
+import type { KpiModalVariant, RevenueDetailData, BookingDetailData, OccupancyDetailData, AvailableDetailData } from './KpiDetailModal';
 
 // ─── Dynamic card titles ───────────────────────────────────────
 
@@ -104,12 +101,8 @@ interface TabContentProps {
         activeChannels: number;
     };
     filterRangePreset?: string; // for dynamic card titles
-    dailyRevenueTrend?: DailyRevenueTrend[];
-    profitPerLocation?: ProfitPerLocation[];
     guestSourceSummary?: GuestSourceSummary[];
     occupancyPerUnit?: OccupancyPerUnit[];
-    checkinHeatmap?: CheckinHeatmap[];
-    locationFullness?: LocationFullness[];
     stayDurationSummary?: StayDurationSummary[];
     repeatGuests?: RepeatGuest[];
     analyticsPeriodLabel?: string;
@@ -134,24 +127,20 @@ export default function TabContent({
     unitPerformanceData,
     marketingPerformanceData,
     filterRangePreset,
-    dailyRevenueTrend,
-    profitPerLocation,
     guestSourceSummary,
     occupancyPerUnit,
-    checkinHeatmap,
-    locationFullness,
     stayDurationSummary,
     repeatGuests,
     analyticsPeriodLabel,
     analyticsStartDate,
     analyticsEndDate,
 }: TabContentProps) {
-    const change = kpiData.change;
+    // ── Modal state ────────────────────────────────────────────
+    const [modalVariant, setModalVariant] = useState<KpiModalVariant | null>(null);
 
-    // Compute busy hour distribution from checkins data
+    // ── Computed data ──────────────────────────────────────────
     const busyHours = useMemo(() => computeBusyHours(checkinsData), [checkinsData]);
 
-    // Compute occupancy per location from locationHealthData
     const locOccupancy = useMemo(() =>
         locationHealthData.map(loc => ({
             location: loc.location,
@@ -163,64 +152,68 @@ export default function TabContent({
         [locationHealthData],
     );
 
-    const trendFor =
-        (pct: number | null | undefined, def: 'flat'): 'up' | 'down' | 'flat' =>
-            pct == null ? def : pct >= 0 ? 'up' : 'down';
+    // ── Modal data builders ────────────────────────────────────
+    const revenueModalData: RevenueDetailData = {
+        totalRevenue: kpiData.revenueToday,
+        cashAmount: kpiData.cashAmount ?? 0,
+        transferAmount: kpiData.transferAmount ?? 0,
+        transactionCount: kpiData.transactionCount ?? 0,
+    };
+
+    const bookingModalData: BookingDetailData = {
+        bookingCount: kpiData.bookingToday,
+        checkinToday: checkinsData.length,
+        checkoutToday: checkoutsData.length,
+    };
+
+    const occupancyModalData: OccupancyDetailData = {
+        occupancyRate: kpiData.avgOccupancy,
+        totalUnits: kpiData.totalUnits ?? kpiData.availableUnits + (kpiData.occupiedUnits ?? 0),
+        occupiedUnits: kpiData.occupiedUnits ?? (kpiData.totalUnits ?? 0) - kpiData.availableUnits,
+        locationBreakdown: kpiData.locationBreakdown ?? [],
+    };
+
+    const availableModalData: AvailableDetailData = {
+        availableUnits: kpiData.availableUnits,
+        occupiedUnits: kpiData.occupiedUnits ?? (kpiData.totalUnits ?? 0) - kpiData.availableUnits,
+        totalUnits: kpiData.totalUnits ?? 0,
+    };
 
     return (
         <div className="space-y-6">
-            {/* KPI Cards — MetricCardHorizontal bento grid */}
+            {/* KPI Cards — clickable, mobile-first 2-col, desktop 4-col */}
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
-                <MetricCardHorizontal
+                <ClickableKpiCard
                     icon={<Calendar className="w-5 h-5" />}
                     title={getCardTitle('Booking', filterRangePreset)}
                     value={kpiData.bookingToday}
-                    comparisonValue={kpiData.prev?.booking}
-                    deltaAmount={
-                        change?.bookingChangePct != null
-                            ? String(kpiData.bookingToday - (kpiData.prev?.booking || 0))
-                            : undefined
-                    }
-                    deltaPercentage={change?.bookingChangePct ?? undefined}
-                    trend={trendFor(change?.bookingChangePct, 'flat')}
-                    comparisonLabel={kpiData.prev?.label}
-                    isComparisonActive={!!kpiData.prev}
+                    subtitle="Check-in tercatat hari ini"
                     semanticType="booking"
+                    onClick={() => setModalVariant('booking')}
                 />
-                <MetricCardHorizontal
+                <ClickableKpiCard
                     icon={<DollarSign className="w-5 h-5" />}
                     title={getCardTitle('Pendapatan', filterRangePreset)}
                     value={formatCurrencyCompactIDR(kpiData.revenueToday)}
-                    subtitle={kpiData.revenueToday >= 1000000 ? formatCurrency(kpiData.revenueToday) : undefined}
-                    comparisonValue={kpiData.prev?.revenue ? formatCurrencyCompactIDR(kpiData.prev.revenue) : undefined}
-                    deltaAmount={
-                        change?.revenueChangePct != null
-                            ? formatCurrencyCompactIDR(kpiData.revenueToday - (kpiData.prev?.revenue || 0))
-                            : undefined
-                    }
-                    deltaPercentage={change?.revenueChangePct ?? undefined}
-                    trend={trendFor(change?.revenueChangePct, 'flat')}
-                    comparisonLabel={kpiData.prev?.label}
-                    isComparisonActive={!!kpiData.prev}
+                    subtitle={kpiData.transactionCount != null ? `${kpiData.transactionCount} transaksi` : undefined}
                     semanticType="revenue"
+                    onClick={() => setModalVariant('revenue')}
                 />
-                <MetricCardHorizontal
+                <ClickableKpiCard
                     icon={<TrendingUp className="w-5 h-5" />}
                     title={getCardTitle('Okupansi', filterRangePreset)}
-                    value={`${kpiData.avgOccupancy.toFixed(2)}%`}
-                    comparisonValue={kpiData.prev?.avgOccupancy ? `${kpiData.prev.avgOccupancy.toFixed(2)}%` : undefined}
-                    deltaPercentage={change?.occupancyChangePct ?? undefined}
-                    trend={trendFor(change?.occupancyChangePct, 'flat')}
-                    comparisonLabel={kpiData.prev?.label}
-                    isComparisonActive={!!kpiData.prev}
+                    value={`${kpiData.avgOccupancy.toFixed(1)}%`}
+                    subtitle={kpiData.totalUnits != null ? `${kpiData.occupiedUnits ?? '-'} dari ${kpiData.totalUnits} unit terisi` : undefined}
                     semanticType="occupancy"
+                    onClick={() => setModalVariant('occupancy')}
                 />
-                <MetricCardHorizontal
+                <ClickableKpiCard
                     icon={<Home className="w-5 h-5" />}
                     title={getCardTitle('Unit Tersedia', filterRangePreset)}
                     value={kpiData.availableUnits}
-                    isComparisonActive={false}
+                    subtitle={kpiData.totalUnits != null ? `${kpiData.occupiedUnits ?? '-'} ditempati dari ${kpiData.totalUnits} unit` : undefined}
                     semanticType="neutral"
+                    onClick={() => setModalVariant('available')}
                 />
             </div>
 
@@ -371,6 +364,38 @@ export default function TabContent({
                 unitPerformanceData={unitPerformanceData}
                 marketingPerformanceData={marketingPerformanceData}
                 periodLabel={analyticsPeriodLabel || '30 Hari Terakhir'}
+            />
+
+            {/* ══════════════════════════════════════════════════ */}
+            {/* KPI DETAIL MODALS — clickable card drill-down      */}
+            {/* ══════════════════════════════════════════════════ */}
+            <KpiDetailModal
+                variant="booking"
+                title={getCardTitle('Booking', filterRangePreset)}
+                isOpen={modalVariant === 'booking'}
+                onClose={() => setModalVariant(null)}
+                data={bookingModalData}
+            />
+            <KpiDetailModal
+                variant="revenue"
+                title={getCardTitle('Pendapatan', filterRangePreset)}
+                isOpen={modalVariant === 'revenue'}
+                onClose={() => setModalVariant(null)}
+                data={revenueModalData}
+            />
+            <KpiDetailModal
+                variant="occupancy"
+                title={getCardTitle('Okupansi', filterRangePreset)}
+                isOpen={modalVariant === 'occupancy'}
+                onClose={() => setModalVariant(null)}
+                data={occupancyModalData}
+            />
+            <KpiDetailModal
+                variant="available"
+                title={getCardTitle('Unit Tersedia', filterRangePreset)}
+                isOpen={modalVariant === 'available'}
+                onClose={() => setModalVariant(null)}
+                data={availableModalData}
             />
         </div>
     );

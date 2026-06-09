@@ -337,6 +337,9 @@ export async function fetchKPIData(
         const mainPeriod = buildPeriodFromISO(actualDayStart, actualDayEnd);
         const revenueData = await getServiceRevenueSummary(mainPeriod);
         let periodRevenue = revenueData.totalRevenue;
+        let periodCashAmount = revenueData.cashAmount;
+        let periodTransferAmount = revenueData.transferAmount;
+        let periodTransactionCount = revenueData.transactionCount;
 
         // Today fallback: if revenue is 0 from service, query Supabase directly
         if (periodRevenue === 0 && mainPeriod) {
@@ -381,6 +384,17 @@ export async function fetchKPIData(
             revenueToday: periodRevenue,
             avgOccupancy,
             availableUnits,
+            cashAmount: periodCashAmount ?? 0,
+            transferAmount: periodTransferAmount ?? 0,
+            transactionCount: periodTransactionCount ?? 0,
+            totalUnits: liveOccupancy.totalRooms,
+            occupiedUnits: liveOccupancy.ditempati,
+            locationBreakdown: liveOccupancy.locationBreakdown.map(loc => ({
+                location: loc.name,
+                totalUnits: loc.totalRooms,
+                occupiedUnits: loc.occupiedRooms,
+                occupancyRate: loc.occupancyRate,
+            })),
         };
 
         // Compute comparison range from dateParams or legacy compareMode

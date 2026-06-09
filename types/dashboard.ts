@@ -13,11 +13,30 @@ export interface KPIChange {
   availableChangePct: number | null;
 }
 
+export interface KpiLocationBreakdown {
+  location: string;
+  totalUnits: number;
+  occupiedUnits: number;
+  occupancyRate: number;
+}
+
 export interface KPIData {
   bookingToday: number;
   revenueToday: number;
   avgOccupancy: number;
   availableUnits: number;
+  /** Cash amount breakdown for revenue detail modal */
+  cashAmount?: number;
+  /** Transfer amount breakdown for revenue detail modal */
+  transferAmount?: number;
+  /** Total transaction count for revenue detail */
+  transactionCount?: number;
+  /** Total units for occupancy context */
+  totalUnits?: number;
+  /** Occupied units count */
+  occupiedUnits?: number;
+  /** Location breakdown for occupancy detail modal */
+  locationBreakdown?: KpiLocationBreakdown[];
   prev?: {
     booking: number;
     revenue: number;

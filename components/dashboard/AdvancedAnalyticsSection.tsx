@@ -1,5 +1,5 @@
 'use client';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { ChevronDown, ChevronUp, BarChart3 } from 'lucide-react';
 import AnalyticsCharts from '@/components/analytics/AnalyticsCharts';
 import LocationHealthMatrix from './LocationHealthMatrix';
@@ -53,23 +53,30 @@ export default function AdvancedAnalyticsSection({
     isLoading = false,
 }: AdvancedAnalyticsSectionProps) {
     const [isExpanded, setIsExpanded] = useState(false);
+    const [isDesktop, setIsDesktop] = useState(false);
+
+    useEffect(() => {
+        const mq = window.matchMedia('(min-width: 640px)');
+        setIsDesktop(mq.matches);
+        if (mq.matches) setIsExpanded(true);
+        const handler = (e: MediaQueryListEvent) => {
+            setIsDesktop(e.matches);
+            if (e.matches) setIsExpanded(true);
+        };
+        mq.addEventListener('change', handler);
+        return () => mq.removeEventListener('change', handler);
+    }, []);
 
     const content = (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             {/* Analytics charts — 2/3 width */}
             <div className="lg:col-span-2 space-y-6">
                 <AnalyticsCharts
-                    dailyRevenueTrend={[]}
-                    profitPerLocation={[]}
                     guestSourceSummary={guestSourceSummary}
                     occupancyPerUnit={occupancyPerUnit}
-                    checkinHeatmap={[]}
-                    locationFullness={[]}
                     stayDurationSummary={stayDurationSummary}
                     repeatGuests={repeatGuests}
                     periodLabel={periodLabel}
-                    startDate=""
-                    endDate=""
                 />
             </div>
             {/* Legacy panels — 1/3 width, stacked */}
@@ -89,8 +96,8 @@ export default function AdvancedAnalyticsSection({
 
     return (
         <section>
-            {/* Mobile toggle button — only visible on sm: screens */}
-            <div className="sm:hidden mb-3">
+            {/* Toggle button — visible on all sizes */}
+            <div className="mb-3">
                 <button
                     onClick={() => setIsExpanded(!isExpanded)}
                     className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-white border border-gray-200 rounded-xl shadow-sm text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors"
@@ -105,8 +112,8 @@ export default function AdvancedAnalyticsSection({
                 </button>
             </div>
 
-            {/* Mobile: hidden unless expanded. Desktop: always block. */}
-            <div className={`${!isExpanded ? 'hidden' : ''} sm:block`}>
+            {/* Collapsible content */}
+            <div className={`${!isExpanded ? 'hidden' : ''}`}>
                 {content}
             </div>
         </section>
