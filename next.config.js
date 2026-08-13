@@ -6,7 +6,7 @@ const { execSync } = require('child_process')
 let gitSha = 'unknown'
 let buildId = Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
 try {
-  gitSha = execSync('git rev-parse --short HEAD').toString().trim()
+  gitSha = execSync('git rev-parse --short HEAD', { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim()
   buildId = gitSha + '-' + Date.now().toString(36)
 } catch (e) {
   // not a git repo or git not available

@@ -689,6 +689,17 @@ export default function AIChatCore({
         return text.trim().split(/\s+/).filter(Boolean).length;
     }, []);
 
+    const scheduleScrollToBottom = useCallback(() => {
+        if (!shouldAutoScrollRef.current) return;
+        if (rafRef.current) return;
+        rafRef.current = requestAnimationFrame(() => {
+            rafRef.current = null;
+            const el = scrollRef.current;
+            if (!el) return;
+            el.scrollTop = el.scrollHeight;
+        });
+    }, []);
+
     const flushStreamBuffer = useCallback((force = false) => {
         const now = Date.now();
         const buffered = streamBufferRef.current;
@@ -716,7 +727,7 @@ export default function AIChatCore({
 
         // Schedule scroll after flush
         scheduleScrollToBottom();
-    }, [countWords]);
+    }, [countWords, scheduleScrollToBottom]);
 
     // ── Auto-scroll guard helpers ──
     const isNearBottom = useCallback((el: HTMLElement, threshold = 120) => {
@@ -730,17 +741,6 @@ export default function AIChatCore({
         shouldAutoScrollRef.current = near;
         setShowScrollDown(!near);
     }, [isNearBottom]);
-
-    const scheduleScrollToBottom = useCallback(() => {
-        if (!shouldAutoScrollRef.current) return;
-        if (rafRef.current) return;
-        rafRef.current = requestAnimationFrame(() => {
-            rafRef.current = null;
-            const el = scrollRef.current;
-            if (!el) return;
-            el.scrollTop = el.scrollHeight;
-        });
-    }, []);
 
     // Sync messages with external store (e.g., conversation switch via key prop in parent)
     // The parent (AIChatFullscreen) uses `key={activeConv?.id}` to remount on switch,
@@ -867,7 +867,7 @@ export default function AIChatCore({
     // ── Scroll effect: scroll on send & during streaming, guarded by shouldAutoScrollRef ──
     useEffect(() => {
         scheduleScrollToBottom();
-    }, [loading, messages.length]);
+    }, [loading, messages.length, scheduleScrollToBottom]);
 
     // ── Cleanup on unmount: abort fetch, clear timers/RAF ──
     useEffect(() => {
@@ -1147,7 +1147,7 @@ export default function AIChatCore({
         } finally {
             setLoading(false);
         }
-    }, [input, pendingImage, loading, messages, thinkingMode, visionCapable, addSuggestions, activeProviderId, activeModelId, setInputAndNotify]);
+    }, [input, pendingImage, loading, messages, thinkingMode, visionCapable, addSuggestions, activeProviderId, activeModelId, setInputAndNotify, countWords, flushStreamBuffer, scheduleScrollToBottom]);
 
     // ── Notify parent of loading changes ───────────────────────────────────
     const onLoadingChangeRef = useRef(onLoadingChange);
