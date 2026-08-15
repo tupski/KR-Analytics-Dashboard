@@ -1,9 +1,15 @@
 /**
- * AI tools — give the AI live, on-demand access to Supabase aggregates.
+ * AI tools — give the AI live, on-demand access to LOCAL analytics data.
  *
  * Each tool is described in OpenAI function-calling format. We also export
  * an Anthropic-compatible variant. The executor maps name + arguments to a
- * Supabase query and returns a small JSON result.
+ * query against the local analytics PostgreSQL DB (lib/analytics/db.ts
+ * queryAnalytics) and returns a small JSON result.
+ *
+ * HARD RULE: KRAI MUST read ONLY local data. Supabase is the remote source
+ * and is NOT an allowed AI data source. This file intentionally does NOT
+ * import createServerClient; any Supabase read here is a compile error.
+ * See lib/ai/tools/shared/local-only.ts for the runtime guard.
  *
  * READ ONLY — these tools must never write to the database.
  *
@@ -39,7 +45,6 @@
  * ═══════════════════════════════════════════════════════════════════════════════
  */
 
-import { createServerClient } from '@/lib/supabase/server';
 import { getReportPeriodSetting } from '@/lib/get-report-period-setting';
 import { getReportPeriodRange } from '@/lib/shared/report-period';
 import type { ReportPeriodMode, ReportPeriodRange } from '@/lib/shared/report-period';
@@ -52,6 +57,11 @@ import { DATE_RANGE, API_LIMITS, IDLE_THRESHOLDS, TIME, LOCATION_HEALTH } from '
 import { getCanonicalPeriodSummary } from '@/lib/ai/tools/shared/period-summary';
 import { normalizeText, fuzzyLocationMatch, fuzzyNameMatch, isCurrentlyStaying, formatTimeWIB, formatDateWIB } from '@/lib/ai/tools/shared/normalize';
 import type { TransactionStay } from '@/lib/ai/tools/shared/normalize';
+import { assertLocalOnly } from '@/lib/ai/tools/shared/local-only';
+
+// Runtime guard: throw if KRAI_BLOCK_SUPABASE_READS=1 and this module somehow
+// links a Supabase path. Local DB is the only allowed AI data source.
+assertLocalOnly();
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Type Definitions — replace `any` types for proper type safety
@@ -233,7 +243,7 @@ async function fetchPeriodSummary(
     location?: string,
     mode?: ReportPeriodMode,
 ): Promise<PeriodSummary> {
-    const supabase = createServerClient();
+    // LOCAL analytics DB only — Supabase is not an allowed AI data source.
 
     // Type B: period-aware boundaries via shared helper
     let checkinStart: string;
@@ -250,27 +260,26 @@ async function fetchPeriodSummary(
         checkinEnd = endIso;
     }
 
-    let txQuery = supabase
-        .from('transactions')
-        .select('cash_amount, transfer_amount, customer_name, room_number, apartment_location, marketing_name, marketing_fee, checkin_at, created_at', { count: 'exact' })
-        // COALESCE(checkin_at, created_at): wider filter via .or() — catches null-checkin rows
-        .or(`checkin_at.gte.${checkinStart},and(checkin_at.is.null,created_at.gte.${checkinStart})`);
+    // COALESCE(checkin_at, created_at): wider filter catches null-checkin rows
+    let txSql = `SELECT cash_amount, transfer_amount, customer_name, room_number, apartment_location, marketing_name, marketing_fee, checkin_at, created_at
+FROM transactions
+WHERE is_deleted = false AND (checkin_at >= $1 OR (checkin_at IS NULL AND created_at >= $1))`;
+    const txParams: any[] = [checkinStart];
 
     // pengeluaran.tanggal is date-only — always calendar-aligned
-    let expQuery = supabase
-        .from('pengeluaran')
-        .select('jumlah, category', { count: 'exact' })
-        .gte('tanggal', start)
-        .lte('tanggal', end);
+    let expSql = `SELECT jumlah, category FROM pengeluaran WHERE tanggal >= $1 AND tanggal <= $2`;
+    const expParams: any[] = [start, end];
 
     if (location) {
-        txQuery = txQuery.eq('apartment_location', location);
-        expQuery = expQuery.eq('apartment_location', location);
+        txSql += ` AND apartment_location = $2`;
+        txParams.push(location);
+        expSql += ` AND apartment_location = $3`;
+        expParams.push(location);
     }
 
-    const [{ data: txRaw, count: txCount }, { data: expData }] = await Promise.all([
-        txQuery,
-        expQuery,
+    const [txRaw, expData] = await Promise.all([
+        queryAnalytics<TransactionRecord>(txSql, txParams),
+        queryAnalytics<ExpenseRecord>(expSql, expParams),
     ]);
 
     // Apply JS-side COALESCE filter: effectiveDate in [checkinStart, checkinEnd)
@@ -310,7 +319,7 @@ async function fetchPeriodSummary(
 
     return {
         period: { start_date: start, end_date: end, location: location || null },
-        transactions: txCount || 0,
+        transactions: txData.length,
         revenue,
         revenue_cash: cash,
         revenue_transfer: transfer,
@@ -338,13 +347,14 @@ async function fetchTopLocations(start: string, end: string, limit: number) {
 
 async function fetchTopCustomers(start: string, end: string, limit: number) {
     const { startIso, endIso } = validateDateRange(start, end);
-    const supabase = createServerClient();
 
-    const { data } = await supabase
-        .from('transactions')
-        .select('customer_name, cash_amount, transfer_amount, checkin_at, created_at')
-        // COALESCE(checkin_at, created_at): wider filter catches null-checkin rows
-        .or(`checkin_at.gte.${startIso},and(checkin_at.is.null,created_at.gte.${startIso})`);
+    // LOCAL analytics DB only
+    const data = await queryAnalytics<TransactionRecord>(
+        `SELECT customer_name, cash_amount, transfer_amount, checkin_at, created_at
+FROM transactions
+WHERE is_deleted = false AND (checkin_at >= $1 OR (checkin_at IS NULL AND created_at >= $1))`,
+        [startIso],
+    );
 
     const map: Record<string, { visits: number; revenue: number; raw: string }> = {};
     (data || []).forEach((t: TransactionRecord) => {
@@ -367,47 +377,45 @@ async function fetchTopCustomers(start: string, end: string, limit: number) {
 }
 
 async function fetchOutstandingBills(location?: string) {
-    const supabase = createServerClient();
-
-    try {
-        const { data, error } = await supabase
-            .rpc('get_outstanding_bills_summary', { p_location: location || null });
-
-        if (error) throw error;
-        return { source: 'get_outstanding_bills_summary', data };
-    } catch (err: any) {
-        // Fallback: count rows directly
-        let q = supabase
-            .from('tagihan_bulanan')
-            .select('amount, due_date, status', { count: 'exact' })
-            .eq('status', 'unpaid');
-        if (location) q = q.eq('apartment_location', location);
-        const { data, count } = await q;
-        const total = (data || []).reduce((s: number, b: BillingRecord) => s + (b.amount || 0), 0);
-        return {
-            source: 'fallback',
-            unpaid_count: count || 0,
-            unpaid_total: total,
-            note: 'RPC get_outstanding_bills_summary tidak bisa diakses, hanya total dasar.',
-        };
+    // LOCAL analytics DB only — RPC get_outstanding_bills_summary lives on
+    // Supabase (remote) and is NOT allowed for AI reads.
+    let q = `SELECT amount, due_date, status FROM tagihan_bulanan WHERE status = 'unpaid' AND is_deleted = false`;
+    const params: any[] = [];
+    if (location) {
+        q += ` AND apartment_location = $1`;
+        params.push(location);
     }
+    const data = await queryAnalytics<BillingRecord>(q, params);
+    const total = (data || []).reduce((s: number, b: BillingRecord) => s + (b.amount || 0), 0);
+    return {
+        source: 'local-analytics',
+        unpaid_count: data?.length || 0,
+        unpaid_total: total,
+        note: 'Data dari DB analitik lokal (tagihan_bulanan status unpaid).',
+    };
 }
 
 async function fetchUnitInventory(location?: string) {
-    const supabase = createServerClient();
-    let q = supabase.from('nomor_kamar').select('lokasi', { count: 'exact', head: true });
-    if (location) q = q.eq('lokasi', location);
-    const { count: totalRooms } = await q;
+    // LOCAL analytics DB only
+    let totalSql = `SELECT COUNT(*)::int AS total FROM nomor_kamar WHERE is_deleted = false`;
+    const totalParams: any[] = [];
+    if (location) {
+        totalSql += ` AND lokasi = $1`;
+        totalParams.push(location);
+    }
+    const totalRows = await queryAnalytics<{ total: number }>(totalSql, totalParams);
+    const totalRooms = totalRows[0]?.total || 0;
 
     const now = getNowWIB();
-    let txQ = supabase
-        .from('transactions')
-        .select('room_number, apartment_location')
-        // COALESCE(checkin_at, created_at): handle null checkin for active stays
-        .or(`checkin_at.lte.${now},and(checkin_at.is.null,created_at.lte.${now})`)
-        .gte('checkout_at', now);
-    if (location) txQ = txQ.eq('apartment_location', location);
-    const { data: active } = await txQ;
+    let txSql = `SELECT room_number, apartment_location
+FROM transactions
+WHERE is_deleted = false AND (checkin_at <= $1 OR (checkin_at IS NULL AND created_at <= $1)) AND checkout_at >= $1`;
+    const txParams: any[] = [now];
+    if (location) {
+        txSql += ` AND apartment_location = $2`;
+        txParams.push(location);
+    }
+    const active = await queryAnalytics<{ room_number: string; apartment_location: string }>(txSql, txParams);
     const occupied = new Set(
         (active || []).map((t) => `${t.apartment_location}-${t.room_number}`),
     ).size;
@@ -487,7 +495,7 @@ async function fetchDailySummary(): Promise<DailySummary> {
  * Uses getReportPeriodRange() for period-aware boundaries.
  */
 async function fetchRevenueTrend(start: string, end: string, location?: string): Promise<RevenueTrend> {
-    const supabase = createServerClient();
+    // LOCAL analytics DB only
 
     // Fetch mode for period-aware boundaries
     const mode = await getReportPeriodSetting();
@@ -497,15 +505,16 @@ async function fetchRevenueTrend(start: string, end: string, location?: string):
     console.debug('[tools] fetchRevenueTrend using shared period helper:', { start: rangeStart, end: rangeEnd, mode });
 
     // Get distinct dates with revenue aggregated per day
-    let q = supabase
-        .from('transactions')
-        .select('checkin_at, created_at, cash_amount, transfer_amount')
-        // COALESCE(checkin_at, created_at): wider filter catches null-checkin rows
-        .or(`checkin_at.gte.${rangeStart},and(checkin_at.is.null,created_at.gte.${rangeStart})`);
+    let q = `SELECT checkin_at, created_at, cash_amount, transfer_amount
+FROM transactions
+WHERE is_deleted = false AND (checkin_at >= $1 OR (checkin_at IS NULL AND created_at >= $1))`;
+    const params: any[] = [rangeStart];
+    if (location) {
+        q += ` AND apartment_location = $2`;
+        params.push(location);
+    }
 
-    if (location) q = q.eq('apartment_location', location);
-
-    const { data } = await q;
+    const data = await queryAnalytics<TransactionRecord>(q, params);
     if (!data || data.length === 0) {
         return { period: { start_date: start, end_date: end, location: location || null }, total_revenue: 0, days: 0, daily_revenue: [], avg_per_day: 0, max_day: null, min_day: null };
     }
@@ -546,7 +555,7 @@ async function fetchLatestStatus(): Promise<LatestStatus> {
     const now = toZonedTime(new Date(), tz);
     const today = format(now, 'yyyy-MM-dd');
 
-    const supabase = createServerClient();
+    // LOCAL analytics DB only
 
     // Type B: use mode-aware today boundaries via shared helper
     const mode = await getReportPeriodSetting();
@@ -556,25 +565,33 @@ async function fetchLatestStatus(): Promise<LatestStatus> {
     console.debug('[tools] fetchLatestStatus using shared period helper:', { start: dayStart, end: dayEnd, mode });
 
     // Today's transactions — use COALESCE(checkin_at, created_at) wide filter
-    const { data: todayTx, count: txCount } = await supabase
-        .from('transactions')
-        .select('cash_amount, transfer_amount, checkin_at, created_at', { count: 'exact' })
-        .or(`checkin_at.gte.${dayStart},and(checkin_at.is.null,created_at.gte.${dayStart})`);
+    const todayTx = await queryAnalytics<TransactionRecord>(
+        `SELECT cash_amount, transfer_amount, checkin_at, created_at
+FROM transactions
+WHERE is_deleted = false AND (checkin_at >= $1 OR (checkin_at IS NULL AND created_at >= $1))`,
+        [dayStart],
+    );
 
     // Active stays (currently checked-in) — use COALESCE for checkin
     const nowIso = getNowWIB();
-    const { count: activeStays } = await supabase
-        .from('transactions')
-        .select('*', { count: 'exact', head: true })
-        .or(`checkin_at.lte.${nowIso},and(checkin_at.is.null,created_at.lte.${nowIso})`)
-        .or(`checkout_at.gte.${nowIso},checkout_at.is.null`);
+    const activeStaysRows = await queryAnalytics<{ cnt: string }>(
+        `SELECT COUNT(*)::int AS cnt
+FROM transactions
+WHERE is_deleted = false
+  AND (checkin_at <= $1 OR (checkin_at IS NULL AND created_at <= $1))
+  AND (checkout_at >= $1 OR checkout_at IS NULL)`,
+        [nowIso],
+    );
+    const activeStays = parseNumeric(activeStaysRows[0]?.cnt);
 
     // Checkouts today — use same period boundaries (checkout_at is always set, no COALESCE needed)
-    const { count: checkoutToday } = await supabase
-        .from('transactions')
-        .select('*', { count: 'exact', head: true })
-        .gte('checkout_at', dayStart)
-        .lte('checkout_at', dayEnd);
+    const checkoutRows = await queryAnalytics<{ cnt: string }>(
+        `SELECT COUNT(*)::int AS cnt
+FROM transactions
+WHERE is_deleted = false AND checkout_at >= $1 AND checkout_at <= $2`,
+        [dayStart, dayEnd],
+    );
+    const checkoutToday = parseNumeric(checkoutRows[0]?.cnt);
 
     // JS-side COALESCE filter + exclusive end
     const effectiveTodayTx = (todayTx || []).filter((t: TransactionRecord) => {
@@ -589,7 +606,7 @@ async function fetchLatestStatus(): Promise<LatestStatus> {
         snapshot_time: format(now, 'yyyy-MM-dd HH:mm:ss'),
         today: {
             date: today,
-            checkin_count: txCount || 0,
+            checkin_count: effectiveTodayTx.length,
             checkout_count: checkoutToday || 0,
             revenue: Math.round(revenueToday),
             active_stays: activeStays || 0,
@@ -600,30 +617,70 @@ async function fetchLatestStatus(): Promise<LatestStatus> {
 // ── New Tool Implementations (2026-05-27) ────────────────────────────────────
 
 async function fetchSearchTransactions(query: string, startDate?: string, endDate?: string, location?: string, limit: number = API_LIMITS.DEFAULT_PAGE_SIZE): Promise<SearchResult> {
-    const supabase = createServerClient();
-    const { data, error } = await supabase.rpc('search_transactions', {
-        p_query: query,
-        p_start_date: startDate || null,
-        p_end_date: endDate || null,
-        p_location: location || null,
-        p_limit: Math.min(limit, API_LIMITS.MAX_PAGE_SIZE),
-    });
-    if (error) throw error;
-    return { query, results: data || [], total_count: data?.[0]?.total_count || 0 };
+    // LOCAL analytics DB only — RPC search_transactions lives on Supabase (remote).
+    const q = `%${normalizeText(query)}%`;
+    let sql = `SELECT id, customer_name, apartment_location, room_number, checkin_at, created_at, checkout_at, cash_amount, transfer_amount, rental_duration, marketing_name
+FROM transactions
+WHERE is_deleted = false
+  AND (customer_name ILIKE $1 OR room_number ILIKE $1 OR apartment_location ILIKE $1)`;
+    const params: any[] = [q];
+    let idx = 2;
+    if (startDate) {
+        sql += ` AND COALESCE(checkin_at, created_at) >= $${idx}::timestamptz`;
+        params.push(`${startDate}T00:00:00`);
+        idx++;
+    }
+    if (endDate) {
+        sql += ` AND COALESCE(checkin_at, created_at) < $${idx}::timestamptz`;
+        params.push(`${endDate}T23:59:59+07:00`);
+        idx++;
+    }
+    if (location) {
+        sql += ` AND apartment_location ILIKE $${idx}`;
+        params.push(`%${normalizeText(location)}%`);
+        idx++;
+    }
+    sql += ` ORDER BY COALESCE(checkin_at, created_at) DESC LIMIT $${idx}`;
+    params.push(Math.min(limit, API_LIMITS.MAX_PAGE_SIZE));
+
+    const data = await queryAnalytics<Record<string, unknown>>(sql, params);
+    return { query, results: data || [], total_count: data?.length || 0 };
 }
 
 async function fetchSearchExpenses(query: string, startDate?: string, endDate?: string, location?: string, category?: string, limit: number = API_LIMITS.DEFAULT_PAGE_SIZE): Promise<SearchResult> {
-    const supabase = createServerClient();
-    const { data, error } = await supabase.rpc('search_expenses', {
-        p_query: query,
-        p_start_date: startDate || null,
-        p_end_date: endDate || null,
-        p_location: location || null,
-        p_category: category || null,
-        p_limit: Math.min(limit, API_LIMITS.MAX_PAGE_SIZE),
-    });
-    if (error) throw error;
-    return { query, results: data || [], total_count: data?.[0]?.total_count || 0 };
+    // LOCAL analytics DB only — RPC search_expenses lives on Supabase (remote).
+    const q = `%${normalizeText(query)}%`;
+    let sql = `SELECT id, nama_pengeluaran, jumlah, tanggal, keterangan, category, apartment_location, room_number
+FROM pengeluaran
+WHERE is_deleted = false
+  AND (nama_pengeluaran ILIKE $1 OR keterangan ILIKE $1 OR category ILIKE $1)`;
+    const params: any[] = [q];
+    let idx = 2;
+    if (startDate) {
+        sql += ` AND tanggal >= $${idx}::date`;
+        params.push(startDate);
+        idx++;
+    }
+    if (endDate) {
+        sql += ` AND tanggal <= $${idx}::date`;
+        params.push(endDate);
+        idx++;
+    }
+    if (location) {
+        sql += ` AND apartment_location ILIKE $${idx}`;
+        params.push(`%${normalizeText(location)}%`);
+        idx++;
+    }
+    if (category) {
+        sql += ` AND category ILIKE $${idx}`;
+        params.push(`%${normalizeText(category)}%`);
+        idx++;
+    }
+    sql += ` ORDER BY tanggal DESC LIMIT $${idx}`;
+    params.push(Math.min(limit, API_LIMITS.MAX_PAGE_SIZE));
+
+    const data = await queryAnalytics<Record<string, unknown>>(sql, params);
+    return { query, results: data || [], total_count: data?.length || 0 };
 }
 
 /**
@@ -645,108 +702,8 @@ async function fetchSearchTransactionsFlexible(
     limit: number = 20,
     sort: string = 'date_desc',
 ): Promise<SearchResult> {
-    const supabase = createServerClient();
-
-    // --- Build date range from params ---
-    let effectiveStartISO: string | null = null;
-    let effectiveEndExclusiveISO: string | null = null;
-    if (date) {
-        // Single date: calendar day in Asia/Jakarta
-        const { getReportPeriodRange } = await import('@/lib/shared/report-period');
-        const range = getReportPeriodRange({ preset: 'custom', startDate: date, endDate: date, mode: 'calendar_day' });
-        effectiveStartISO = range.startISO;
-        effectiveEndExclusiveISO = range.endExclusiveISO;
-    } else if (startDate || endDate) {
-        const { getReportPeriodRange } = await import('@/lib/shared/report-period');
-        const range = getReportPeriodRange({
-            preset: 'custom',
-            startDate: startDate || '2020-01-01',
-            endDate: endDate || new Date().toISOString().split('T')[0],
-            mode: 'calendar_day',
-        });
-        effectiveStartISO = range.startISO;
-        effectiveEndExclusiveISO = range.endExclusiveISO;
-    }
-
-    try {
-        // Build filters array for .or() + individual filters
-        const orClauses: string[] = [];
-        const normalizedQuery = query ? normalizeText(query) : '';
-
-        if (normalizedQuery) {
-            orClauses.push(`customer_name.ilike.%${normalizedQuery}%`);
-            orClauses.push(`room_number.ilike.%${normalizedQuery}%`);
-            orClauses.push(`apartment_location.ilike.%${normalizedQuery}%`);
-        }
-
-        let sbQuery = supabase
-            .from('transactions')
-            .select('*', { count: 'exact' })
-            .eq('is_deleted', false);
-
-        if (orClauses.length > 0) {
-            sbQuery = sbQuery.or(orClauses.join(','));
-        }
-
-        // Individual filters (additive)
-        if (name && !query) {
-            sbQuery = sbQuery.ilike('customer_name', `%${normalizeText(name)}%`);
-        }
-        if (roomNumber && !query) {
-            sbQuery = sbQuery.ilike('room_number', `%${normalizeText(roomNumber)}%`);
-        }
-        if (location && !query) {
-            sbQuery = sbQuery.ilike('apartment_location', `%${normalizeText(location)}%`);
-        }
-
-        // Date range on effective date (checkin_at COALESCE created_at)
-        if (effectiveStartISO) {
-            sbQuery = sbQuery.gte('checkin_at', effectiveStartISO);
-        }
-        if (effectiveEndExclusiveISO) {
-            sbQuery = sbQuery.lt('checkin_at', effectiveEndExclusiveISO);
-        }
-
-        // Status filter
-        if (status && status !== 'all') {
-            const s = status.toLowerCase();
-            if (s === 'aktif' || s === 'active') {
-                sbQuery = sbQuery.not('checkin_at', 'is', null).is('checkout_at', null);
-            } else {
-                sbQuery = sbQuery.ilike('status', `%${s}%`);
-            }
-        }
-
-        // Sort
-        switch (sort) {
-            case 'revenue_desc':
-                sbQuery = sbQuery.order('cash_amount', { ascending: false });
-                break;
-            case 'revenue_asc':
-                sbQuery = sbQuery.order('cash_amount', { ascending: true });
-                break;
-            case 'date_asc':
-                sbQuery = sbQuery.order('checkin_at', { ascending: true });
-                break;
-            default:
-                sbQuery = sbQuery.order('checkin_at', { ascending: false });
-        }
-
-        sbQuery = sbQuery.limit(Math.min(limit, API_LIMITS.MAX_PAGE_SIZE));
-
-        const { data, error, count } = await sbQuery;
-        if (error) throw error;
-
-        const items = (data || []).map(mapTxToFlexibleSearchItem);
-        return {
-            query: query || name || '',
-            results: items as unknown as Record<string, unknown>[],
-            total_count: count || items.length,
-        };
-    } catch {
-        // Fallback to queryAnalytics
-        return fetchSearchFlexibleFallback(query, name, location, roomNumber, date, startDate, endDate, status, limit, sort);
-    }
+    // LOCAL analytics DB only — direct SQL, no Supabase.
+    return fetchSearchFlexibleFallback(query, name, location, roomNumber, date, startDate, endDate, status, limit, sort);
 }
 
 /** Map a transaction row to a clean search result item. */
@@ -813,14 +770,20 @@ async function fetchSearchFlexibleFallback(
         }
     }
 
-    // Status
+    // Status — local mirror has NO transactions.status column (Supabase-only).
+    // Only 'aktif'/'active' (checkin set, checkout null) is representable locally.
     if (status && status !== 'all') {
         const s = status.toLowerCase();
         if (s === 'aktif' || s === 'active') {
             conditions.push(`t.checkin_at IS NOT NULL AND t.checkout_at IS NULL`);
         } else {
-            params.push(`%${s}%`);
-            conditions.push(`t.status ILIKE $${params.length}`);
+            // 'lunas'/'cancel' etc. are not mirrored locally — return unavailable.
+            return {
+                query: query || name || '',
+                results: [],
+                total_count: 0,
+                note: `Filter status "${status}" tidak tersedia di data lokal. Hanya filter "aktif" yang didukung.`,
+            } as SearchResult;
         }
     }
 
@@ -884,81 +847,41 @@ async function fetchLiveCheckins(
         periodEndExclusiveISO = todayRange.endExclusiveISO;
     }
 
+    // LOCAL analytics DB only
     try {
-        const supabase = createServerClient();
-
-        if (mode === 'currently_staying') {
-            // Query transactions from last 3 days or where checkout_at is null
-            const threeDaysAgo = new Date(now.getTime() - 3 * 24 * 60 * 60 * 1000);
-            const threeDaysAgoISO = threeDaysAgo.toISOString();
-
-            let query = supabase
-                .from('transactions')
-                .select('id, customer_name, apartment_location, room_number, checkin_at, created_at, checkout_at, rental_duration, cash_amount, transfer_amount')
-                .or(`checkin_at.gte.${threeDaysAgoISO},and(checkin_at.is.null,created_at.gte.${threeDaysAgoISO})`);
-
-            if (location) {
-                query = query.ilike('apartment_location', `%${location}%`);
-            }
-            if (name) {
-                query = query.ilike('customer_name', `%${name}%`);
-            }
-
-            const { data } = await query;
-            const nowDate = new Date();
-
-            // JS filter with isCurrentlyStaying
-            const filtered = (data || []).filter((t: any) => isCurrentlyStaying(t as TransactionStay, nowDate));
-
-            // Apply fuzzy location/name filter for accuracy
-            const fuzzyFiltered = filtered.filter((t: any) => {
-                if (location && !fuzzyLocationMatch(location, t.apartment_location)) return false;
-                if (name && !fuzzyNameMatch(name, t.customer_name)) return false;
-                return true;
-            });
-
-            fuzzyFiltered.sort((a: any, b: any) => {
-                const aEff = (a.checkin_at || a.created_at || '');
-                const bEff = (b.checkin_at || b.created_at || '');
-                return bEff.localeCompare(aEff);
-            });
-
-            const limited = fuzzyFiltered.slice(0, Math.min(limit, 50));
-
-            return {
-                ok: true,
-                mode: 'currently_staying',
-                period: { date: todayStr, startISO: periodStartISO, endExclusiveISO: periodEndExclusiveISO },
-                count: limited.length,
-                items: limited.map(mapTxToLiveCheckinItem),
-            };
-        }
-
-        // mode === 'latest_checkins' (default)
-        let query = supabase
-            .from('transactions')
-            .select('id, customer_name, apartment_location, room_number, checkin_at, created_at, checkout_at, rental_duration, cash_amount, transfer_amount')
-            .or(`checkin_at.gte.${periodStartISO},and(checkin_at.is.null,created_at.gte.${periodStartISO})`);
+        let sql = `SELECT id, customer_name, apartment_location, room_number, checkin_at, created_at, checkout_at, rental_duration, cash_amount, transfer_amount
+FROM transactions
+WHERE is_deleted = false AND (checkin_at >= $1 OR (checkin_at IS NULL AND created_at >= $1))`;
+        const params: any[] = [mode === 'currently_staying' ? new Date(now.getTime() - 3 * 24 * 60 * 60 * 1000).toISOString() : periodStartISO];
+        let idx = 2;
 
         if (location) {
-            query = query.ilike('apartment_location', `%${location}%`);
+            sql += ` AND apartment_location ILIKE $${idx}`;
+            params.push(`%${location}%`);
+            idx++;
         }
         if (name) {
-            query = query.ilike('customer_name', `%${name}%`);
+            sql += ` AND customer_name ILIKE $${idx}`;
+            params.push(`%${name}%`);
+            idx++;
         }
 
-        const { data, error } = await query;
+        sql += ` ORDER BY COALESCE(checkin_at, created_at) DESC LIMIT $${idx}`;
+        params.push(Math.min(limit, 50));
 
-        if (error) {
-            console.warn('[tools] fetchLiveCheckins Supabase error, falling back to queryAnalytics:', error);
-            return await fetchLiveCheckinsFallback(location, name, date, mode, limit, periodStartISO, periodEndExclusiveISO);
+        const rows = await queryAnalytics<any>(sql, params);
+
+        let filtered = rows || [];
+        if (mode === 'currently_staying') {
+            const nowDate = new Date();
+            filtered = filtered.filter((t: any) => isCurrentlyStaying(t as TransactionStay, nowDate));
+        } else {
+            // JS-side COALESCE filter + exclusive end
+            filtered = filtered.filter((t: any) => {
+                const effDate = t.checkin_at || t.created_at || '';
+                return effDate && effDate >= periodStartISO && effDate < periodEndExclusiveISO;
+            });
         }
-
-        // JS-side COALESCE filter + exclusive end
-        const filtered = (data || []).filter((t: any) => {
-            const effDate = t.checkin_at || t.created_at || '';
-            return effDate && effDate >= periodStartISO && effDate < periodEndExclusiveISO;
-        });
 
         // Apply fuzzy location/name filter
         const fuzzyFiltered = filtered.filter((t: any) => {
@@ -978,7 +901,7 @@ async function fetchLiveCheckins(
 
         return {
             ok: true,
-            mode: 'latest_checkins',
+            mode,
             period: { date: todayStr, startISO: periodStartISO, endExclusiveISO: periodEndExclusiveISO },
             count: limited.length,
             items: limited.map(mapTxToLiveCheckinItem),
@@ -989,64 +912,6 @@ async function fetchLiveCheckins(
             ok: false,
             mode,
             period: { date: todayStr, startISO: periodStartISO, endExclusiveISO: periodEndExclusiveISO },
-            count: 0,
-            items: [],
-        };
-    }
-}
-
-/** Fallback: use queryAnalytics if Supabase direct query fails */
-async function fetchLiveCheckinsFallback(
-    location: string | undefined,
-    name: string | undefined,
-    date: string | undefined,
-    mode: 'latest_checkins' | 'currently_staying',
-    limit: number,
-    periodStartISO: string,
-    periodEndExclusiveISO: string,
-): Promise<LiveCheckinsResult> {
-    try {
-        let sql = `SELECT id, customer_name, apartment_location, room_number, checkin_at, created_at, checkout_at, rental_duration, cash_amount, transfer_amount
-FROM transactions
-WHERE (checkin_at >= $1 OR (checkin_at IS NULL AND created_at >= $1))`;
-        const params: any[] = [periodStartISO];
-        let idx = 2;
-
-        if (location) {
-            sql += ` AND apartment_location ILIKE $${idx}`;
-            params.push(`%${location}%`);
-            idx++;
-        }
-        if (name) {
-            sql += ` AND customer_name ILIKE $${idx}`;
-            params.push(`%${name}%`);
-            idx++;
-        }
-
-        sql += ` ORDER BY COALESCE(checkin_at, created_at) DESC LIMIT $${idx}`;
-        params.push(Math.min(limit, 50));
-
-        const rows = await queryAnalytics<any>(sql, params);
-
-        // JS filter
-        const filtered = (rows || []).filter((t: any) => {
-            const effDate = t.checkin_at || t.created_at || '';
-            return effDate && effDate >= periodStartISO && effDate < periodEndExclusiveISO;
-        });
-
-        return {
-            ok: true,
-            mode,
-            period: { date: date || periodStartISO.slice(0, 10), startISO: periodStartISO, endExclusiveISO: periodEndExclusiveISO },
-            count: filtered.length,
-            items: filtered.map(mapTxToLiveCheckinItem),
-        };
-    } catch (err: any) {
-        console.error('[tools] fetchLiveCheckinsFallback error:', err);
-        return {
-            ok: false,
-            mode,
-            period: { date: date || periodStartISO.slice(0, 10), startISO: periodStartISO, endExclusiveISO: periodEndExclusiveISO },
             count: 0,
             items: [],
         };
@@ -1071,61 +936,124 @@ function mapTxToLiveCheckinItem(tx: any): LiveCheckinItem {
 }
 
 async function fetchIdleUnits(daysThreshold: number = IDLE_THRESHOLDS.DEFAULT_QUERY_DAYS, location?: string, limit: number = API_LIMITS.MAX_IDLE_UNITS): Promise<IdleUnitsResult> {
-    const supabase = createServerClient();
-    const { data, error } = await supabase.rpc('detect_idle_units', {
-        p_days_threshold: daysThreshold,
-        p_location: location || null,
-        p_limit: Math.min(limit, API_LIMITS.MAX_PAGE_SIZE),
-    });
-    if (error) throw error;
-    return { threshold_days: daysThreshold, location: location || 'Semua Lokasi', idle_units: data || [], total_count: data?.[0]?.total_count || 0 };
+    // LOCAL analytics DB only — RPC detect_idle_units lives on Supabase (remote).
+    const cutoff = new Date(Date.now() - daysThreshold * 24 * 60 * 60 * 1000).toISOString();
+    let sql = `SELECT sub.lokasi, sub.room_number, sub.tx_count
+FROM (
+    SELECT nk.lokasi, nk.name AS room_number,
+        (SELECT COUNT(*) FROM transactions t
+         WHERE t.is_deleted = false AND t.apartment_location = nk.lokasi AND t.room_number = nk.name
+           AND (t.checkin_at >= $1 OR (t.checkin_at IS NULL AND t.created_at >= $1)))::int AS tx_count
+    FROM nomor_kamar nk
+    WHERE nk.is_deleted = false`;
+    const params: any[] = [cutoff];
+    let idx = 2;
+    if (location) {
+        sql += ` AND nk.lokasi = $${idx}`;
+        params.push(location);
+        idx++;
+    }
+    sql += `
+) sub
+WHERE sub.tx_count = 0
+LIMIT $${idx}`;
+    params.push(Math.min(limit, API_LIMITS.MAX_PAGE_SIZE));
+
+    const rows = await queryAnalytics<Record<string, unknown>>(sql, params);
+    return { threshold_days: daysThreshold, location: location || 'Semua Lokasi', idle_units: rows || [], total_count: rows?.length || 0 };
 }
 
 async function fetchUnderperformingUnits(startDate: string, endDate: string, location?: string, threshold: number = LOCATION_HEALTH.LOW_OCCUPANCY_RATE, limit: number = API_LIMITS.MAX_UNDERPERFORMING_UNITS): Promise<UnderperformingUnitsResult> {
     validateDateRange(startDate, endDate);
-    const supabase = createServerClient();
-    const { data, error } = await supabase.rpc('get_underperforming_units', {
-        p_start_date: startDate,
-        p_end_date: endDate,
-        p_location: location || null,
-        p_threshold: threshold,
-        p_limit: Math.min(limit, API_LIMITS.MAX_PAGE_SIZE),
-    });
-    if (error) throw error;
-    return { period: { start_date: startDate, end_date: endDate }, threshold_occupancy: threshold, location: location || 'Semua Lokasi', underperforming_units: data || [], total_count: data?.[0]?.total_count || 0 };
+    // LOCAL analytics DB only — derive from analytics_occupancy_daily.
+    let sql = `SELECT od.apartment_location, od.room_number,
+    COUNT(*) FILTER (WHERE od.is_occupied)::int AS occupied_days,
+    COUNT(*)::int AS total_days,
+    ROUND(COUNT(*) FILTER (WHERE od.is_occupied)::numeric / NULLIF(COUNT(*), 0) * 100, 2) AS occupancy_rate
+FROM analytics_occupancy_daily od
+WHERE od.date_wib >= $1::date AND od.date_wib <= $2::date`;
+    const params: any[] = [startDate, endDate];
+    let idx = 3;
+    if (location) {
+        sql += ` AND od.apartment_location = $${idx}`;
+        params.push(location);
+        idx++;
+    }
+    sql += ` GROUP BY od.apartment_location, od.room_number
+HAVING ROUND(COUNT(*) FILTER (WHERE od.is_occupied)::numeric / NULLIF(COUNT(*), 0) * 100, 2) < $${idx}
+ORDER BY occupancy_rate ASC LIMIT $${idx + 1}`;
+    params.push(threshold, Math.min(limit, API_LIMITS.MAX_PAGE_SIZE));
+
+    const data = await queryAnalytics<Record<string, unknown>>(sql, params);
+    return { period: { start_date: startDate, end_date: endDate }, threshold_occupancy: threshold, location: location || 'Semua Lokasi', underperforming_units: data || [], total_count: data?.length || 0 };
 }
 
 async function fetchWeekendVsWeekday(startDate: string, endDate: string, location?: string): Promise<WeekendWeekdayResult> {
     validateDateRange(startDate, endDate);
-    const supabase = createServerClient();
-    const { data, error } = await supabase.rpc('get_weekend_vs_weekday_analysis', {
-        p_start_date: startDate,
-        p_end_date: endDate,
-        p_location: location || null,
-    });
-    if (error) throw error;
-    return { period: { start_date: startDate, end_date: endDate }, location: location || 'Semua Lokasi', analysis: data || [] };
+    // LOCAL analytics DB only — reuse the existing local weekday/weekend analysis.
+    const result = await fetchWeekdayWeekendAnalysis(startDate, endDate);
+    return {
+        period: { start_date: startDate, end_date: endDate },
+        location: location || 'Semua Lokasi',
+        analysis: [
+            { day_type: 'weekday', total_revenue: result.weekday_revenue, transaction_count: result.weekday_transactions },
+            { day_type: 'weekend', total_revenue: result.weekend_revenue, transaction_count: result.weekend_transactions },
+        ],
+    };
 }
 
 async function fetchMonthEndEstimate(year?: number, month?: number, location?: string): Promise<MonthEndEstimate> {
-    const supabase = createServerClient();
-    const { data, error } = await supabase.rpc('estimate_month_end_revenue', {
-        p_year: year || null,
-        p_month: month || null,
-        p_location: location || null,
-    });
-    if (error) throw error;
-    return data?.[0] || { error: 'No data returned' };
+    // LOCAL analytics DB only — project month-end revenue from analytics_daily_revenue.
+    const now = new Date();
+    const wib = new Date(now.getTime() + 7 * 60 * 60 * 1000);
+    const targetYear = year ?? wib.getFullYear();
+    const targetMonth = month ?? wib.getMonth() + 1;
+    const startStr = `${targetYear}-${String(targetMonth).padStart(2, '0')}-01`;
+    const daysInMonth = new Date(targetYear, targetMonth, 0).getDate();
+    const endStr = `${targetYear}-${String(targetMonth).padStart(2, '0')}-${String(daysInMonth).padStart(2, '0')}`;
+
+    let sql = `SELECT COALESCE(SUM(total_revenue), 0) AS revenue_to_date,
+    COUNT(DISTINCT date_wib)::int AS days_elapsed
+FROM analytics_daily_revenue
+WHERE date_wib >= $1::date AND date_wib <= $2::date`;
+    const params: any[] = [startStr, endStr];
+    if (location) {
+        sql += ` AND apartment_location = $3`;
+        params.push(location);
+    }
+
+    const rows = await queryAnalytics<{ revenue_to_date: string; days_elapsed: number }>(sql, params);
+    const revenueToDate = parseNumeric(rows[0]?.revenue_to_date);
+    const daysElapsed = Math.max(parseNumeric(rows[0]?.days_elapsed), 1);
+    const projection = Math.round((revenueToDate / daysElapsed) * daysInMonth * 100) / 100;
+
+    return {
+        year: targetYear,
+        month: targetMonth,
+        days_in_month: daysInMonth,
+        days_elapsed: daysElapsed,
+        revenue_to_date: revenueToDate,
+        estimated_month_end_revenue: projection,
+        note: 'Estimasi lokal dari analytics_daily_revenue (rata-rata harian × jumlah hari dalam bulan).',
+    };
 }
 
 async function fetchUnpaidBillsDetail(location?: string, limit: number = API_LIMITS.MAX_IDLE_UNITS): Promise<UnpaidBillsResult> {
-    const supabase = createServerClient();
-    const { data, error } = await supabase.rpc('get_unpaid_bills_detail', {
-        p_location: location || null,
-        p_limit: Math.min(limit, API_LIMITS.MAX_PAGE_SIZE),
-    });
-    if (error) throw error;
-    return { location: location || 'Semua Lokasi', unpaid_bills: data || [], total_count: data?.[0]?.total_count || 0, total_amount: data?.[0]?.total_amount || 0 };
+    // LOCAL analytics DB only — tagihan_bulanan status unpaid.
+    let sql = `SELECT id, apartment_location, room_number, amount, due_date, status
+FROM tagihan_bulanan
+WHERE status = 'unpaid' AND is_deleted = false`;
+    const params: any[] = [];
+    if (location) {
+        sql += ` AND apartment_location = $1`;
+        params.push(location);
+    }
+    sql += ` ORDER BY due_date ASC LIMIT $${params.length + 1}`;
+    params.push(Math.min(limit, API_LIMITS.MAX_PAGE_SIZE));
+
+    const data = await queryAnalytics<Record<string, unknown>>(sql, params);
+    const totalAmount = (data || []).reduce((s: number, b: any) => s + parseNumeric(b.amount), 0);
+    return { location: location || 'Semua Lokasi', unpaid_bills: data || [], total_count: data?.length || 0, total_amount: totalAmount };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1240,167 +1168,146 @@ interface RpcArrayResult {
 }
 
 async function fetchMarketingPerformance(start: string, end: string, location?: string, limit: number = 10): Promise<MarketingPerformanceResult> {
-    const supabase = createServerClient();
-    const { data, error } = await supabase.rpc('get_marketing_performance', {
-        p_start_date: start,
-        p_end_date: end,
-        p_location: location || null,
-        p_limit: Math.min(limit, 50),
-        p_offset: 0,
-    });
-    if (error) throw error;
+    // LOCAL analytics DB only — marketing_name groups from transactions mirror.
+    let sql = `SELECT marketing_name, COUNT(*)::int AS transaction_count,
+    COALESCE(SUM(cash_amount + transfer_amount), 0) AS total_revenue
+FROM transactions
+WHERE is_deleted = false AND marketing_name IS NOT NULL AND marketing_name <> ''
+  AND (checkin_at >= $1 OR (checkin_at IS NULL AND created_at >= $1))`;
+    const params: any[] = [`${start}T00:00:00`];
+    let idx = 2;
+    if (location) {
+        sql += ` AND apartment_location = $${idx}`;
+        params.push(location);
+        idx++;
+    }
+    sql += ` GROUP BY marketing_name ORDER BY total_revenue DESC LIMIT $${idx}`;
+    params.push(Math.min(limit, 50));
+
+    const rows = await queryAnalytics<RpcResultRow>(sql, params);
     return {
         period: { start_date: start, end_date: end, location: location || null },
-        marketing: (data || []).filter((r: RpcResultRow) => r.marketing_name) as RpcResultRow[],
-        total_count: data?.[0]?.total_count || 0,
+        marketing: (rows || []).filter((r) => r.marketing_name) as RpcResultRow[],
+        total_count: rows?.length || 0,
     };
 }
 
 /**
  * fetchRepeatGuests — tamu yang berkunjung lebih dari 1x dalam periode.
- * Panggil RPC get_repeat_guests.
  */
 async function fetchRepeatGuests(start: string, end: string, location?: string, limit: number = 10): Promise<RepeatGuestsResult> {
-    const supabase = createServerClient();
-    const { data, error } = await supabase.rpc('get_repeat_guests', {
-        p_start_date: start,
-        p_end_date: end,
-        p_location: location || null,
-        p_limit: Math.min(limit, 50),
-        p_offset: 0,
-    });
-    if (error) throw error;
+    // LOCAL analytics DB only — group by normalized customer_name.
+    let sql = `SELECT customer_name, COUNT(*)::int AS visit_count,
+    COALESCE(SUM(cash_amount + transfer_amount), 0) AS total_revenue
+FROM transactions
+WHERE is_deleted = false AND customer_name IS NOT NULL AND customer_name <> ''
+  AND (checkin_at >= $1 OR (checkin_at IS NULL AND created_at >= $1))`;
+    const params: any[] = [`${start}T00:00:00`];
+    let idx = 2;
+    if (location) {
+        sql += ` AND apartment_location = $${idx}`;
+        params.push(location);
+        idx++;
+    }
+    sql += ` GROUP BY customer_name HAVING COUNT(*) > 1 ORDER BY visit_count DESC LIMIT $${idx}`;
+    params.push(Math.min(limit, 50));
+
+    const rows = await queryAnalytics<RpcResultRow>(sql, params);
     return {
         period: { start_date: start, end_date: end, location: location || null },
-        repeat_guests: (data || []).filter((r: RpcResultRow) => r.customer_name) as RpcResultRow[],
-        total_count: data?.[0]?.total_count || 0,
+        repeat_guests: (rows || []).filter((r) => r.customer_name) as RpcResultRow[],
+        total_count: rows?.length || 0,
     };
 }
 
 /**
  * fetchStayDurationSummary — distribusi durasi menginap (transit, fullday, per malam).
- * Panggil RPC get_stay_duration_summary.
  */
 async function fetchStayDurationSummary(start: string, end: string, location?: string): Promise<StayDurationResult> {
-    const supabase = createServerClient();
-    const { data, error } = await supabase.rpc('get_stay_duration_summary', {
-        p_start_date: start,
-        p_end_date: end,
-        p_location: location || null,
-    });
-    if (error) throw error;
+    // LOCAL analytics DB only — reuse fetchStayDurationAnalysis (already local).
+    const result = await fetchStayDurationAnalysis(start, end, location);
     return {
         period: { start_date: start, end_date: end, location: location || null },
-        duration_distribution: data || [],
+        duration_distribution: result?.duration_distribution || [],
     };
 }
 
 /**
  * fetchGuestSourceSummary — sumber kedatangan tamu (marketing vs langsung).
- * Panggil RPC get_guest_source_summary.
  */
 async function fetchGuestSourceSummary(start: string, end: string, location?: string, limit: number = 10): Promise<GuestSourceResult> {
-    const supabase = createServerClient();
-    const { data, error } = await supabase.rpc('get_guest_source_summary', {
-        p_start_date: start,
-        p_end_date: end,
-        p_location: location || null,
-        p_limit: Math.min(limit, 50),
-        p_offset: 0,
-    });
-    if (error) throw error;
+    // LOCAL analytics DB only — marketing_name present => 'marketing', else 'langsung'.
+    let sql = `SELECT
+    CASE WHEN marketing_name IS NOT NULL AND marketing_name <> '' THEN 'marketing' ELSE 'langsung' END AS source_name,
+    COUNT(*)::int AS transaction_count,
+    COALESCE(SUM(cash_amount + transfer_amount), 0) AS total_revenue
+FROM transactions
+WHERE is_deleted = false
+  AND (checkin_at >= $1 OR (checkin_at IS NULL AND created_at >= $1))`;
+    const params: any[] = [`${start}T00:00:00`];
+    let idx = 2;
+    if (location) {
+        sql += ` AND apartment_location = $${idx}`;
+        params.push(location);
+        idx++;
+    }
+    sql += ` GROUP BY 1 ORDER BY transaction_count DESC LIMIT $${idx}`;
+    params.push(Math.min(limit, 50));
+
+    const rows = await queryAnalytics<RpcResultRow>(sql, params);
     return {
         period: { start_date: start, end_date: end, location: location || null },
-        sources: (data || []).filter((r: RpcResultRow) => r.source_name) as RpcResultRow[],
-        total_count: data?.[0]?.total_count || 0,
+        sources: (rows || []).filter((r) => r.source_name) as RpcResultRow[],
+        total_count: rows?.length || 0,
     };
 }
 
 /**
  * fetchCheckinHeatmap — heatmap jam checkin (0-23) dalam periode.
- * Queries local analytics DB with 24-hour generate_series and COALESCE(checkin_at, created_at).
- * Falls back to Supabase RPC if analytics DB unavailable.
+ * LOCAL analytics DB only — 24-hour zero-fill via generate_series.
  */
 async function fetchCheckinHeatmap(start: string, end: string, location?: string): Promise<CheckinHeatmapResult> {
-    // Try analytics DB first for 24-hour zero-fill
-    if (!!process.env.ANALYTICS_DATABASE_URL) {
-        try {
-            const params: any[] = [start, end];
-            let whereClause = `(COALESCE(t.checkin_at, t.created_at) AT TIME ZONE 'Asia/Jakarta')::date >= $1::date
-                AND (COALESCE(t.checkin_at, t.created_at) AT TIME ZONE 'Asia/Jakarta')::date <= $2::date`;
-            let idx = 3;
-            if (location) {
-                whereClause += ` AND t.apartment_location = $${idx}`;
-                params.push(location);
-            }
-
-            const rows = await queryAnalytics<any>(`
-                WITH hours AS (
-                    SELECT generate_series(0, 23) AS hour
-                ),
-                checkins AS (
-                    SELECT
-                        EXTRACT(HOUR FROM COALESCE(t.checkin_at, t.created_at) AT TIME ZONE 'Asia/Jakarta')::int AS hour,
-                        COUNT(*) AS transaction_count
-                    FROM transactions t
-                    WHERE ${whereClause}
-                    GROUP BY 1
-                )
-                SELECT
-                    h.hour,
-                    COALESCE(c.transaction_count, 0) AS transaction_count
-                FROM hours h
-                LEFT JOIN checkins c ON c.hour = h.hour
-                ORDER BY h.hour ASC
-            `, params);
-
-            const data = rows.map((r: any) => ({
-                hour: r.hour,
-                transaction_count: Number(r.transaction_count),
-                percentage: 0,
-            }));
-
-            const total = data.reduce((s: number, r: any) => s + r.transaction_count, 0);
-            const enriched = data.map((r: any) => ({
-                ...r,
-                percentage: total > 0 ? Math.round((r.transaction_count / total) * 10000) / 100 : 0,
-            }));
-
-            return {
-                period: { start_date: start, end_date: end, location: location || null },
-                hourly_distribution: enriched,
-                peak_hour: enriched.reduce(
-                    (best: any, cur: any) => !best || cur.transaction_count > best.transaction_count ? cur : best,
-                    null as any,
-                ),
-            };
-        } catch (err) {
-            console.warn('[tools] Analytics DB unavailable for heatmap, falling back to Supabase RPC:', err);
-        }
+    const params: any[] = [start, end];
+    let whereClause = `(COALESCE(t.checkin_at, t.created_at) AT TIME ZONE 'Asia/Jakarta')::date >= $1::date
+        AND (COALESCE(t.checkin_at, t.created_at) AT TIME ZONE 'Asia/Jakarta')::date <= $2::date`;
+    let idx = 3;
+    if (location) {
+        whereClause += ` AND t.apartment_location = $${idx}`;
+        params.push(location);
     }
 
-    // Fallback: Supabase RPC + JS 24-hour zero-fill
-    const supabase = createServerClient();
-    const { data, error } = await supabase.rpc('get_checkin_heatmap', {
-        p_start_date: start,
-        p_end_date: end,
-        p_location: location || null,
-    });
-    if (error) throw error;
-    // JS zero-fill 24 hours
-    const filled = Array.from({ length: 24 }, (_, i) => {
-        const existing = (data || []).find((r: any) => r.hour === i);
-        return {
-            hour: i,
-            transaction_count: existing?.transaction_count ?? 0,
-            percentage: existing?.percentage ?? 0,
-        };
-    });
-    const total = filled.reduce((s: number, r: any) => s + r.transaction_count, 0);
-    const enriched = filled.map((r: any) => ({
+    const rows = await queryAnalytics<any>(`
+        WITH hours AS (
+            SELECT generate_series(0, 23) AS hour
+        ),
+        checkins AS (
+            SELECT
+                EXTRACT(HOUR FROM COALESCE(t.checkin_at, t.created_at) AT TIME ZONE 'Asia/Jakarta')::int AS hour,
+                COUNT(*) AS transaction_count
+            FROM transactions t
+            WHERE ${whereClause}
+            GROUP BY 1
+        )
+        SELECT
+            h.hour,
+            COALESCE(c.transaction_count, 0) AS transaction_count
+        FROM hours h
+        LEFT JOIN checkins c ON c.hour = h.hour
+        ORDER BY h.hour ASC
+    `, params);
+
+    const data = rows.map((r: any) => ({
+        hour: r.hour,
+        transaction_count: Number(r.transaction_count),
+        percentage: 0,
+    }));
+
+    const total = data.reduce((s: number, r: any) => s + r.transaction_count, 0);
+    const enriched = data.map((r: any) => ({
         ...r,
         percentage: total > 0 ? Math.round((r.transaction_count / total) * 10000) / 100 : 0,
     }));
+
     return {
         period: { start_date: start, end_date: end, location: location || null },
         hourly_distribution: enriched,
@@ -1413,8 +1320,7 @@ async function fetchCheckinHeatmap(start: string, end: string, location?: string
 
 /**
  * fetchExpenseBreakdown — breakdown pengeluaran per kategori dalam periode.
- * Panggil RPC get_expense_breakdown_summary (simple) atau analytics_expense_summary (extended).
- * Extended mode: support category filter + comparison data.
+ * LOCAL analytics DB only — analytics_expense_summary (extended always).
  */
 async function fetchExpenseBreakdown(
     start: string,
@@ -1424,150 +1330,218 @@ async function fetchExpenseBreakdown(
     comparisonStartDate?: string,
     comparisonEndDate?: string,
 ): Promise<ExpenseBreakdownResult> {
-    // If extended params present, delegate to analytics DB version
-    if (category || comparisonStartDate || comparisonEndDate) {
-        return fetchExpenseBreakdownExtended(start, end, location, category, comparisonStartDate, comparisonEndDate);
-    }
-
-    const supabase = createServerClient();
-    const { data, error } = await supabase.rpc('get_expense_breakdown_summary', {
-        p_start_date: start,
-        p_end_date: end,
-        p_location: location || null,
-    });
-    if (error) throw error;
+    // Extended handles both simple and comparison cases against local DB.
+    const result = await fetchExpenseBreakdownExtended(start, end, location, category, comparisonStartDate, comparisonEndDate);
     return {
         period: { start_date: start, end_date: end, location: location || null },
-        breakdown: data || [],
+        breakdown: result?.breakdown || [],
     };
 }
 
 /**
  * fetchOccupancyPerLocation — occupancy rate per lokasi.
- * Panggil RPC get_occupancy_per_location.
+ * LOCAL analytics DB only — analytics_occupancy_daily.
  */
 async function fetchOccupancyPerLocation(start: string, end: string, location?: string): Promise<OccupancyPerLocationResult> {
-    const supabase = createServerClient();
-    const { data, error } = await supabase.rpc('get_occupancy_per_location', {
-        p_start_date: start,
-        p_end_date: end,
-        p_location: location || null,
-    });
-    if (error) throw error;
+    const occ = await fetchOccupancyByLocation(start, end, location);
     return {
         period: { start_date: start, end_date: end, location: location || null },
-        locations: data || [],
+        locations: (occ?.locations || []).map((l: any) => ({
+            apartment_location: l.location_name,
+            total_units: l.total_units,
+            occupied_units: l.occupied_units,
+            vacant_units: l.vacant_units,
+            occupancy_rate: l.occupancy_rate,
+        })),
     };
 }
 
 /**
  * fetchRevenueYoY — year-over-year comparison.
- * Panggil RPC get_revenue_yoy_comparison.
+ * LOCAL analytics DB only — compare against same range last year.
  */
 async function fetchRevenueYoY(start: string, end: string, location?: string): Promise<RevenueYoYResult> {
-    const supabase = createServerClient();
-    const { data, error } = await supabase.rpc('get_revenue_yoy_comparison', {
-        p_start_date: start,
-        p_end_date: end,
-        p_location: location || null,
-    });
-    if (error) throw error;
+    const prevStart = `${Number(start.slice(0, 4)) - 1}${start.slice(4)}`;
+    const prevEnd = `${Number(end.slice(0, 4)) - 1}${end.slice(4)}`;
+
+    const [cur, prev] = await Promise.all([
+        queryAnalytics<{ total_revenue: string; tx_count: number }>(`SELECT COALESCE(SUM(total_revenue), 0) AS total_revenue, COALESCE(SUM(transaction_count), 0)::int AS tx_count
+FROM analytics_daily_revenue
+WHERE date_wib >= $1::date AND date_wib <= $2::date${location ? ` AND apartment_location = $3` : ''}`,
+            location ? [start, end, location] : [start, end]),
+        queryAnalytics<{ total_revenue: string; tx_count: number }>(`SELECT COALESCE(SUM(total_revenue), 0) AS total_revenue, COALESCE(SUM(transaction_count), 0)::int AS tx_count
+FROM analytics_daily_revenue
+WHERE date_wib >= $1::date AND date_wib <= $2::date${location ? ` AND apartment_location = $3` : ''}`,
+            location ? [prevStart, prevEnd, location] : [prevStart, prevEnd]),
+    ]);
+
+    const curRev = parseNumeric(cur[0]?.total_revenue);
+    const prevRev = parseNumeric(prev[0]?.total_revenue);
+    const curTx = parseNumeric(cur[0]?.tx_count);
+    const prevTx = parseNumeric(prev[0]?.tx_count);
+    const pct = (cur: number, prev: number) => prev === 0 ? (cur === 0 ? 0 : null) : Math.round(((cur - prev) / prev) * 10000) / 100;
+
     return {
         period: { start_date: start, end_date: end, location: location || null },
-        ...(data?.[0] || { current_revenue: 0, current_transactions: 0, previous_revenue: 0, previous_transactions: 0 }),
+        current_revenue: curRev,
+        current_transactions: curTx,
+        previous_revenue: prevRev,
+        previous_transactions: prevTx,
+        revenue_change_pct: pct(curRev, prevRev) ?? undefined,
+        transactions_change_pct: pct(curTx, prevTx) ?? undefined,
     };
 }
 
 /**
- * fetchPerformanceByEmployee — performa transaksi per karyawan.
- * Panggil RPC get_performance_by_employee.
+ * fetchPerformanceByEmployee — performa transaksi per karyawan (input_by).
  */
 async function fetchPerformanceByEmployee(start: string, end: string, location?: string, limit: number = 10): Promise<EmployeePerformanceResult> {
-    const supabase = createServerClient();
-    const { data, error } = await supabase.rpc('get_performance_by_employee', {
-        p_start_date: start,
-        p_end_date: end,
-        p_location: location || null,
-        p_limit: Math.min(limit, 50),
-        p_offset: 0,
-    });
-    if (error) throw error;
+    // LOCAL analytics DB only — input_by groups from transactions mirror.
+    let sql = `SELECT input_by AS employee_name, COUNT(*)::int AS transaction_count,
+    COALESCE(SUM(cash_amount + transfer_amount), 0) AS total_revenue
+FROM transactions
+WHERE is_deleted = false AND input_by IS NOT NULL AND input_by <> ''
+  AND (checkin_at >= $1 OR (checkin_at IS NULL AND created_at >= $1))`;
+    const params: any[] = [`${start}T00:00:00`];
+    let idx = 2;
+    if (location) {
+        sql += ` AND apartment_location = $${idx}`;
+        params.push(location);
+        idx++;
+    }
+    sql += ` GROUP BY input_by ORDER BY transaction_count DESC LIMIT $${idx}`;
+    params.push(Math.min(limit, 50));
+
+    const rows = await queryAnalytics<RpcResultRow>(sql, params);
     return {
         period: { start_date: start, end_date: end, location: location || null },
-        employees: (data || []).filter((r: RpcResultRow) => r.employee_name) as RpcResultRow[],
-        total_count: data?.[0]?.total_count || 0,
+        employees: (rows || []).filter((r) => r.employee_name) as RpcResultRow[],
+        total_count: rows?.length || 0,
     };
 }
 
 /**
  * fetchMonthlyRevenueTrend — tren revenue bulanan.
- * Panggil RPC get_monthly_revenue_trend.
+ * LOCAL analytics DB only — analytics_monthly_summary.
  */
 async function fetchMonthlyRevenueTrend(start: string, end: string, location?: string): Promise<MonthlyRevenueTrendResult> {
-    const supabase = createServerClient();
-    const { data, error } = await supabase.rpc('get_monthly_revenue_trend', {
-        p_start_date: start,
-        p_end_date: end,
-        p_location: location || null,
-    });
-    if (error) throw error;
+    const startY = Number(start.slice(0, 4));
+    const startM = Number(start.slice(5, 7));
+    const endY = Number(end.slice(0, 4));
+    const endM = Number(end.slice(5, 7));
+
+    let sql = `SELECT year, month, COALESCE(SUM(total_revenue), 0) AS total_revenue, COALESCE(SUM(transaction_count), 0)::int AS transaction_count
+FROM analytics_monthly_summary
+WHERE (year > $1 OR (year = $1 AND month >= $2))
+  AND (year < $3 OR (year = $3 AND month <= $4))`;
+    const params: any[] = [startY, startM, endY, endM];
+    let idx = 5;
+    if (location) {
+        sql += ` AND apartment_location = $${idx}`;
+        params.push(location);
+    }
+    sql += ` GROUP BY year, month ORDER BY year, month`;
+
+    const rows = await queryAnalytics<RpcResultRow>(sql, params);
     return {
         period: { start_date: start, end_date: end, location: location || null },
-        monthly: data || [],
+        monthly: rows?.map((r) => ({
+            ...r,
+            month: `${r.year}-${String(r.month).padStart(2, '0')}`,
+        })) || [],
     };
 }
 
 /**
  * fetchNetProfitPerLocation — profit bersih per lokasi.
- * Panggil RPC get_net_profit_per_location.
+ * LOCAL analytics DB only — revenue - expenses from analytics daily summary.
  */
 async function fetchNetProfitPerLocation(start: string, end: string, location?: string): Promise<NetProfitPerLocationResult> {
-    const supabase = createServerClient();
-    const { data, error } = await supabase.rpc('get_net_profit_per_location', {
-        p_start_date: start,
-        p_end_date: end,
-        p_location: location || null,
+    const [rev, exp] = await Promise.all([
+        queryAnalytics<{ apartment_location: string; total_revenue: string }>(`SELECT apartment_location, COALESCE(SUM(total_revenue), 0) AS total_revenue
+FROM analytics_daily_revenue
+WHERE date_wib >= $1::date AND date_wib <= $2::date${location ? ` AND apartment_location = $3` : ''}
+GROUP BY apartment_location`,
+            location ? [start, end, location] : [start, end]),
+        queryAnalytics<{ apartment_location: string; total_expense: string }>(`SELECT apartment_location, COALESCE(SUM(total_amount), 0) AS total_expense
+FROM analytics_expense_summary
+WHERE date_wib >= $1::date AND date_wib <= $2::date${location ? ` AND apartment_location = $3` : ''}
+GROUP BY apartment_location`,
+            location ? [start, end, location] : [start, end]),
+    ]);
+
+    const expMap = new Map((exp || []).map((e: any) => [e.apartment_location, parseNumeric(e.total_expense)]));
+    const locations = (rev || []).map((r: any) => {
+        const totalRevenue = parseNumeric(r.total_revenue);
+        const totalExpense = expMap.get(r.apartment_location) || 0;
+        return {
+            apartment_location: r.apartment_location,
+            total_revenue: totalRevenue,
+            total_expense: totalExpense,
+            net_profit: Math.round((totalRevenue - totalExpense) * 100) / 100,
+        };
     });
-    if (error) throw error;
+
     return {
         period: { start_date: start, end_date: end, location: location || null },
-        locations: data || [],
+        locations,
     };
 }
 
 /**
  * fetchPaymentMethodSummary — ringkasan metode pembayaran per lokasi.
- * Panggil RPC get_payment_method_summary.
+ * LOCAL analytics DB only — cash vs transfer split.
  */
 async function fetchPaymentMethodSummary(start: string, end: string, location?: string): Promise<PaymentMethodResult> {
-    const supabase = createServerClient();
-    const { data, error } = await supabase.rpc('get_payment_method_summary', {
-        p_start_date: start,
-        p_end_date: end,
-        p_location: location || null,
-    });
-    if (error) throw error;
+    let sql = `SELECT apartment_location,
+    COALESCE(SUM(cash_amount), 0) AS cash_total,
+    COALESCE(SUM(transfer_amount), 0) AS transfer_total
+FROM transactions
+WHERE is_deleted = false
+  AND (checkin_at >= $1 OR (checkin_at IS NULL AND created_at >= $1))`;
+    const params: any[] = [`${start}T00:00:00`];
+    let idx = 2;
+    if (location) {
+        sql += ` AND apartment_location = $${idx}`;
+        params.push(location);
+        idx++;
+    }
+    sql += ` GROUP BY apartment_location ORDER BY apartment_location`;
+
+    const rows = await queryAnalytics<RpcResultRow>(sql, params);
     return {
         period: { start_date: start, end_date: end, location: location || null },
-        locations: data || [],
+        locations: (rows || []).map((r: any) => ({
+            apartment_location: r.apartment_location,
+            cash_total: parseNumeric(r.cash_total),
+            transfer_total: parseNumeric(r.transfer_total),
+        })),
     };
 }
 
 /**
  * fetchPerformanceByShift — performa per shift (pagi/siang/malam).
- * Panggil RPC get_performance_by_shift.
+ * LOCAL analytics DB only — transactions.shift column.
  */
 async function fetchPerformanceByShift(start: string, end: string, location?: string): Promise<any> {
-    const supabase = createServerClient();
-    const { data, error } = await supabase.rpc('get_performance_by_shift', {
-        p_start_date: start,
-        p_end_date: end,
-        p_location: location || null,
-    });
-    if (error) throw error;
+    let sql = `SELECT shift, COUNT(*)::int AS transaction_count,
+    COALESCE(SUM(cash_amount + transfer_amount), 0) AS total_revenue
+FROM transactions
+WHERE is_deleted = false AND shift IS NOT NULL AND shift <> ''
+  AND (checkin_at >= $1 OR (checkin_at IS NULL AND created_at >= $1))`;
+    const params: any[] = [`${start}T00:00:00`];
+    let idx = 2;
+    if (location) {
+        sql += ` AND apartment_location = $${idx}`;
+        params.push(location);
+        idx++;
+    }
+    sql += ` GROUP BY shift ORDER BY transaction_count DESC`;
+
+    const rows = await queryAnalytics<RpcResultRow>(sql, params);
     return {
         period: { start_date: start, end_date: end, location: location || null },
-        shifts: data || [],
+        shifts: rows || [],
     };
 }
 
@@ -2277,21 +2251,23 @@ WHERE customer_name = $1`;
  * Replaces: get_daily_summary + get_latest_status + get_period_summary + expense_breakdown
  */
 async function fetchDashboardKpiPanel(start: string, end: string, location?: string): Promise<any> {
-    const supabase = createServerClient();
-    const { data, error } = await supabase.rpc('get_dashboard_kpis', {
-        p_start_date: start,
-        p_end_date: end,
-        p_location: location || null,
-    });
-    const [expenseBreakdown, latestStatus, dailySummary] = await Promise.all([
+    // LOCAL analytics DB only — RPC get_dashboard_kpis lives on Supabase (remote).
+    const [summary, expenseBreakdown, latestStatus, dailySummary] = await Promise.all([
+        getCanonicalPeriodSummary({ startDate: start, endDate: end }).catch(() => null),
         fetchExpenseBreakdown(start, end, location).catch(() => null),
         fetchLatestStatus().catch(() => null),
         fetchDailySummary().catch(() => null),
     ]);
-    if (error) throw error;
     return {
         period: { start_date: start, end_date: end, location: location || null },
-        kpis: data?.[0] || null,
+        kpis: summary ? {
+            total_revenue: summary.revenue.totalRevenue,
+            total_transactions: summary.revenue.transactionCount,
+            cash_revenue: summary.revenue.cashAmount,
+            transfer_revenue: summary.revenue.transferAmount,
+            total_expense: summary.expenses.totalAmount,
+            net_profit: summary.netProfit,
+        } : null,
         expense_breakdown: expenseBreakdown?.breakdown || [],
         latest_status: latestStatus?.today || null,
         daily_summary: dailySummary || null,

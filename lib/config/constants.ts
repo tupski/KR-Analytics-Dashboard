@@ -20,6 +20,8 @@ export const CACHE_TTL = {
     HISTORICAL_CLOSED: 86400,
     /** Old quarters/years: 72h */
     HISTORICAL_OLD: 259200,
+    /** Live tier (point-in-time status): 30s */
+    LIVE_TIER: 30,
     /** Mart tables refreshed by sync-worker: 5 min */
     MART_DEFAULT: 300,
     /** AI Insight cache default: 30 min */
@@ -147,6 +149,17 @@ export const TIME = {
     WIB_TIMEZONE: 'Asia/Jakarta',
     /** Early day threshold hour (00:00-03:59 WIB = day transition) */
     EARLY_DAY_HOUR: 4,
+} as const;
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Refresh Control (dashboard UI)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export const REFRESH = {
+    /** Auto-refresh interval when checkbox enabled: 5 minutes (ms) */
+    AUTO_INTERVAL_MS: 5 * 60 * 1000,
+    /** Manual refresh button rate-limit cooldown: 1 minute (ms) */
+    MANUAL_COOLDOWN_MS: 60 * 1000,
 } as const;
 
 // ═══════════════════════════════════════════════════════════════════════════════

@@ -9,6 +9,9 @@ import { getRevenueSummary } from '@/lib/services/revenue';
 import { getExpenseSummary } from '@/lib/services/expense';
 import { getMonthlySummaries } from '@/lib/analytics/monthly';
 import type { ReportPeriodRange } from '@/lib/shared/report-period';
+import { withEgressCache, egressCacheKey } from '@/lib/egress-cache';
+import { CACHE_TTL } from '@/lib/config/constants';
+import type { ServerSupabaseClient } from '@/lib/supabase/server';
 
 export type { DateFilter };
 
@@ -121,6 +124,68 @@ export interface LaporanData {
     };
 }
 
+/**
+ * Pick a cache TTL for a laporan period scan.
+ * Closed historical periods are immutable → 24h. Today/current ranges use the
+ * existing constants (5m today, 15m week, 30m month) — mirrors the plan §3.1
+ * laporan summary TTL rule.
+ */
+function laporanTtlFor(startISO: string, endISO: string): number {
+    const now = new Date();
+    const end = new Date(endISO);
+    if (end.getTime() < now.getTime()) return CACHE_TTL.HISTORICAL_CLOSED; // 24h
+    const start = new Date(startISO);
+    const days = Math.max(1, Math.round((end.getTime() - start.getTime()) / 86_400_000));
+    if (days <= 3) return CACHE_TTL.DASHBOARD_TODAY; // 5 min
+    if (days <= 14) return CACHE_TTL.DASHBOARD_WEEK; // 15 min
+    return CACHE_TTL.DASHBOARD_MONTH; // 30 min
+}
+
+/**
+ * Egress P1 (Q36/Q37): tagihan_bulanan paid/unpaid is an ALL-TIME outstanding
+ * query — the UI shows "Lunas"/"Belum Bayar" cards with NO period label
+ * (components/laporan/LaporanClient.tsx:148-164). A due_date bound would change
+ * the reported totals, so NO date bound is applied. Instead the all-time
+ * aggregate is cached (30 min); the two legacy copies (analytics catch + else
+ * branch) are consolidated into this single cached helper.
+ */
+async function fetchTagihanReport(supabase: ServerSupabaseClient): Promise<TagihanReport> {
+    return withEgressCache(egressCacheKey('tagihan_bulanan', 'paid-unpaid'), CACHE_TTL.DASHBOARD_MONTH, async () => {
+        const { data: tagihanPaid } = await supabase
+            .from('tagihan_bulanan')
+            .select('amount')
+            .eq('status', 'paid');
+        const { data: tagihanUnpaid } = await supabase
+            .from('tagihan_bulanan')
+            .select('amount')
+            .eq('status', 'unpaid');
+
+        return {
+            paid: tagihanPaid?.reduce((s, t: any) => s + (t.amount || 0), 0) || 0,
+            unpaid: tagihanUnpaid?.reduce((s, t: any) => s + (t.amount || 0), 0) || 0,
+            paidCount: tagihanPaid?.length || 0,
+            unpaidCount: tagihanUnpaid?.length || 0,
+        };
+    });
+}
+
+/**
+ * Egress P1 (Q36/Q37): tagihan_fee_lunas_items is also all-time —
+ * totalUnpaid = period marketing_fee total MINUS all-time paid fees, so the
+ * paid side cannot be date-bounded without changing numbers. Cached (30 min).
+ */
+async function fetchFeePaidAggregate(supabase: ServerSupabaseClient): Promise<{ totalPaid: number; paidCount: number }> {
+    return withEgressCache(egressCacheKey('tagihan_fee_lunas_items', 'paid-aggregate'), CACHE_TTL.DASHBOARD_MONTH, async () => {
+        const { data: feePaid } = await supabase
+            .from('tagihan_fee_lunas_items')
+            .select('fee_amount');
+        return {
+            totalPaid: feePaid?.reduce((s, f: any) => s + (f.fee_amount || 0), 0) || 0,
+            paidCount: feePaid?.length || 0,
+        };
+    });
+}
+
 export async function fetchLaporanData(
     filter: DateFilter = 'today',
     dateParams?: DateFilterParams,
@@ -133,15 +198,25 @@ export async function fetchLaporanData(
         ? computeDateRange(dateParams.rangePreset, dateParams.startDate, dateParams.endDate, mode)
         : getDateRange(filter, mode);
     const { start, end, label } = range;
+    const startDateStr = start.split('T')[0];
+    const endDateStr = end.split('T')[0];
 
-    // Fetch transactions in range using COALESCE(checkin_at, created_at)
-    const { data: transactions } = await supabase
-        .from('transactions')
-        .select('*')
-        .or(`checkin_at.gte.${start},and(checkin_at.is.null,created_at.gte.${start})`)
-        .order('checkin_at', { ascending: false });
-
-    const txList = transactions || [];
+    // Fetch transactions in range using COALESCE(checkin_at, created_at).
+    // Egress P1: cached per exact (start, end, mode) — two different ranges can
+    // never collide. Cache MISS still runs the RLS-scoped query; service-role
+    // output here has no per-user filter, so rows are identical for all users.
+    const txList = await withEgressCache(
+        egressCacheKey('transactions', 'laporan-scan', start, end, mode),
+        laporanTtlFor(start, end),
+        async () => {
+            const { data } = await supabase
+                .from('transactions')
+                .select('*')
+                .or(`checkin_at.gte.${start},and(checkin_at.is.null,created_at.gte.${start})`)
+                .order('checkin_at', { ascending: false });
+            return data || [];
+        },
+    );
 
     // ── REVENUE (computed from Supabase txList, analytics fallback) ──
     const period = buildPeriodFromISO(start, end);
@@ -246,6 +321,25 @@ export async function fetchLaporanData(
     let totalExpenses = 0;
     let analyticsExpensesUsed = false;
 
+    // Egress P1 (D-3): ONE pengeluaran period scan feeds both the category
+    // summary and the per-location/per-room maps (was two identical fetches).
+    // No existing RPC returns per-row room_number/apartment_location, so the
+    // three derived shapes (expenses, expensesPerLocation, roomExpensesMap)
+    // stay JS-side. Cached per exact date range; RLS output is identical for
+    // all authenticated users (service-role client, no per-user filter).
+    const expenseRows = await withEgressCache(
+        egressCacheKey('pengeluaran', 'laporan-scan', startDateStr, endDateStr),
+        laporanTtlFor(start, end),
+        async () => {
+            const { data } = await supabase
+                .from('pengeluaran')
+                .select('category, jumlah, apartment_location, room_number')
+                .gte('tanggal', startDateStr)
+                .lte('tanggal', endDateStr);
+            return data || [];
+        },
+    );
+
     // hotel_day: skip analytics aggregate to preserve ISO time boundaries
     if (mode !== 'hotel_day') {
         try {
@@ -264,14 +358,8 @@ export async function fetchLaporanData(
 
     // Fallback: compute from Supabase pengeluaran if analytics threw error
     if (!analyticsExpensesUsed) {
-        const { data: expenseData } = await supabase
-            .from('pengeluaran')
-            .select('category, jumlah, apartment_location, room_number')
-            .gte('tanggal', start.split('T')[0])
-            .lte('tanggal', end.split('T')[0]);
-
         const expMap: Record<string, { total: number; count: number }> = {};
-        expenseData?.forEach((e: any) => {
+        expenseRows.forEach((e: any) => {
             const cat = e.category || 'Lainnya';
             if (!expMap[cat]) expMap[cat] = { total: 0, count: 0 };
             expMap[cat].total += e.jumlah || 0;
@@ -290,37 +378,29 @@ export async function fetchLaporanData(
     // Room-level expense map + location-level expense totals
     const roomExpensesMap: Record<string, { hasExpenses: boolean; count: number; total: number }> = {};
     const locationTotalExpenses: Record<string, number> = {};
-    {
-        const { data: expenseLocData } = await supabase
-            .from('pengeluaran')
-            .select('category, jumlah, apartment_location, room_number')
-            .gte('tanggal', start.split('T')[0])
-            .lte('tanggal', end.split('T')[0]);
-
-        expenseLocData?.forEach((e: any) => {
-            const cat = e.category || 'Lainnya';
-            const loc = e.apartment_location;
-            const hasRoom = !!(e.room_number);
-            if (loc && !hasRoom) {
-                if (!expPerLocation[loc]) expPerLocation[loc] = [];
-                const existing = expPerLocation[loc].find(x => x.category === cat);
-                if (existing) { existing.total += e.jumlah || 0; existing.count++; }
-                else expPerLocation[loc].push({ category: cat, total: e.jumlah || 0, count: 1 });
-            }
-            // Build room-level expense map
-            if (e.room_number && e.apartment_location) {
-                const key = `${e.apartment_location}|${e.room_number}`;
-                if (!roomExpensesMap[key]) roomExpensesMap[key] = { hasExpenses: false, count: 0, total: 0 };
-                roomExpensesMap[key].hasExpenses = true;
-                roomExpensesMap[key].count++;
-                roomExpensesMap[key].total += e.jumlah || 0;
-            }
-            // Build location-level expense total
-            if (loc) {
-                locationTotalExpenses[loc] = (locationTotalExpenses[loc] || 0) + (e.jumlah || 0);
-            }
-        });
-    }
+    expenseRows.forEach((e: any) => {
+        const cat = e.category || 'Lainnya';
+        const loc = e.apartment_location;
+        const hasRoom = !!(e.room_number);
+        if (loc && !hasRoom) {
+            if (!expPerLocation[loc]) expPerLocation[loc] = [];
+            const existing = expPerLocation[loc].find(x => x.category === cat);
+            if (existing) { existing.total += e.jumlah || 0; existing.count++; }
+            else expPerLocation[loc].push({ category: cat, total: e.jumlah || 0, count: 1 });
+        }
+        // Build room-level expense map
+        if (e.room_number && e.apartment_location) {
+            const key = `${e.apartment_location}|${e.room_number}`;
+            if (!roomExpensesMap[key]) roomExpensesMap[key] = { hasExpenses: false, count: 0, total: 0 };
+            roomExpensesMap[key].hasExpenses = true;
+            roomExpensesMap[key].count++;
+            roomExpensesMap[key].total += e.jumlah || 0;
+        }
+        // Build location-level expense total
+        if (loc) {
+            locationTotalExpenses[loc] = (locationTotalExpenses[loc] || 0) + (e.jumlah || 0);
+        }
+    });
 
     // Merge location total expenses into location reports
     const locationsWithExpenses = locations.map(loc => ({
@@ -361,40 +441,12 @@ export async function fetchLaporanData(
             }
         } catch (e) {
             console.warn('[laporan] Analytics bills unavailable, falling back to Supabase:', e);
-            // Fall through to legacy path
-            const { data: tagihanPaid } = await supabase
-                .from('tagihan_bulanan')
-                .select('amount')
-                .eq('status', 'paid');
-            const { data: tagihanUnpaid } = await supabase
-                .from('tagihan_bulanan')
-                .select('amount')
-                .eq('status', 'unpaid');
-
-            tagihan = {
-                paid: tagihanPaid?.reduce((s, t: any) => s + (t.amount || 0), 0) || 0,
-                unpaid: tagihanUnpaid?.reduce((s, t: any) => s + (t.amount || 0), 0) || 0,
-                paidCount: tagihanPaid?.length || 0,
-                unpaidCount: tagihanUnpaid?.length || 0,
-            };
+            // Fall through to legacy path (consolidated + cached, no date bound)
+            tagihan = await fetchTagihanReport(supabase);
         }
     } else {
-        // Legacy Supabase path for non-month-aligned ranges
-        const { data: tagihanPaid } = await supabase
-            .from('tagihan_bulanan')
-            .select('amount')
-            .eq('status', 'paid');
-        const { data: tagihanUnpaid } = await supabase
-            .from('tagihan_bulanan')
-            .select('amount')
-            .eq('status', 'unpaid');
-
-        tagihan = {
-            paid: tagihanPaid?.reduce((s, t: any) => s + (t.amount || 0), 0) || 0,
-            unpaid: tagihanUnpaid?.reduce((s, t: any) => s + (t.amount || 0), 0) || 0,
-            paidCount: tagihanPaid?.length || 0,
-            unpaidCount: tagihanUnpaid?.length || 0,
-        };
+        // Legacy Supabase path for non-month-aligned ranges (consolidated + cached)
+        tagihan = await fetchTagihanReport(supabase);
     }
 
     // ── FEE MARKETING (analytics-first for month-aligned, legacy Supabase fallback) ──
@@ -432,32 +484,26 @@ export async function fetchLaporanData(
             };
         } catch (e) {
             console.warn('[laporan] Analytics marketing fees unavailable, falling back to Supabase:', e);
-            // Fall through to legacy path
-            const { data: feePaid } = await supabase
-                .from('tagihan_fee_lunas_items')
-                .select('fee_amount');
-            const totalFeePaid = feePaid?.reduce((s, f: any) => s + (f.fee_amount || 0), 0) || 0;
+            // Fall through to legacy path (consolidated + cached, no date bound)
+            const { totalPaid, paidCount } = await fetchFeePaidAggregate(supabase);
             const totalFeeAll = txList.reduce((s, t: any) => s + (t.marketing_fee || 0), 0);
 
             feeMarketing = {
-                totalPaid: totalFeePaid,
-                totalUnpaid: Math.max(0, totalFeeAll - totalFeePaid),
-                paidCount: feePaid?.length || 0,
+                totalPaid,
+                totalUnpaid: Math.max(0, totalFeeAll - totalPaid),
+                paidCount,
                 unpaidCount: 0,
             };
         }
     } else {
-        // Legacy Supabase path for non-month-aligned ranges
-        const { data: feePaid } = await supabase
-            .from('tagihan_fee_lunas_items')
-            .select('fee_amount');
-        const totalFeePaid = feePaid?.reduce((s, f: any) => s + (f.fee_amount || 0), 0) || 0;
+        // Legacy Supabase path for non-month-aligned ranges (consolidated + cached)
+        const { totalPaid, paidCount } = await fetchFeePaidAggregate(supabase);
         const totalFeeAll = txList.reduce((s, t: any) => s + (t.marketing_fee || 0), 0);
 
         feeMarketing = {
-            totalPaid: totalFeePaid,
-            totalUnpaid: Math.max(0, totalFeeAll - totalFeePaid),
-            paidCount: feePaid?.length || 0,
+            totalPaid,
+            totalUnpaid: Math.max(0, totalFeeAll - totalPaid),
+            paidCount,
             unpaidCount: 0,
         };
     }

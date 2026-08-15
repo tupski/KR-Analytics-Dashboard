@@ -6,10 +6,10 @@
  * Step C: Historical latest (broad name search, sorted by effective date desc)
  *
  * Returns unified structure with bestMatch identification.
- * SELECT-only, parameterized queries. Falls back from Supabase to queryAnalytics.
+ * SELECT-only, parameterized queries against the LOCAL analytics DB only.
+ * Supabase (remote) is NOT an allowed AI data source.
  */
 
-import { createServerClient } from '@/lib/supabase/server';
 import { queryAnalytics } from '@/lib/analytics/db';
 import { format, toZonedTime } from 'date-fns-tz';
 import {
@@ -20,6 +20,9 @@ import {
     formatTimeWIB,
 } from '@/lib/ai/tools/shared/normalize';
 import type { TransactionStay } from '@/lib/ai/tools/shared/normalize';
+import { assertLocalOnly } from '@/lib/ai/tools/shared/local-only';
+
+assertLocalOnly();
 
 // ─── Types ──────────────────────────────────────────────────
 
@@ -73,53 +76,26 @@ function pickBestMatch(
     return { bestMatch: null, bestMatchSource: null };
 }
 
-// ─── Supabase query helper ──────────────────────────────────
+// ─── Local analytics DB query helper ────────────────────────
 
-async function querySupabaseILike(
-    guestName: string,
-    location?: string,
-    additionalFilter?: (q: any) => any,
-    limit: number = 50,
-): Promise<any[]> {
-    const supabase = createServerClient();
-    let q = supabase
-        .from('transactions')
-        .select('id, customer_name, apartment_location, room_number, checkin_at, created_at, checkout_at, rental_duration, cash_amount, transfer_amount')
-        .ilike('customer_name', `%${guestName.trim()}%`);
-
-    if (location) {
-        q = q.ilike('apartment_location', `%${location.trim()}%`);
-    }
-
-    if (additionalFilter) {
-        q = additionalFilter(q);
-    }
-
-    q = q.limit(limit);
-
-    const { data, error } = await q;
-    if (error) throw error;
-    return data || [];
-}
-
-// ─── Analytics DB fallback ──────────────────────────────────
-
-async function queryAnalyticsILike(
+async function queryLocalILike(
     guestName: string,
     whereClause: string,
     params: any[],
     limit: number = 50,
 ): Promise<any[]> {
+    // Placeholders: $1 = name, $2..$(params.length+1) = params, LIMIT = params.length+2.
     const sql = `SELECT id, customer_name, apartment_location, room_number, checkin_at, created_at, checkout_at, rental_duration, cash_amount, transfer_amount
 FROM transactions
-WHERE customer_name ILIKE $1 AND ${whereClause}
+WHERE is_deleted = false AND customer_name ILIKE $1 AND ${whereClause}
 ORDER BY COALESCE(checkin_at, created_at) DESC
-LIMIT $${params.length + 1}`;
+LIMIT $${params.length + 2}`;
 
     const allParams = [`%${guestName.trim()}%`, ...params, limit];
     try {
         return await queryAnalytics<any>(sql, allParams);
-    } catch {
+    } catch (err) {
+        console.warn('[guest-history] Local analytics query failed:', err);
         return [];
     }
 }
@@ -160,37 +136,19 @@ export async function getGuestStayHistory(
             { timeZone: tz },
         );
 
-        const todayRows = await querySupabaseILike(guestName, location, (q) => {
-            return q.or(`checkin_at.gte.${todayStart},and(checkin_at.is.null,created_at.gte.${todayStart})`);
-        }, safeLimit);
+        const todayRows = await queryLocalILike(
+            guestName,
+            location
+                ? `apartment_location ILIKE $2 AND ((checkin_at >= $3 AND checkin_at < $4) OR (checkin_at IS NULL AND created_at >= $3 AND created_at < $4))`
+                : `(checkin_at >= $2 AND checkin_at < $3) OR (checkin_at IS NULL AND created_at >= $2 AND created_at < $3)`,
+            location ? [`%${location}%`, todayStart, tomorrowStart] : [todayStart, tomorrowStart],
+            safeLimit,
+        );
 
-        // JS filter: effective date in [todayStart, tomorrowStart)
-        todayMatches = (todayRows || [])
-            .filter((t: any) => {
-                const effDate = t.checkin_at || t.created_at || '';
-                return effDate && effDate >= todayStart && effDate < tomorrowStart;
-            })
-            .map(mapTxToMatchItem);
+        // Already filtered by the SQL where clause
+        todayMatches = (todayRows || []).map(mapTxToMatchItem);
     } catch (err) {
-        console.warn('[guest-history] Step A Supabase failed, trying fallback:', err);
-        try {
-            const todayStart = format(now, "yyyy-MM-dd'T'00:00:00.000'xxx'", { timeZone: tz });
-            const tomorrowStart = format(
-                new Date(now.getTime() + 86400000),
-                "yyyy-MM-dd'T'00:00:00.000'xxx'",
-                { timeZone: tz },
-            );
-            const rows = await queryAnalyticsILike(
-                guestName,
-                `(checkin_at >= $2 AND checkin_at < $3) OR (checkin_at IS NULL AND created_at >= $2 AND created_at < $3)`,
-                [todayStart, tomorrowStart],
-                safeLimit,
-            );
-            // Already filtered by the SQL where clause
-            todayMatches = rows.map(mapTxToMatchItem);
-        } catch (fallbackErr) {
-            console.warn('[guest-history] Step A fallback also failed:', fallbackErr);
-        }
+        console.warn('[guest-history] Step A local query failed:', err);
     }
 
     if (todayMatches.length > 0) {
@@ -211,16 +169,21 @@ export async function getGuestStayHistory(
     try {
         const threeDaysAgo = new Date(now.getTime() - 3 * 24 * 60 * 60 * 1000).toISOString();
 
-        const liveRows = await querySupabaseILike(guestName, location, (q) => {
-            return q.or(`checkin_at.gte.${threeDaysAgo},and(checkin_at.is.null,created_at.gte.${threeDaysAgo})`);
-        }, safeLimit);
+        const liveRows = await queryLocalILike(
+            guestName,
+            location
+                ? `apartment_location ILIKE $2 AND (checkin_at >= $3 OR (checkin_at IS NULL AND created_at >= $3))`
+                : `(checkin_at >= $2 OR (checkin_at IS NULL AND created_at >= $2))`,
+            location ? [`%${location}%`, threeDaysAgo] : [threeDaysAgo],
+            safeLimit,
+        );
 
         const nowDate = new Date();
         liveMatches = (liveRows || [])
             .filter((t: any) => isCurrentlyStaying(t as TransactionStay, nowDate))
             .map(mapTxToMatchItem);
     } catch (err) {
-        console.warn('[guest-history] Step B Supabase failed:', err);
+        console.warn('[guest-history] Step B local query failed:', err);
     }
 
     if (liveMatches.length > 0) {
@@ -239,7 +202,7 @@ export async function getGuestStayHistory(
     // ── Step C: Historical latest ─────────────────────────────
     let historyMatches: GuestStayMatchItem[] = [];
     try {
-        const histRows = await querySupabaseILike(guestName, undefined, undefined, safeLimit);
+        const histRows = await queryLocalILike(guestName, '1=1', [], safeLimit);
 
         // Apply location filter in JS if needed
         const filtered = location
@@ -255,16 +218,7 @@ export async function getGuestStayHistory(
 
         historyMatches = filtered.slice(0, safeLimit).map(mapTxToMatchItem);
     } catch (err) {
-        console.warn('[guest-history] Step C Supabase failed, trying fallback:', err);
-        try {
-            const rows = await queryAnalyticsILike(guestName, '1=1', [], safeLimit);
-            const filtered = location
-                ? rows.filter((t: any) => fuzzyLocationMatch(location, t.apartment_location))
-                : rows;
-            historyMatches = filtered.slice(0, safeLimit).map(mapTxToMatchItem);
-        } catch (fallbackErr) {
-            console.warn('[guest-history] Step C fallback also failed:', fallbackErr);
-        }
+        console.warn('[guest-history] Step C local query failed:', err);
     }
 
     const { bestMatch, bestMatchSource } = pickBestMatch([], [], historyMatches);

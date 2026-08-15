@@ -1,7 +1,7 @@
 import { getReportPeriodRange } from '@/lib/shared/report-period';
 import type { ReportPeriodMode, ReportPeriodRange } from '@/lib/shared/report-period';
-import { getRevenueSummary } from '@/lib/services/revenue';
-import { getExpenseSummary } from '@/lib/services/expense';
+import { getRevenueSummary } from '@/lib/analytics/revenue';
+import { getExpenseSummary } from '@/lib/analytics/expenses';
 import { getReportPeriodSetting } from '@/lib/get-report-period-setting';
 
 export interface PeriodSummaryInput {
@@ -43,13 +43,18 @@ export async function getCanonicalPeriodSummary(input: PeriodSummaryInput): Prom
     });
 
     const [revenue, expenses] = await Promise.all([
-        getRevenueSummary(period),
-        getExpenseSummary(undefined, undefined, period),
+        getRevenueSummary(period.startDate, period.endExclusiveDate),
+        getExpenseSummary(period.startDate, period.endExclusiveDate),
     ]);
 
     return {
         period,
-        revenue,
+        revenue: {
+            totalRevenue: revenue.totalRevenue,
+            cashAmount: revenue.totalCash,
+            transferAmount: revenue.totalTransfer,
+            transactionCount: revenue.totalTransactions,
+        },
         expenses,
         netProfit: revenue.totalRevenue - expenses.totalAmount,
     };

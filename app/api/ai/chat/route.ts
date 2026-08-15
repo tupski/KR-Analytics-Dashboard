@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createServerClient } from '@/lib/supabase/server';
 import { format, subDays } from 'date-fns';
 import { toZonedTime } from 'date-fns-tz';
 import { OPENAI_TOOLS, ANTHROPIC_TOOLS, executeTool, type ToolCall } from '@/lib/ai/tools';
@@ -76,7 +75,6 @@ function getModelPriority(provider: string, model: string): number {
 
 /** Tiny snapshot to include in the system message so the AI knows what date "today" is. */
 async function getQuickContext(): Promise<string> {
-    const supabase = createServerClient();
     const timezone = 'Asia/Jakarta';
     const todayDate = toZonedTime(new Date(), timezone);
     const today = format(todayDate, 'yyyy-MM-dd');
@@ -86,19 +84,21 @@ async function getQuickContext(): Promise<string> {
     const lastMonth = format(subDays(todayDate, 30), 'yyyy-MM-dd');
     const lastYear = format(subDays(todayDate, 365), 'yyyy-MM-dd');
 
+    // LOCAL analytics DB only — Supabase is not an allowed AI data source.
     let locationDescriptors = '';
     let totalRooms = 0;
     try {
-        const { data: locations } = await supabase
-            .from('lokasi_apartemen')
-            .select('name, total_rooms');
+        const { queryAnalytics } = await import('@/lib/analytics/db');
+        const locations = await queryAnalytics<{ name: string; total_rooms: number }>(
+            `SELECT name, total_rooms FROM lokasi_apartemen WHERE is_deleted = false ORDER BY name`,
+        );
         locationDescriptors = (locations || [])
             .map((l: any) => `${l.name} (${l.total_rooms || '?'} kamar)`)
             .join(', ');
-        const { count } = await supabase
-            .from('nomor_kamar')
-            .select('id', { count: 'exact', head: true });
-        totalRooms = count || 0;
+        const roomRows = await queryAnalytics<{ total: number }>(
+            `SELECT COUNT(*)::int AS total FROM nomor_kamar WHERE is_deleted = false`,
+        );
+        totalRooms = roomRows[0]?.total || 0;
     } catch { /* swallow */ }
 
     return `KONTEKS SISTEM:
