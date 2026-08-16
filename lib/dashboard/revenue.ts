@@ -42,8 +42,23 @@ export interface RevenueSummaryResult {
 export async function getRevenueSummary(params: {
     period: ReportPeriodRange;
     location?: string;
+    // Legacy params (deprecated - use period instead)
+    startDate?: string;
+    endDate?: string;
 }): Promise<RevenueSummaryResult> {
+    // ── Deprecation warning for legacy params ────────────────
+    if ((params.startDate || params.endDate) && !params.period) {
+        console.warn(
+            '[lib/dashboard/revenue.ts] DEPRECATION: startDate/endDate params are deprecated. ' +
+            'Please migrate to ReportPeriodRange. Legacy period boundary logic may not respect ' +
+            'hotel_day mode (12:00-11:59). See lib/shared/report-period.ts for proper usage.'
+        );
+    }
+
     // ── Fetch all data sources in parallel ───────────────────
+    // NOTE: Currently only getRevenueTrend supports location filtering.
+    // getServiceRevenueSummary and getServiceExpenseSummary apply to all locations.
+    // This is intentional per service design - expense service doesn't support location filter.
     const [revenueSummary, expenseSummary, revenueTrend] = await Promise.all([
         getServiceRevenueSummary(params.period),
         getServiceExpenseSummary(undefined, undefined, params.period),

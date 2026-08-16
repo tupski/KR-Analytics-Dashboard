@@ -9,6 +9,7 @@ import type {
   StayDurationSummary,
   RepeatGuest,
 } from './types';
+import { toZonedTime } from 'date-fns-tz';
 
 // ────────────────────────────────────────────────────────────────
 // Helper
@@ -19,7 +20,7 @@ import type {
  */
 function defaultRange(): { startDate: string; endDate: string } {
   const now = new Date();
-  const wib = new Date(now.getTime() + 7 * 60 * 60 * 1000);
+  const wib = toZonedTime(now, 'Asia/Jakarta');
   const end = new Date(wib);
   end.setDate(end.getDate() + 1);
   const start = new Date(wib);

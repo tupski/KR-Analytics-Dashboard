@@ -89,11 +89,16 @@ export function clearEgressCache(): void {
  * Build a collision-safe cache key from table + period bounds.
  * The exact date strings are included so two different ranges can
  * never share an entry.
+ *
+ * FIXED: URL-safe encoding to prevent cache key collisions from special characters.
  */
 export function egressCacheKey(
     table: string,
     kind: string,
     ...bounds: Array<string | number | undefined | null>
 ): string {
-    return `egress:${table}:${kind}:${bounds.join('|')}`;
+    const encodedBounds = bounds.map(b =>
+        b === null || b === undefined ? 'null' : encodeURIComponent(String(b))
+    );
+    return `egress:${encodeURIComponent(table)}:${encodeURIComponent(kind)}:${encodedBounds.join('|')}`;
 }

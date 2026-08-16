@@ -71,6 +71,15 @@ export async function getOccupancySummary(params: {
     location?: string;
     totalUnits?: number;
 }): Promise<OccupancySummaryResult> {
+    // ── Deprecation warning for legacy params ────────────────
+    if ((params.startDate || params.endDate) && !params.period) {
+        console.warn(
+            '[lib/dashboard/occupancy.ts] DEPRECATION: startDate/endDate params are deprecated. ' +
+            'Please migrate to ReportPeriodRange. Legacy period boundary logic may not respect ' +
+            'hotel_day mode (12:00-11:59). See lib/shared/report-period.ts for proper usage.'
+        );
+    }
+
     // ── Room count — use pre-fetched value if provided ───────
     const totalUnits = params.totalUnits ?? (await getTotalRoomCount());
 

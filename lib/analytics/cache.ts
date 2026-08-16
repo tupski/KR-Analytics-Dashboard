@@ -218,9 +218,12 @@ export const cacheService = new CacheService();
  *
  * Algorithm:
  *   1. Sort params keys alphabetically
- *   2. JSON.stringify the sorted object
+ *   2. JSON.stringify the sorted object (handles special chars safely)
  *   3. MD5 hash of `metricName|jsonString`
  *   4. Return `${metricName}_${hash}`
+ *
+ * NOTE: MD5 hashing ensures collision-safe keys. JSON.stringify naturally
+ * escapes special characters, making this safe for cache key usage.
  */
 export function computeCacheKey(metricName: string, params: CacheParams): string {
     const sorted = Object.keys(params)

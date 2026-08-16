@@ -284,16 +284,20 @@ async function getDailyOccupancyTrendInner(days: number = 30): Promise<DailyOccu
 
             const dailyRows = await getOccupancyDailyAnalytics(sd, ed);
 
+            // FIXED: Check for zero/empty results before trusting analytics DB
+            // (consistent with revenue service fallback logic in lib/services/revenue.ts:123-135)
             if (!dailyRows || dailyRows.length === 0) {
-                return [];
-            }
+                console.debug('[Occupancy] Analytics returned 0 rows, falling back to Supabase');
+                // Fall through to Supabase fallback below (after catch block)
+            } else {
+                // Analytics returned data - process it
 
-            // Fetch total rooms from master nomor_kamar (source of truth)
-            const supabase = createServerClient();
-            const { count: totalRoomsRaw } = await supabase
-                .from('nomor_kamar')
-                .select('id', { count: 'exact', head: true });
-            const totalRooms = totalRoomsRaw ?? 0;
+                // Fetch total rooms from master nomor_kamar (source of truth)
+                const supabase = createServerClient();
+                const { count: totalRoomsRaw } = await supabase
+                    .from('nomor_kamar')
+                    .select('id', { count: 'exact', head: true });
+                const totalRooms = totalRoomsRaw ?? 0;
 
             // Group by date, count occupied rooms
             const byDate = new Map<string, Set<string>>();
@@ -350,6 +354,7 @@ async function getDailyOccupancyTrendInner(days: number = 30): Promise<DailyOccu
             }));
 
             return result;
+            }
         } catch (error) {
             console.warn('[occupancy] Analytics DB unavailable, falling back to Supabase:', error);
         }
