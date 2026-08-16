@@ -1,13 +1,10 @@
 node_modules
 .git
-.gitignore
-.next
-*.md
-!README.md
-docs/
-scripts/
-sync-worker/
-supabase-schema/
+dist
+*.log
+.DS_Store
+.vscode
+.idea
 # L-2 Security: Exclude all .env files and secret files from Docker build context
 # to prevent them from leaking into image layers.
 .env
@@ -17,8 +14,3 @@ supabase-schema/
 .env.development*
 *.pem
 *.key
-*.log
-.DS_Store
-coverage
-.vscode
-.idea

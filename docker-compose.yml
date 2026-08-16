@@ -7,7 +7,10 @@ services:
       dockerfile: Dockerfile
     container_name: kr-dashboard
     ports:
-      - "${DASHBOARD_PORT:-3031}:3000"
+      # L-3 Security: Bind ke localhost saja untuk security — hanya dapat diakses dari host machine.
+      # Jika perlu diakses dari device/network lain (e.g. remote server), ganti ke "0.0.0.0:PORT:3000"
+      # atau hapus prefix 127.0.0.1 dan pastikan firewall dikonfigurasi dengan benar.
+      - "127.0.0.1:${DASHBOARD_PORT:-3031}:3000"
     env_file:
       - .env
     environment:
