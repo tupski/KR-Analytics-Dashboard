@@ -1,8 +1,8 @@
 'use client';
 
-import { usePathname } from 'next/navigation';
+import { usePathname, useSearchParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { MoreHorizontal, X } from 'lucide-react';
 import { NAV_ITEMS, isActivePath } from '@/lib/config/navigation';
 
@@ -13,10 +13,34 @@ import { NAV_ITEMS, isActivePath } from '@/lib/config/navigation';
  * Shows 4 core items + a "More" button that opens a drawer
  * with the remaining navigation items.
  * Hidden on desktop (lg breakpoint and above).
+ *
+ * Drawer state persists across navigation using URL search params.
  */
 export default function MobileBottomNav() {
     const pathname = usePathname();
+    const searchParams = useSearchParams();
+    const router = useRouter();
     const [drawerOpen, setDrawerOpen] = useState(false);
+
+    // Sync drawer state with URL search params on mount and when params change
+    useEffect(() => {
+        const drawerParam = searchParams.get('drawer');
+        setDrawerOpen(drawerParam === 'open');
+    }, [searchParams]);
+
+    // Update URL when drawer state changes
+    const toggleDrawer = (open: boolean) => {
+        setDrawerOpen(open);
+        const current = new URLSearchParams(Array.from(searchParams.entries()));
+        if (open) {
+            current.set('drawer', 'open');
+        } else {
+            current.delete('drawer');
+        }
+        const search = current.toString();
+        const query = search ? `?${search}` : '';
+        router.replace(`${pathname}${query}`, { scroll: false });
+    };
 
     // Core items: first 4 items with mobileShow=true
     // Currently: Dashboard, Booking, Unit, Laporan
@@ -50,7 +74,7 @@ export default function MobileBottomNav() {
 
                     {/* More button */}
                     <button
-                        onClick={() => setDrawerOpen(true)}
+                        onClick={() => toggleDrawer(true)}
                         className={`flex flex-col items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${drawerOpen
                             ? 'text-blue-600'
                             : 'text-gray-500 hover:text-gray-700'
@@ -97,7 +121,7 @@ export default function MobileBottomNav() {
                                 <Link
                                     key={item.href}
                                     href={item.href}
-                                    onClick={() => setDrawerOpen(false)}
+                                    onClick={() => toggleDrawer(false)}
                                     className={`flex flex-col items-center gap-1.5 p-3 rounded-xl text-xs font-medium transition-colors ${active
                                         ? 'bg-blue-50 text-blue-600'
                                         : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'

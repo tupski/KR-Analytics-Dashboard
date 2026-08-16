@@ -93,7 +93,8 @@ export default function LocationHealthMatrix({ locations, isLoading }: LocationH
             {isLoading && (
                 <>
                     {/* Desktop skeleton table */}
-                    <div className="hidden sm:block overflow-x-auto rounded-lg border border-gray-200 bg-white shadow-sm">
+                    {/* Standardized breakpoint: lg (1024px) for consistent mobile ↔ desktop transitions */}
+                    <div className="hidden lg:block overflow-x-auto rounded-lg border border-gray-200 bg-white shadow-sm">
                         <table className="min-w-full text-sm">
                             <thead className="bg-gray-50 border-b border-gray-200">
                                 <tr>
@@ -121,7 +122,8 @@ export default function LocationHealthMatrix({ locations, isLoading }: LocationH
             {!isLoading && locations.length > 0 && (
                 <>
                     {/* Desktop table */}
-                    <div className="hidden sm:block overflow-x-auto rounded-lg border border-gray-200 bg-white shadow-sm">
+                    {/* Standardized breakpoint: lg (1024px) for consistent mobile ↔ desktop transitions */}
+                    <div className="hidden lg:block overflow-x-auto rounded-lg border border-gray-200 bg-white shadow-sm">
                         <table className="min-w-full text-sm">
                             <thead className="bg-gray-50 border-b border-gray-200">
                                 <tr>

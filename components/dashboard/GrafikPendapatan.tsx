@@ -172,7 +172,7 @@ export default function GrafikPendapatan({ initialData, initialFilter }: GrafikP
                         />
                         <YAxis
                             stroke="#6b7280"
-                            style={{ fontSize: '12px' }}
+                            style={{ fontSize: 'clamp(9px, 2vw, 12px)' }}
                             tickFormatter={formatAxisCurrency}
                         />
                         <Tooltip content={<CustomTooltip />} />

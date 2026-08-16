@@ -21,8 +21,9 @@ export default function HeaderDashboard() {
                     </p>
                 </div>
                 <div className="flex-shrink-0 flex items-start gap-3">
-                    <ReportPeriodChip className="hidden sm:inline-flex mt-1" />
-                    <div className="hidden sm:block w-64">
+                    {/* Standardized breakpoint: lg (1024px) for consistent mobile ↔ desktop transitions */}
+                    <ReportPeriodChip className="hidden lg:inline-flex mt-1" />
+                    <div className="hidden lg:block w-64">
                         <SyncStatusBadge />
                     </div>
                 </div>

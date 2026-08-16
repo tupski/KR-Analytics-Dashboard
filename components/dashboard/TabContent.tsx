@@ -10,6 +10,7 @@ import CheckoutHariIni from './CheckoutHariIni';
 import StatusUnit from './StatusUnit';
 import CollapsibleChartTable from '@/components/shared/CollapsibleChartTable';
 import AdvancedAnalyticsSection from './AdvancedAnalyticsSection';
+import ChartErrorBoundary from './ChartErrorBoundary';
 import type { KPIData, KPICompareMode, LocationHealthItem, MarketingPerformanceItem, DashboardInsight } from '@/types/dashboard';
 import type { UnitPerformanceData } from '@/lib/dashboard/unit-performance';
 import type {
@@ -220,7 +221,9 @@ export default function TabContent({
             {/* Charts — Side-by-side */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div className="space-y-2">
-                    <GrafikPendapatan initialData={revenueData} initialFilter="daily" />
+                    <ChartErrorBoundary fallbackTitle="Grafik Pendapatan">
+                        <GrafikPendapatan initialData={revenueData} initialFilter="daily" />
+                    </ChartErrorBoundary>
                     {revenueData && revenueData.length > 0 && (
                         <CollapsibleChartTable
                             title="Data Pendapatan"
@@ -235,7 +238,9 @@ export default function TabContent({
                     )}
                 </div>
                 <div className="space-y-2">
-                    <GrafikOkupansi data={occupancyData} period={occupancyPeriod} />
+                    <ChartErrorBoundary fallbackTitle="Grafik Okupansi">
+                        <GrafikOkupansi data={occupancyData} period={occupancyPeriod} />
+                    </ChartErrorBoundary>
                     {occupancyData && occupancyData.length > 0 && (
                         <CollapsibleChartTable
                             title="Data Okupansi"
@@ -355,16 +360,18 @@ export default function TabContent({
             {/* ══════════════════════════════════════════════════ */}
             {/* ADVANCED ANALYTICS — collapsible on mobile        */}
             {/* ══════════════════════════════════════════════════ */}
-            <AdvancedAnalyticsSection
-                guestSourceSummary={guestSourceSummary || []}
-                occupancyPerUnit={occupancyPerUnit || []}
-                stayDurationSummary={stayDurationSummary || []}
-                repeatGuests={repeatGuests || []}
-                locationHealthData={locationHealthData}
-                unitPerformanceData={unitPerformanceData}
-                marketingPerformanceData={marketingPerformanceData}
-                periodLabel={analyticsPeriodLabel || '30 Hari Terakhir'}
-            />
+            <ChartErrorBoundary fallbackTitle="Advanced Analytics Section">
+                <AdvancedAnalyticsSection
+                    guestSourceSummary={guestSourceSummary || []}
+                    occupancyPerUnit={occupancyPerUnit || []}
+                    stayDurationSummary={stayDurationSummary || []}
+                    repeatGuests={repeatGuests || []}
+                    locationHealthData={locationHealthData}
+                    unitPerformanceData={unitPerformanceData}
+                    marketingPerformanceData={marketingPerformanceData}
+                    periodLabel={analyticsPeriodLabel || '30 Hari Terakhir'}
+                />
+            </ChartErrorBoundary>
 
             {/* ══════════════════════════════════════════════════ */}
             {/* KPI DETAIL MODALS — clickable card drill-down      */}

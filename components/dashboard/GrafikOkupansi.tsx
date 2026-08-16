@@ -91,14 +91,14 @@ export default function GrafikOkupansi({ data, period = 30, isLoading = false }:
                         angle={-45}
                         textAnchor="end"
                         height={56}
-                        tick={{ fontSize: 10, fill: '#6b7280' }}
+                        tick={{ fontSize: 'clamp(9px, 2vw, 10px)', fill: '#6b7280' }}
                         interval={Math.max(0, Math.floor(data.length / 8) - 1)}
                     />
                     <YAxis
                         tickFormatter={formatPct}
                         domain={[0, 100]}
                         ticks={[0, 25, 50, 75, 100]}
-                        tick={{ fontSize: 10, fill: '#6b7280' }}
+                        tick={{ fontSize: 'clamp(9px, 2vw, 10px)', fill: '#6b7280' }}
                         width={38}
                     />
                     <Tooltip content={<CustomTooltip />} cursor={{ fill: 'rgba(0,0,0,0.04)' }} />

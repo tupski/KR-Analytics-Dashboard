@@ -5,6 +5,7 @@ import AnalyticsCharts from '@/components/analytics/AnalyticsCharts';
 import LocationHealthMatrix from './LocationHealthMatrix';
 import UnitPerformancePanel from './UnitPerformancePanel';
 import MarketingPerformancePanel from './MarketingPerformancePanel';
+import ChartErrorBoundary from './ChartErrorBoundary';
 import type {
     GuestSourceSummary,
     OccupancyPerUnit,
@@ -71,25 +72,33 @@ export default function AdvancedAnalyticsSection({
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             {/* Analytics charts — 2/3 width */}
             <div className="lg:col-span-2 space-y-6">
-                <AnalyticsCharts
-                    guestSourceSummary={guestSourceSummary}
-                    occupancyPerUnit={occupancyPerUnit}
-                    stayDurationSummary={stayDurationSummary}
-                    repeatGuests={repeatGuests}
-                    periodLabel={periodLabel}
-                />
+                <ChartErrorBoundary fallbackTitle="Analytics Charts">
+                    <AnalyticsCharts
+                        guestSourceSummary={guestSourceSummary}
+                        occupancyPerUnit={occupancyPerUnit}
+                        stayDurationSummary={stayDurationSummary}
+                        repeatGuests={repeatGuests}
+                        periodLabel={periodLabel}
+                    />
+                </ChartErrorBoundary>
             </div>
             {/* Legacy panels — 1/3 width, stacked */}
             <div className="space-y-6">
-                <LocationHealthMatrix locations={locationHealthData} isLoading={isLoading} />
-                <UnitPerformancePanel data={unitPerformanceData} isLoading={isLoading} />
-                <MarketingPerformancePanel
-                    items={marketingPerformanceData.items}
-                    totalRevenue={marketingPerformanceData.totalRevenue}
-                    totalTransactions={marketingPerformanceData.totalTransactions}
-                    activeChannels={marketingPerformanceData.activeChannels}
-                    isLoading={isLoading}
-                />
+                <ChartErrorBoundary fallbackTitle="Location Health Matrix">
+                    <LocationHealthMatrix locations={locationHealthData} isLoading={isLoading} />
+                </ChartErrorBoundary>
+                <ChartErrorBoundary fallbackTitle="Unit Performance Panel">
+                    <UnitPerformancePanel data={unitPerformanceData} isLoading={isLoading} />
+                </ChartErrorBoundary>
+                <ChartErrorBoundary fallbackTitle="Marketing Performance Panel">
+                    <MarketingPerformancePanel
+                        items={marketingPerformanceData.items}
+                        totalRevenue={marketingPerformanceData.totalRevenue}
+                        totalTransactions={marketingPerformanceData.totalTransactions}
+                        activeChannels={marketingPerformanceData.activeChannels}
+                        isLoading={isLoading}
+                    />
+                </ChartErrorBoundary>
             </div>
         </div>
     );
