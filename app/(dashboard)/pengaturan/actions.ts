@@ -4,6 +4,21 @@ import { createServerClient } from '@/lib/supabase/server';
 import { revalidatePath } from 'next/cache';
 import { DEFAULTS } from '@/lib/config/constants';
 import { AppSettingsSchema, validateInput } from '@/lib/validation';
+import { getSession, getUserRole } from '@/lib/supabase/auth';
+
+// ─── Session Guard for Server Actions ────────────────────────────
+/**
+ * Validate that the caller is an authenticated super_admin.
+ * Server actions cannot return NextResponse, so we return a typed
+ * error object instead — the caller should check for `authError`.
+ */
+async function requireAdminAction(): Promise<{ authError: string } | null> {
+    const session = await getSession();
+    if (!session?.user) return { authError: 'Autentikasi diperlukan.' };
+    const role = await getUserRole(session.user.id);
+    if (role !== 'super_admin') return { authError: 'Akses ditolak. Hanya super admin.' };
+    return null;
+}
 
 // ═══════════════════════════════════════════════════════════════════
 // Types
@@ -81,7 +96,12 @@ export async function updateAppSettings(settings: unknown): Promise<{
     success: boolean;
     error?: string;
     fieldErrors?: Record<string, string>;
+    authError?: string;
 }> {
+    // Session / role guard — must be super_admin to mutate settings
+    const authCheck = await requireAdminAction();
+    if (authCheck) return { success: false, ...authCheck };
+
     // Validate input using Zod schema (imported from lib/validation.ts)
     const validation = validateInput(AppSettingsSchema, settings);
     if (!validation.success) {
@@ -172,7 +192,11 @@ export async function updateAppSettings(settings: unknown): Promise<{
  * Upload image to Catbox.moe (simple, no API key needed)
  * Returns the direct URL to the uploaded image
  */
-export async function uploadToCatbox(file: File): Promise<{ success: boolean; url?: string; error?: string }> {
+export async function uploadToCatbox(file: File): Promise<{ success: boolean; url?: string; error?: string; authError?: string }> {
+    // Session / role guard — only admins may upload branding assets
+    const authCheck = await requireAdminAction();
+    if (authCheck) return { success: false, ...authCheck };
+
     try {
         const formData = new FormData();
         formData.append('reqtype', 'fileupload');

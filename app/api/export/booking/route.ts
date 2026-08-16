@@ -5,9 +5,13 @@ import { computeDateRange } from '@/lib/services/date-range';
 import { getReportPeriodSetting } from '@/lib/get-report-period-setting';
 import { safeSerialize } from '@/lib/export/xlsx';
 import { format } from 'date-fns';
+import { requireAdmin, isGuardError } from '@/lib/security/guard';
 
 export async function GET(request: Request) {
     try {
+        const guard = await requireAdmin();
+        if (isGuardError(guard)) return guard;
+
         const supabase = createServerClient();
         const { searchParams } = new URL(request.url);
 

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@/lib/supabase/server';
+import { requireAdmin, isGuardError } from '@/lib/security/guard';
 
 // Keys that should be returned as-is (string)
 const STRING_KEYS = [
@@ -22,6 +23,9 @@ const STRING_KEYS = [
  */
 export async function GET() {
     try {
+        const guard = await requireAdmin();
+        if (isGuardError(guard)) return guard;
+
         const supabase = createServerClient();
         const { data, error } = await supabase
             .from('app_settings')
@@ -58,6 +62,9 @@ export async function GET() {
  */
 export async function POST(request: NextRequest) {
     try {
+        const guard = await requireAdmin();
+        if (isGuardError(guard)) return guard;
+
         const supabase = createServerClient();
         const body = await request.json();
 

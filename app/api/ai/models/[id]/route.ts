@@ -7,6 +7,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@/lib/supabase/server';
 import type { UpdateModelResponse, ProviderModel } from '@/types/ai-models';
+import { requireAdmin, isGuardError } from '@/lib/security/guard';
 
 /**
  * PATCH /api/ai/models/[id]
@@ -26,16 +27,11 @@ export async function PATCH(
     { params }: { params: Promise<{ id: string }> }
 ) {
     try {
-        const supabase = createServerClient();
+        // Admin guard — re-validates session and super_admin role server-side.
+        const guard = await requireAdmin();
+        if (isGuardError(guard)) return guard;
 
-        // Check authentication
-        const { data: { user }, error: authError } = await supabase.auth.getUser();
-        if (authError || !user) {
-            return NextResponse.json(
-                { success: false, error: 'Unauthorized' },
-                { status: 401 }
-            );
-        }
+        const supabase = createServerClient();
 
         // Resolve params (Next.js 15: params is a Promise)
         const resolvedParams = await params;

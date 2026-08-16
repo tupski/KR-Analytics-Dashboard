@@ -18,6 +18,16 @@ import { buildInsightSystemPrompt } from '@/lib/ai/krai-system-prompt';
 import { normalizeAiText, hasBadInsightLanguage } from '@/lib/ai/normalizeAiText';
 import { createNDJSONResponse, type NDJSONStreamWriter } from '@/lib/ai/streamHelpers';
 import { parseKraiResponse, extractAnswerFromThinking, getContextualFallback } from '@/lib/ai/kraiResponseParser';
+import {
+    rateLimit,
+    userOrIpKey,
+    getClientIp,
+    rateLimitResponse,
+} from '@/lib/security/rate-limit';
+
+// AI insight cost-abuse protection: 10 requests per user per minute (per audit P0-1).
+const INSIGHT_RATE_LIMIT = 10;
+const INSIGHT_RATE_WINDOW_MS = 60 * 1000;
 
 /**
  * AI INSIGHT ROUTE — Lightweight, cacheable, no tool calling.
@@ -82,6 +92,23 @@ interface InsightRequestBody {
  */
 export async function POST(request: NextRequest) {
     try {
+        // ── Rate limiting (cost-abuse protection, per audit P0-1) ───────────
+        // Insight calls hit paid providers when the cache misses, so limit them
+        // per user (fallback: per IP). Middleware already requires auth.
+        const clientIp = getClientIp(request);
+        const insightLimit = rateLimit({
+            namespace: 'ai:insight',
+            limit: INSIGHT_RATE_LIMIT,
+            windowMs: INSIGHT_RATE_WINDOW_MS,
+            key: userOrIpKey(null, clientIp),
+        });
+        if (!insightLimit.allowed) {
+            return rateLimitResponse(
+                insightLimit,
+                'Terlalu banyak permintaan insight. Silakan tunggu sebentar.',
+            );
+        }
+
         const body: InsightRequestBody & { stream?: boolean } = await request.json();
         const {
             page,

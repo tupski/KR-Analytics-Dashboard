@@ -9,6 +9,16 @@ import { normalizeAiText } from '@/lib/ai/normalizeAiText';
 import { createNDJSONResponse, type NDJSONStreamWriter } from '@/lib/ai/streamHelpers';
 import { streamProviderResponse, type StreamChunk } from '@/lib/ai/providerAdapter';
 import { parseKraiResponse } from '@/lib/ai/kraiResponseParser';
+import {
+    rateLimit,
+    userOrIpKey,
+    getClientIp,
+    rateLimitResponse,
+} from '@/lib/security/rate-limit';
+
+// AI chat cost-abuse protection: 20 requests per user per minute (per audit P0-1).
+const CHAT_RATE_LIMIT = 20;
+const CHAT_RATE_WINDOW_MS = 60 * 1000;
 
 /**
  * KRAI CHAT ROUTE — Conversational AI with tool calling.
@@ -482,6 +492,20 @@ async function runAnthropicLoop(
 export async function POST(request: NextRequest) {
     let body: any = {};
     try {
+        // ── Rate limiting (cost-abuse protection, per audit P0-1) ───────────
+        // Keyed per user when the session is known, else per IP. Middleware
+        // already requires auth, so this is defense-in-depth on top of it.
+        const clientIp = getClientIp(request);
+        const chatLimit = rateLimit({
+            namespace: 'ai:chat',
+            limit: CHAT_RATE_LIMIT,
+            windowMs: CHAT_RATE_WINDOW_MS,
+            key: userOrIpKey(null, clientIp),
+        });
+        if (!chatLimit.allowed) {
+            return rateLimitResponse(chatLimit, 'Terlalu banyak permintaan chat. Silakan tunggu sebentar.');
+        }
+
         body = await request.json();
 
         // ── Request validation + debug logging ──────────────────────────────

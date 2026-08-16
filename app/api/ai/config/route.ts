@@ -8,6 +8,7 @@ import {
     setThinkingModeDb,
 } from '@/lib/ai/configServer';
 import type { ProviderId } from '@/lib/ai/models';
+import { requireAdmin, isGuardError } from '@/lib/security/guard';
 
 /**
  * GET /api/ai/config
@@ -16,6 +17,9 @@ import type { ProviderId } from '@/lib/ai/models';
  */
 export async function GET(request: NextRequest) {
     try {
+        const guard = await requireAdmin();
+        if (isGuardError(guard)) return guard;
+
         // If ?provider=X is passed, return configs for a specific provider
         // (used by resolveActiveFromDb — server-side only, but still safe)
         const providerFilter = request.nextUrl.searchParams.get('provider');
@@ -39,6 +43,9 @@ export async function GET(request: NextRequest) {
  */
 export async function POST(request: NextRequest) {
     try {
+        const guard = await requireAdmin();
+        if (isGuardError(guard)) return guard;
+
         const body = await request.json();
         const { action } = body;
 

@@ -7,6 +7,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@/lib/supabase/server';
 import type { GetModelsResponse, ProviderModel } from '@/types/ai-models';
+import { requireAdmin, isGuardError } from '@/lib/security/guard';
 
 /**
  * GET /api/ai/models?provider=xxx
@@ -20,10 +21,13 @@ import type { GetModelsResponse, ProviderModel } from '@/types/ai-models';
  *   - models: Array of ProviderModel
  *   - lastFetched: ISO timestamp of last fetch, or null
  *
- * Note: Auth check removed because middleware.ts already protects all /api/ai/* routes.
+ * Note: middleware.ts protects all /api/ai/* routes; requireAdmin() adds defense-in-depth.
  */
 export async function GET(request: NextRequest) {
     try {
+        const guard = await requireAdmin();
+        if (isGuardError(guard)) return guard;
+
         const supabase = createServerClient();
 
         // Get provider from query params

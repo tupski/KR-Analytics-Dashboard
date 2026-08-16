@@ -3,10 +3,23 @@
 import { createServerClient } from '@/lib/supabase/server';
 import { encryptApiKey, decryptApiKey } from '@/lib/ai/configServer';
 import { AIConfigSchema, type AIConfigInput } from '@/lib/validation';
+import { getSession, getUserRole } from '@/lib/supabase/auth';
 
 export type { AIConfigInput as AIConfig };
 
+// ─── Session Guard for Server Actions ────────────────────────────
+async function requireAdminAction(): Promise<{ authError: string } | null> {
+    const session = await getSession();
+    if (!session?.user) return { authError: 'Autentikasi diperlukan.' };
+    const role = await getUserRole(session.user.id);
+    if (role !== 'super_admin') return { authError: 'Akses ditolak. Hanya super admin.' };
+    return null;
+}
+
 export async function saveAIConfig(config: unknown) {
+    const authCheck = await requireAdminAction();
+    if (authCheck) return authCheck;
+
     // Validate input using Zod schema (imported from lib/validation.ts)
     const result = AIConfigSchema.safeParse(config);
     if (!result.success) {
@@ -90,7 +103,10 @@ export async function saveCustomModel(
     providerName: string,
     modelId: string,
     displayName: string,
-): Promise<{ success: boolean; error?: string }> {
+): Promise<{ success: boolean; error?: string; authError?: string }> {
+    const authCheck = await requireAdminAction();
+    if (authCheck) return { success: false, ...authCheck };
+
     try {
         const supabase = createServerClient();
 
@@ -123,7 +139,10 @@ export async function saveCustomModel(
     }
 }
 
-export async function deleteAIConfig(provider: string) {
+export async function deleteAIConfig(provider: string): Promise<{ success?: boolean; error?: string; authError?: string }> {
+    const authCheck = await requireAdminAction();
+    if (authCheck) return authCheck;
+
     try {
         const supabase = createServerClient();
 

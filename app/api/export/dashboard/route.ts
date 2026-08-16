@@ -6,9 +6,13 @@ import { getDailyOccupancyTrend } from '@/lib/services/occupancy';
 import { format } from 'date-fns';
 import { safeSerialize, formatRupiah } from '@/lib/export/xlsx';
 import { getReportPeriodRange } from '@/lib/shared/report-period';
+import { requireAdmin, isGuardError } from '@/lib/security/guard';
 
 export async function GET(request: Request) {
     try {
+        const guard = await requireAdmin();
+        if (isGuardError(guard)) return guard;
+
         const supabase = createServerClient();
         const { searchParams } = new URL(request.url);
 

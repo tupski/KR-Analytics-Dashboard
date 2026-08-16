@@ -1,9 +1,29 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@supabase/ssr';
 import { createServerClient as createServiceClient } from '@/lib/supabase/server';
+import { rateLimit, ipKey, getClientIp, rateLimitResponse } from '@/lib/security/rate-limit';
+
+// Login brute-force protection: 5 attempts per IP per 15 minutes.
+const LOGIN_RATE_LIMIT = 5;
+const LOGIN_RATE_WINDOW_MS = 15 * 60 * 1000;
 
 export async function POST(request: NextRequest) {
     try {
+        // ── Rate limiting (anti brute-force) — IP-based, before any auth work ──
+        const clientIp = getClientIp(request);
+        const loginLimit = rateLimit({
+            namespace: 'auth:login',
+            limit: LOGIN_RATE_LIMIT,
+            windowMs: LOGIN_RATE_WINDOW_MS,
+            key: ipKey(clientIp),
+        });
+        if (!loginLimit.allowed) {
+            return rateLimitResponse(
+                loginLimit,
+                'Terlalu banyak percobaan login. Silakan coba lagi nanti.',
+            );
+        }
+
         const { email, password } = await request.json();
 
         if (!email || !password) {
@@ -13,7 +33,13 @@ export async function POST(request: NextRequest) {
             );
         }
 
-        const redirectTo = request.nextUrl.searchParams.get('redirect') || '/dashboard';
+        // Validate redirect target — only allow same-origin relative paths.
+        // Reject protocol-relative URLs (//evil.com) and absolute URLs.
+        const rawRedirect = request.nextUrl.searchParams.get('redirect') || '/dashboard';
+        const redirectTo =
+            rawRedirect.startsWith('/') && !rawRedirect.startsWith('//')
+                ? rawRedirect
+                : '/dashboard';
 
         // Create response early — cookies set during signIn must be captured on it
         const response = NextResponse.json({ success: true, redirectTo });

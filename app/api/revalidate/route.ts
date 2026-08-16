@@ -28,9 +28,17 @@ export async function POST(request: NextRequest) {
         const body = await request.json();
         const { tag, secret } = body;
 
-        // Verify secret token (optional, for security)
-        if (secret && secret !== process.env.REVALIDATION_SECRET) {
-            return apiErrorResponse(401, 'Unauthorized', 'Invalid secret token');
+        // Verify secret token — MANDATORY (P1 audit finding).
+        // REVALIDATION_SECRET must be set in environment; requests without a matching
+        // secret are rejected with 401 regardless of whether the secret env var is set.
+        const expectedSecret = process.env.REVALIDATION_SECRET;
+        if (!expectedSecret) {
+            // Fail closed: if the secret is not configured, deny all revalidation requests.
+            console.error('[revalidate] REVALIDATION_SECRET env var is not set. Rejecting request.');
+            return apiErrorResponse(503, 'Service Unavailable', 'Cache revalidation is not configured');
+        }
+        if (!secret || secret !== expectedSecret) {
+            return apiErrorResponse(401, 'Unauthorized', 'Invalid or missing secret token');
         }
 
         // Revalidate specific tag or all caches

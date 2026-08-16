@@ -15,6 +15,7 @@ import { normalizeModels } from '@/lib/ai/modelNormalizer';
 import { normalizeOpenAICompatibleBaseUrl } from '@/lib/ai/providerAdapter';
 import { decryptApiKey } from '@/lib/ai/configServer';
 import type { FetchModelsResponse } from '@/types/ai-models';
+import { requireAdmin, isGuardError } from '@/lib/security/guard';
 
 /**
  * POST /api/ai/fetch-models
@@ -32,6 +33,9 @@ import type { FetchModelsResponse } from '@/types/ai-models';
  */
 export async function POST(request: NextRequest) {
     try {
+        const guard = await requireAdmin();
+        if (isGuardError(guard)) return guard;
+
         const supabase = createServerClient();
 
         // Parse request body

@@ -41,8 +41,22 @@ const CALLOUT_STYLES: Record<string, string> = {
 
 // ── Trend / badge rendering ───────────────────────────────────────────────────
 
+// Escape a plain-text string so it is safe to interpolate into an HTML
+// attribute value or text node.  This prevents AI-generated content from
+// injecting tags or event handlers via the regex capture groups below.
+function escapeHtml(s: string): string {
+    return s
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
 function renderTrend(text: string): React.ReactNode {
-    const html = text
+    // Escape the raw AI text first so captured values ($1) cannot inject HTML.
+    const safe = escapeHtml(text);
+    const html = safe
         .replace(
             /↑\s*([\d.,]+%?)/g,
             '<span class="inline-flex items-center gap-0.5 text-emerald-600 font-semibold">▲ $1</span>',

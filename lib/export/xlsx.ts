@@ -8,11 +8,33 @@
 import * as XLSX from 'xlsx';
 import { format } from 'date-fns';
 
+// ─── Formula Injection Protection ────────────────────────────────
+/**
+ * Sanitize a string cell value to prevent CSV/XLSX formula injection.
+ *
+ * OWASP: Spreadsheet formula injection (A03:2021 — Injection).
+ * Any string that starts with =, +, -, @, TAB (0x09), or CR (0x0D)
+ * could be interpreted as a formula by Excel / LibreOffice / Google Sheets.
+ * We prefix such values with a single quote ('), which forces the cell to
+ * be treated as literal text by spreadsheet applications.
+ *
+ * Only string values are affected — numbers and dates are returned as-is.
+ */
+export function escapeXlsxCell(value: unknown): unknown {
+    if (typeof value !== 'string') return value;
+    // Dangerous leading characters that trigger formula evaluation
+    if (/^[=+\-@\t\r]/.test(value)) {
+        return `'${value}`;
+    }
+    return value;
+}
+
 // ─── Safe Serializer ──────────────────────────────────────────────
 /**
  * Sanitize raw data rows for XLSX export.
  * Converts non-serializable types: BigInt→string, Date→ISO date string,
  * objects→JSON string, null/undefined→"", Buffer→string.
+ * Also applies formula injection escaping on all string values.
  */
 export function safeSerialize(data: any[]): Record<string, any>[] {
     if (!data || data.length === 0) return [];
@@ -22,15 +44,16 @@ export function safeSerialize(data: any[]): Record<string, any>[] {
             if (value === null || value === undefined) {
                 obj[key] = '';
             } else if (typeof value === 'bigint') {
-                obj[key] = value.toString();
+                obj[key] = escapeXlsxCell(value.toString());
             } else if (value instanceof Date) {
+                // Dates are safe — ISO format does not start with formula chars
                 obj[key] = value.toISOString().split('T')[0];
             } else if (Buffer.isBuffer(value)) {
-                obj[key] = value.toString('utf8');
+                obj[key] = escapeXlsxCell(value.toString('utf8'));
             } else if (typeof value === 'object' && !Array.isArray(value)) {
-                obj[key] = JSON.stringify(value);
+                obj[key] = escapeXlsxCell(JSON.stringify(value));
             } else {
-                obj[key] = value;
+                obj[key] = escapeXlsxCell(value);
             }
         }
         return obj;
@@ -94,14 +117,14 @@ export function exportToXLSX(sheets: ExportSheet[], filename: string): void {
     const workbook = XLSX.utils.book_new();
 
     for (const sheet of sheets) {
-        // Transform data to match column headers
+        // Transform data to match column headers.
+        // escapeXlsxCell() is applied to all string values to prevent formula injection.
         const rows = sheet.data.map(row => {
             const obj: Record<string, string | number | null> = {};
             for (const col of sheet.columns) {
                 const rawValue = row[col.key];
-                obj[col.header] = col.format
-                    ? col.format(rawValue)
-                    : rawValue ?? '-';
+                const formatted = col.format ? col.format(rawValue) : rawValue ?? '-';
+                obj[col.header] = escapeXlsxCell(formatted) as string | number | null;
             }
             return obj;
         });
