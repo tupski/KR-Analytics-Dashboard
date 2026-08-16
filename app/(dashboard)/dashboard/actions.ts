@@ -1,6 +1,8 @@
 'use server';
 
 import { createServerClient } from '@/lib/supabase/server';
+import { withEgressCache, egressCacheKey } from '@/lib/egress-cache';
+import { CACHE_TTL } from '@/lib/config/constants';
 import { getTodayReportRange } from '@/lib/get-report-period-setting';
 import type { ReportPeriodMode } from '@/lib/shared/report-period';
 import { getReportPeriodRange } from '@/lib/shared/report-period';
@@ -77,6 +79,7 @@ function buildPeriodFromISO(startISO: string, endISO: string): ReportPeriodRange
  * @returns Promise<UnitStatusCounts> Object containing counts for each unit status
  */
 export async function fetchUnitStatus(): Promise<UnitStatusCounts> {
+    // getLiveOccupancy() is cached at source (lib/services/occupancy.ts).
     const result = await getLiveOccupancy();
     return {
         tersedia: result.tersedia,
@@ -233,7 +236,7 @@ async function fetchDailyKPISnapshot(
     const [{ count: bookingCount }, { data: txData }] = await Promise.all([
         supabase
             .from('transactions')
-            .select('*', { count: 'exact', head: true })
+            .select('id', { count: 'exact', head: true })
             .or(`checkin_at.gte.${dayStart},and(checkin_at.is.null,created_at.gte.${dayStart})`),
         supabase
             .from('transactions')
@@ -325,13 +328,21 @@ export async function fetchKPIData(
         const actualDayEnd = range?.end || todayFallback!.end;
         const actualDayExclusEnd = range?.endExclusiveISO || todayFallback!.endExclusiveISO;
 
-        const { count: bookingCount } = await supabase
-            .from('transactions')
-            .select('*', { count: 'exact', head: true })
-            .or(
-                `and(checkin_at.gte.${actualDayStart},checkin_at.lt.${actualDayExclusEnd}),` +
-                `and(checkin_at.is.null,created_at.gte.${actualDayStart},created_at.lt.${actualDayExclusEnd})`
-            );
+        // M1 egress: head-counts cached 5m — service-role output, RLS-identical.
+        const bookingCount = await withEgressCache(
+            egressCacheKey('transactions', 'kpi-booking-count', actualDayStart, actualDayExclusEnd),
+            CACHE_TTL.DASHBOARD_TODAY,
+            async () => {
+                const { count } = await supabase
+                    .from('transactions')
+                    .select('id', { count: 'exact', head: true })
+                    .or(
+                        `and(checkin_at.gte.${actualDayStart},checkin_at.lt.${actualDayExclusEnd}),` +
+                        `and(checkin_at.is.null,created_at.gte.${actualDayStart},created_at.lt.${actualDayExclusEnd})`
+                    );
+                return count || 0;
+            },
+        );
 
         // Build ReportPeriodRange for the main period to pass to the service
         const mainPeriod = buildPeriodFromISO(actualDayStart, actualDayEnd);
@@ -342,17 +353,25 @@ export async function fetchKPIData(
         let periodTransactionCount = revenueData.transactionCount;
 
         // Today fallback: if revenue is 0 from service, query Supabase directly
+        // M1 egress: cached 5m — service-role output, RLS-identical across users.
         if (periodRevenue === 0 && mainPeriod) {
             try {
-                const { data: txFallback } = await supabase
-                    .from('transactions')
-                    .select('cash_amount, transfer_amount, checkin_at, created_at')
-                    .or(
-                        `and(checkin_at.gte.${mainPeriod.startISO},checkin_at.lt.${mainPeriod.endExclusiveISO}),` +
-                        `and(checkin_at.is.null,created_at.gte.${mainPeriod.startISO},created_at.lt.${mainPeriod.endExclusiveISO})`
-                    );
+                const txFallback = await withEgressCache(
+                    egressCacheKey('transactions', 'kpi-period-revenue-fallback', mainPeriod.startISO, mainPeriod.endExclusiveISO),
+                    CACHE_TTL.DASHBOARD_TODAY,
+                    async () => {
+                        const res = await supabase
+                            .from('transactions')
+                            .select('cash_amount, transfer_amount, checkin_at, created_at')
+                            .or(
+                                `and(checkin_at.gte.${mainPeriod.startISO},checkin_at.lt.${mainPeriod.endExclusiveISO}),` +
+                                `and(checkin_at.is.null,created_at.gte.${mainPeriod.startISO},created_at.lt.${mainPeriod.endExclusiveISO})`
+                            );
+                        return res.data || [];
+                    },
+                );
 
-                if (txFallback && txFallback.length > 0) {
+                if (txFallback.length > 0) {
                     let fallbackRevenue = 0;
                     let fallbackCount = 0;
                     for (const t of txFallback) {
@@ -418,13 +437,20 @@ export async function fetchKPIData(
 
         if (compRange) {
             const compExclusEnd = compRange.endExclusiveISO ?? (() => { throw new Error('endExclusiveISO missing from comparison range'); })();
-            const { count: prevBookingCount } = await supabase
-                .from('transactions')
-                .select('*', { count: 'exact', head: true })
-                .or(
-                    `and(checkin_at.gte.${compRange.start},checkin_at.lt.${compExclusEnd}),` +
-                    `and(checkin_at.is.null,created_at.gte.${compRange.start},created_at.lt.${compExclusEnd})`
-                );
+            const prevBookingCount = await withEgressCache(
+                egressCacheKey('transactions', 'kpi-prev-booking-count', compRange.start, compExclusEnd),
+                CACHE_TTL.DASHBOARD_TODAY,
+                async () => {
+                    const { count } = await supabase
+                        .from('transactions')
+                        .select('id', { count: 'exact', head: true })
+                        .or(
+                            `and(checkin_at.gte.${compRange.start},checkin_at.lt.${compExclusEnd}),` +
+                            `and(checkin_at.is.null,created_at.gte.${compRange.start},created_at.lt.${compExclusEnd})`
+                        );
+                    return count || 0;
+                },
+            );
 
             const prevPeriod = buildPeriodFromISO(compRange.start, compRange.end);
             const prevRevenueData = await getServiceRevenueSummary(prevPeriod);
@@ -799,7 +825,12 @@ export async function fetchLocationHealthData(): Promise<LocationHealthItem[]> {
 
     try {
         // 1. Get all locations with room counts
-        const locations = await getLocations();
+        // M1 egress: cached 5m — service-role output, RLS-identical across users.
+        const locations = await withEgressCache(
+            egressCacheKey('lokasi_apartemen', 'list'),
+            CACHE_TTL.DASHBOARD_TODAY,
+            getLocations,
+        );
         if (locations.length === 0) return [];
 
         // 2. Use centralized getLiveOccupancy() for occupancy per location
@@ -809,16 +840,24 @@ export async function fetchLocationHealthData(): Promise<LocationHealthItem[]> {
         );
 
         // 3. Get revenue per location within the report period — using COALESCE with start-end boundary
-        const { data: revenueData } = await supabase
-            .from('transactions')
-            .select('apartment_location, cash_amount, transfer_amount, checkin_at, created_at')
-            .or(
-                `and(checkin_at.gte.${periodStart},checkin_at.lt.${periodExclusEnd}),` +
-                `and(checkin_at.is.null,created_at.gte.${periodStart},created_at.lt.${periodExclusEnd})`
-            );
+        // M1 egress: cached 5m — service-role output, RLS-identical across users.
+        const revenueData = await withEgressCache(
+            egressCacheKey('transactions', 'location-health-revenue', periodStart, periodExclusEnd),
+            CACHE_TTL.DASHBOARD_TODAY,
+            async () => {
+                const res = await supabase
+                    .from('transactions')
+                    .select('apartment_location, cash_amount, transfer_amount, checkin_at, created_at')
+                    .or(
+                        `and(checkin_at.gte.${periodStart},checkin_at.lt.${periodExclusEnd}),` +
+                        `and(checkin_at.is.null,created_at.gte.${periodStart},created_at.lt.${periodExclusEnd})`
+                    );
+                return res.data || [];
+            },
+        );
 
         const revenuePerLocation: Record<string, number> = {};
-        revenueData?.forEach((t: any) => {
+        revenueData.forEach((t: any) => {
             const effDate = t.checkin_at || t.created_at;
             if (effDate && effDate >= periodStart && effDate < periodExclusEnd) {
                 const loc = t.apartment_location;
@@ -919,20 +958,40 @@ export async function fetchUnitPerformanceData(): Promise<UnitPerformanceData> {
             }));
 
         // ── 2. For each room, find last checkout ──────────────
-        // Batch fetch: get all transactions with checkout_at < now for these rooms
-        const { data: allCheckouts, error: checkoutError } = await supabase
-            .from('transactions')
-            .select('room_number, apartment_location, checkout_at')
-            .lt('checkout_at', nowIso)
-            .order('checkout_at', { ascending: false });
-
-        if (checkoutError) {
-            console.error('Error fetching checkouts for idle detection:', checkoutError);
-        }
+        // H2 egress: bound the scan to the last 90 days (was full-history
+        // checkout_at < now). Idle semantics preserved: a unit idle >90d has no
+        // checkout in the window → falls back to created_at proxy (same as the
+        // "never checked out" branch below), so idleDays for old units is >= 90
+        // and still reports as critical (>=14). Only units whose LAST checkout
+        // was inside the window get an exact idleDays.
+        // ponytail: when get_unit_performance RPC + idx_transactions_checkout_at
+        // index exist on Supabase, replace this bounded scan with the RPC and drop
+        // the 90d ceiling entirely.
+        const lookback90d = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);
+        // M1 egress: cached 30m — RLS output identical for all users (service-role).
+        // Key is the lookback window date; the value drifts slowly so a 30m TTL
+        // avoids re-downloading the 90d scan on every auto-refresh.
+        const allCheckouts = await withEgressCache(
+            egressCacheKey('transactions', 'unit-idle-checkouts', lookback90d.toISOString().split('T')[0]),
+            CACHE_TTL.DASHBOARD_MONTH,
+            async () => {
+                const res = await supabase
+                    .from('transactions')
+                    .select('room_number, apartment_location, checkout_at')
+                    .gte('checkout_at', lookback90d.toISOString())
+                    .lt('checkout_at', nowIso)
+                    .order('checkout_at', { ascending: false });
+                if (res.error) {
+                    console.error('Error fetching checkouts for idle detection:', res.error);
+                    return [];
+                }
+                return res.data || [];
+            },
+        );
 
         // Build map: location+roomNumber -> latest checkout_at
         const latestCheckoutMap = new Map<string, string>();
-        (allCheckouts || []).forEach((tx: any) => {
+        allCheckouts.forEach((tx: any) => {
             const key = `${tx.apartment_location}-${tx.room_number}`;
             // First occurrence is the most recent due to descending sort
             if (!latestCheckoutMap.has(key)) {
@@ -950,14 +1009,22 @@ export async function fetchUnitPerformanceData(): Promise<UnitPerformanceData> {
         const monthEndIso = monthEnd.toISOString();
 
         // Batch fetch: get revenue per room for current month (calendar-aligned) — using COALESCE pattern
-        const { data: monthTx, error: monthTxError } = await supabase
-            .from('transactions')
-            .select('room_number, apartment_location, cash_amount, transfer_amount, checkin_at, created_at')
-            .or(`checkin_at.gte.${monthStartIso},and(checkin_at.is.null,created_at.gte.${monthStartIso})`);
-
-        if (monthTxError) {
-            console.error('Error fetching month transactions:', monthTxError);
-        }
+        // M1 egress: cached 5m — service-role output, RLS-identical across users.
+        const monthTx = await withEgressCache(
+            egressCacheKey('transactions', 'unit-month-revenue', monthStartIso.split('T')[0], monthEndIso.split('T')[0]),
+            CACHE_TTL.DASHBOARD_TODAY,
+            async () => {
+                const res = await supabase
+                    .from('transactions')
+                    .select('room_number, apartment_location, cash_amount, transfer_amount, checkin_at, created_at')
+                    .or(`checkin_at.gte.${monthStartIso},and(checkin_at.is.null,created_at.gte.${monthStartIso})`);
+                if (res.error) {
+                    console.error('Error fetching month transactions:', res.error);
+                    return [];
+                }
+                return res.data || [];
+            },
+        );
 
         // Build revenue map per room — apply exclusive-end filter
         const revenueMap = new Map<string, number>();
@@ -1071,17 +1138,24 @@ export async function fetchMarketingPerformanceData(): Promise<{
     const { start, end, endExclusiveISO: exclusEnd } = await getTodayReportRange();
 
     try {
-        const { data, error } = await supabase
-            .from('transactions')
-            .select('marketing_name, cash_amount, transfer_amount, checkin_at, created_at')
-            .or(`checkin_at.gte.${start},and(checkin_at.is.null,created_at.gte.${start})`);
+        // M1 egress: cached 5m — service-role output, RLS-identical across users.
+        const data = await withEgressCache(
+            egressCacheKey('transactions', 'marketing-performance', start, exclusEnd),
+            CACHE_TTL.DASHBOARD_TODAY,
+            async () => {
+                const res = await supabase
+                    .from('transactions')
+                    .select('marketing_name, cash_amount, transfer_amount, checkin_at, created_at')
+                    .or(`checkin_at.gte.${start},and(checkin_at.is.null,created_at.gte.${start})`);
+                if (res.error) {
+                    console.error('Error fetching marketing performance:', res.error);
+                    throw new Error(`Gagal mengambil data marketing: ${res.error.message}`);
+                }
+                return res.data || [];
+            },
+        );
 
-        if (error) {
-            console.error('Error fetching marketing performance:', error);
-            throw new Error(`Gagal mengambil data marketing: ${error.message}`);
-        }
-
-        if (!data || data.length === 0) {
+        if (data.length === 0) {
             return { items: [], totalRevenue: 0, totalTransactions: 0, activeChannels: 0 };
         }
 

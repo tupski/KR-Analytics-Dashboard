@@ -15,10 +15,10 @@ export async function GET(request: Request) {
         const locationFilter = searchParams.get('location') || undefined;
         const rawFilter = searchParams.get('filter') || 'today';
 
-        // Fetch all rooms
+        // Fetch all rooms — explicit columns only (blob columns dropped).
         let roomQuery = supabase
             .from('nomor_kamar')
-            .select('*')
+            .select('id, name, lokasi, status')
             .order('lokasi')
             .order('name');
 
@@ -42,12 +42,14 @@ export async function GET(request: Request) {
         const occupiedMap = new Map<string, string>();
         const occupancyCountMap = new Map<string, number>();
 
+        // M3: bounded period-tx scan (20,000 row cap) — same dataset as unit/actions period-overlap.
         const { data: periodTx } = await supabase
             .from('transactions')
             .select('room_number, apartment_location, customer_name, checkin_at')
             .gte('checkin_at', range.start)
             .lte('checkin_at', range.end)
-            .order('checkin_at', { ascending: false });
+            .order('checkin_at', { ascending: false })
+            .limit(20000);
 
         periodTx?.forEach((tx: any) => {
             const key = `${tx.apartment_location}-${tx.room_number}`;

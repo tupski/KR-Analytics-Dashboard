@@ -103,7 +103,24 @@ export interface DbProviderConfig {
     thinkingMode: string;
 }
 
-export async function loadAllProviderConfigs(): Promise<DbProviderConfig[]> {
+// ── L3 egress cache ──────────────────────────────────────────────────────────
+// Config rows include ENCRYPTED api keys — never logged, never persisted to any
+// durable cache. In-memory module cache only, 60s TTL. Writes invalidate it so
+// a config save is visible on the next read.
+const CONFIG_CACHE_TTL_MS = 60_000;
+let configCache: { expiresAt: number; value: DbProviderConfig[] } | null = null;
+
+function invalidateConfigCache(): void {
+    configCache = null;
+}
+
+/** Raw rows → decrypted DbProviderConfig[], cached in-memory 60s. */
+async function fetchCachedConfigs(): Promise<DbProviderConfig[]> {
+    const now = Date.now();
+    if (configCache && configCache.expiresAt > now) {
+        return configCache.value;
+    }
+
     const supabase = createServerClient();
     const { data, error } = await supabase
         .from('ai_provider_configs')
@@ -112,7 +129,7 @@ export async function loadAllProviderConfigs(): Promise<DbProviderConfig[]> {
 
     if (error || !data) return [];
 
-    return data.map((row: any) => {
+    const configs = data.map((row: any) => {
         let apiKey = '';
         try {
             apiKey = decryptApiKey(row.api_key_enc, row.api_key_iv);
@@ -129,6 +146,13 @@ export async function loadAllProviderConfigs(): Promise<DbProviderConfig[]> {
             thinkingMode: row.thinking_mode || 'auto',
         };
     }).filter(c => c.apiKey); // Only return configs with successfully decrypted keys
+
+    configCache = { expiresAt: now + CONFIG_CACHE_TTL_MS, value: configs };
+    return configs;
+}
+
+export async function loadAllProviderConfigs(): Promise<DbProviderConfig[]> {
+    return fetchCachedConfigs();
 }
 
 export async function upsertProviderConfig(conf: {
@@ -154,6 +178,7 @@ export async function upsertProviderConfig(conf: {
         }, { onConflict: 'scope,provider_id' });
 
     if (error) throw new Error(`Failed to save AI config: ${error.message}`);
+    invalidateConfigCache();
 }
 
 export async function deleteProviderConfig(providerId: ProviderId): Promise<void> {
@@ -165,6 +190,7 @@ export async function deleteProviderConfig(providerId: ProviderId): Promise<void
         .eq('provider_id', providerId);
 
     if (error) throw new Error(`Failed to delete AI config: ${error.message}`);
+    invalidateConfigCache();
 }
 
 export async function setActiveProvider(providerId: ProviderId, modelId: string): Promise<void> {
@@ -180,6 +206,7 @@ export async function setActiveProvider(providerId: ProviderId, modelId: string)
         .update({ is_active: true, active_model: modelId })
         .eq('scope', SCOPE)
         .eq('provider_id', providerId);
+    invalidateConfigCache();
 }
 
 export async function setThinkingModeDb(providerId: ProviderId, mode: string): Promise<void> {
@@ -189,6 +216,7 @@ export async function setThinkingModeDb(providerId: ProviderId, mode: string): P
         .update({ thinking_mode: mode })
         .eq('scope', SCOPE)
         .eq('provider_id', providerId);
+    invalidateConfigCache();
 }
 
 // ── API Key Preview & Validation Helpers (PART 2, 6, 7) ──────────────────────
@@ -327,6 +355,7 @@ export async function upsertProviderConfigSafe(conf: {
             }, { onConflict: 'scope,provider_id' });
 
         if (error) throw new Error(`Failed to save AI config: ${error.message}`);
+        invalidateConfigCache();
     } else {
         // No new key — update only non-key fields if row exists
         const { data: existing } = await supabase
@@ -347,5 +376,6 @@ export async function upsertProviderConfigSafe(conf: {
             .eq('provider_id', conf.providerId);
 
         if (error) throw new Error(`Failed to save AI config: ${error.message}`);
+        invalidateConfigCache();
     }
 }

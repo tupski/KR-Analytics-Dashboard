@@ -54,6 +54,11 @@ services:
       context: ./sync-worker
       dockerfile: Dockerfile
     container_name: kr-sync-worker
+    volumes:
+      # Run pending DB migrations (e.g. 008 sync_metadata.last_full_rescan_at)
+      # before the worker starts — idempotent, tracked in schema_migrations.
+      - ./db:/app/db:ro
+    command: sh -c "node db/migrate.cjs && node dist/index.js"
     environment:
       SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL}
       SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY}
@@ -65,6 +70,8 @@ services:
       SYNC_INTERVAL_MS: ${SYNC_INTERVAL_MS:-300000}
       SYNC_BATCH_SIZE: ${SYNC_BATCH_SIZE:-500}
       SYNC_LOOKBACK_DAYS: ${SYNC_LOOKBACK_DAYS:-365}
+      SYNC_RECENT_WINDOW_DAYS: ${SYNC_RECENT_WINDOW_DAYS:-14}
+      FULL_RESCAN_INTERVAL_MS: ${FULL_RESCAN_INTERVAL_MS:-86400000}
       NODE_ENV: production
       TZ: Asia/Jakarta
     depends_on:

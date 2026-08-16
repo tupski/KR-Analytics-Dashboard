@@ -14,6 +14,13 @@ import {
     getEstimatedEnd,
 } from '@/lib/services/stays';
 import type { LocationActiveSummary } from '@/lib/services/stays';
+import { withEgressCache, egressCacheKey } from '@/lib/egress-cache';
+import { CACHE_TTL } from '@/lib/config/constants';
+
+/** Columns consumed by the unit page + export — blob columns (ktp_image_url, transfer_proof_url) dropped. */
+const UNIT_ROOM_COLUMNS = 'id, name, lokasi, status, created_at';
+/** Max rows for a period-overlap tx scan in the unit page/export. */
+const UNIT_PERIOD_TX_MAX_ROWS = 20000;
 
 export type UnitDateFilter = 'today' | 'yesterday' | '7days' | 'month' | 'year';
 
@@ -67,23 +74,31 @@ export async function fetchUnits(
     const supabase = createServerClient();
 
     try {
-        // Fetch all rooms from nomor_kamar
-        let roomQuery = supabase
-            .from('nomor_kamar')
-            .select('*')
-            .order('lokasi')
-            .order('name');
+        // Fetch all rooms from nomor_kamar.
+        // M1 egress: cached 30m — nomor_kamar is RLS-identical (service-role, no per-user filter);
+        // key includes the optional location filter so filtered lists never collide.
+        const rooms = await withEgressCache(
+            egressCacheKey('nomor_kamar', 'unit-rooms', locationFilter || 'all'),
+            CACHE_TTL.DASHBOARD_MONTH,
+            async () => {
+                let roomQuery = supabase
+                    .from('nomor_kamar')
+                    .select(UNIT_ROOM_COLUMNS)
+                    .order('lokasi')
+                    .order('name');
 
-        if (locationFilter) {
-            roomQuery = roomQuery.eq('lokasi', locationFilter);
-        }
+                if (locationFilter) {
+                    roomQuery = roomQuery.eq('lokasi', locationFilter);
+                }
 
-        const { data: rooms, error: roomError } = await roomQuery;
-
-        if (roomError) {
-            console.error('Error fetching rooms:', roomError);
-            throw new Error('Failed to fetch rooms');
-        }
+                const { data, error } = await roomQuery;
+                if (error) {
+                    console.error('Error fetching rooms:', error);
+                    throw new Error('Failed to fetch rooms');
+                }
+                return data || [];
+            },
+        );
 
         // Use unified date params if provided, else fall back to legacy dateFilter
         const mode = await getReportPeriodSetting();
@@ -164,13 +179,30 @@ export async function fetchUnits(
                 periodActivityMap.set(key, (periodActivityMap.get(key) || 0) + 1);
             }
         } else {
-            // Stay-span overlap: any transaction overlapping [range.start, range.end]
-            const { data: periodTx } = await supabase
-                .from('transactions')
-                .select('room_number, apartment_location')
-                .lte('checkin_at', range.end)
-                .or(`checkout_at.is.null,checkout_at.gte.${range.start}`)
-                .order('checkin_at', { ascending: false });
+            // Stay-span overlap: any transaction overlapping [range.start, range.end].
+            // M1 egress: cached per (start, end, location) — RLS-identical output, no per-user filter.
+            const periodTx = await withEgressCache(
+                egressCacheKey('transactions', 'unit-period-overlap', range.start, range.end, locationFilter || 'all'),
+                CACHE_TTL.DASHBOARD_MONTH,
+                async () => {
+                    let q = supabase
+                        .from('transactions')
+                        .select('room_number, apartment_location')
+                        .lte('checkin_at', range.end)
+                        .or(`checkout_at.is.null,checkout_at.gte.${range.start}`)
+                        .order('checkin_at', { ascending: false })
+                        .limit(UNIT_PERIOD_TX_MAX_ROWS);
+                    if (locationFilter) {
+                        q = q.eq('apartment_location', locationFilter);
+                    }
+                    const { data, error } = await q;
+                    if (error) {
+                        console.error('Error fetching period transactions:', error);
+                        return [];
+                    }
+                    return data || [];
+                },
+            );
 
             periodTx?.forEach((tx: any) => {
                 const key = buildRoomKey(tx.apartment_location, tx.room_number);

@@ -18,10 +18,19 @@ export async function GET(request: Request) {
         const search = searchParams.get('search') || undefined;
         const location = searchParams.get('location') || undefined;
 
-        // Build query
+        // M3: require a date range — unbounded exports are rejected.
+        if (!rangePreset) {
+            return NextResponse.json(
+                { error: 'Rentang tanggal wajib diisi untuk export booking.' },
+                { status: 400 },
+            );
+        }
+
+        // Build query — explicit columns (blob columns ktp_image_url/transfer_proof_url dropped), capped at 20,000 rows.
         let query = supabase
             .from('transactions')
-            .select('*');
+            .select('id, customer_name, apartment_location, room_number, checkin_at, checkout_at, rental_duration, cash_amount, transfer_amount, marketing_name, shift')
+            .limit(20000);
 
         if (search) {
             query = query.or(`customer_name.ilike.%${search}%,room_number.ilike.%${search}%`);
@@ -31,11 +40,9 @@ export async function GET(request: Request) {
         }
 
         // Apply date range
-        if (rangePreset) {
-            const mode = await getReportPeriodSetting();
-            const range = computeDateRange(rangePreset, startDate, endDate, mode);
-            query = query.gte('checkin_at', range.start).lte('checkin_at', range.end);
-        }
+        const mode = await getReportPeriodSetting();
+        const range = computeDateRange(rangePreset, startDate, endDate, mode);
+        query = query.gte('checkin_at', range.start).lte('checkin_at', range.end);
 
         query = query.order('checkin_at', { ascending: false });
 

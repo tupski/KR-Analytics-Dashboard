@@ -5,6 +5,8 @@ import {
     getOccupancyDaily as getOccupancyDailyAnalytics,
     getOccupancyRate as getOccupancyRateAnalytics,
 } from '@/lib/analytics/occupancy';
+import { withEgressCache, egressCacheKey } from '@/lib/egress-cache';
+import { CACHE_TTL } from '@/lib/config/constants';
 
 // ============================================================
 // lib/services/occupancy.ts
@@ -142,6 +144,17 @@ function normalizeDate(d: unknown): string {
 // Mirrors fetchUnitStatus() in dashboard/actions.ts:42-85
 // ============================================================
 export async function getLiveOccupancy(): Promise<LiveOccupancyResult> {
+    // M1 egress: cached 5m — service-role output, RLS-identical across users.
+    // The 3 per-load callers (fetchUnitStatus, fetchKPIData, fetchLocationHealthData)
+    // share this single cache entry.
+    return withEgressCache(
+        egressCacheKey('occupancy', 'live'),
+        CACHE_TTL.DASHBOARD_TODAY,
+        async () => getLiveOccupancyInner(),
+    );
+}
+
+async function getLiveOccupancyInner(): Promise<LiveOccupancyResult> {
     const supabase = createServerClient();
 
     try {
@@ -250,6 +263,17 @@ export async function getLiveOccupancy(): Promise<LiveOccupancyResult> {
 // Analytics path preferred, falls back to Supabase.
 // ============================================================
 export async function getDailyOccupancyTrend(days: number = 30): Promise<DailyOccupancyTrendPoint[]> {
+    // M1 egress: cached 5m per day-count — service-role output, RLS-identical
+    // across users. Trend is historical aggregate; short TTL keeps the
+    // dashboard chart fresh while deduping the per-load overlap scan.
+    return withEgressCache(
+        egressCacheKey('transactions', 'occupancy-trend', String(days)),
+        CACHE_TTL.DASHBOARD_TODAY,
+        async () => getDailyOccupancyTrendInner(days),
+    );
+}
+
+async function getDailyOccupancyTrendInner(days: number = 30): Promise<DailyOccupancyTrendPoint[]> {
     // ── Analytics path (primary) ──────────────────────────────
     if (analyticsConfigured()) {
         try {

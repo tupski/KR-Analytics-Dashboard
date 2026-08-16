@@ -222,3 +222,25 @@ function emptyResult(msg: string): SyncFreshnessResult {
     errorMessage: msg,
   };
 }
+
+/**
+ * Quick single-table freshness probe for a mirrored table.
+ * True when sync_metadata.last_sync_at for `tableName` is within
+ * STALE_THRESHOLD_MS (10 min). Used by analytics-first page reads to decide
+ * whether the mirror is fresh enough to serve current-period queries.
+ * ponytail: per-table thresholds via sync_metadata config columns.
+ */
+export async function isAnalyticsTableFresh(tableName: string): Promise<boolean> {
+  try {
+    const rows = await queryAnalytics<{ last_sync_at: string | null }>(
+      `SELECT last_sync_at FROM sync_metadata WHERE table_name = $1`,
+      [tableName]
+    );
+    const ts = rows[0]?.last_sync_at;
+    if (!ts) return false;
+    return Date.now() - new Date(ts).getTime() <= STALE_THRESHOLD_MS;
+  } catch (err) {
+    console.warn(`[sync-freshness] Freshness probe failed for ${tableName}:`, err);
+    return false;
+  }
+}

@@ -1,6 +1,8 @@
 import { createServerClient } from '@/lib/supabase/server';
 import { DEFAULT_REPORT_PERIOD, getReportPeriodRange } from '@/lib/reporting-period';
 import type { ReportPeriodMode } from '@/lib/reporting-period';
+import { withEgressCache } from '@/lib/egress-cache';
+import { CACHE_TTL } from '@/lib/config/constants';
 
 // ============================================================
 // lib/get-report-period-setting.ts
@@ -13,24 +15,34 @@ import type { ReportPeriodMode } from '@/lib/reporting-period';
 /**
  * Fetch report_period_mode from app_settings table (server-only).
  * Falls back to DEFAULT_REPORT_PERIOD if not set or on error.
+ *
+ * M2 egress: cached 5m — the app_settings row is RLS-identical across all
+ * authenticated users (no per-user filter). Downstream effect: a report-period
+ * mode change takes up to 5 minutes to propagate across the app.
  */
 export async function getReportPeriodSetting(): Promise<ReportPeriodMode> {
-    try {
-        const supabase = createServerClient();
-        const { data } = await supabase
-            .from('app_settings')
-            .select('value')
-            .eq('key', 'report_period_mode')
-            .maybeSingle();
+    return withEgressCache(
+        'egress:app_settings:report-period',
+        CACHE_TTL.DASHBOARD_TODAY,
+        async () => {
+            try {
+                const supabase = createServerClient();
+                const { data } = await supabase
+                    .from('app_settings')
+                    .select('value')
+                    .eq('key', 'report_period_mode')
+                    .maybeSingle();
 
-        if (data?.value === 'calendar_day' || data?.value === 'hotel_day') {
-            return data.value as ReportPeriodMode;
-        }
-        return DEFAULT_REPORT_PERIOD;
-    } catch {
-        // If DB is unavailable, fall back to default
-        return DEFAULT_REPORT_PERIOD;
-    }
+                if (data?.value === 'calendar_day' || data?.value === 'hotel_day') {
+                    return data.value as ReportPeriodMode;
+                }
+                return DEFAULT_REPORT_PERIOD;
+            } catch {
+                // If DB is unavailable, fall back to default
+                return DEFAULT_REPORT_PERIOD;
+            }
+        },
+    );
 }
 
 /**

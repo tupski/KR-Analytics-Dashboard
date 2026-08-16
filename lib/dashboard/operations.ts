@@ -60,14 +60,14 @@ export async function getOperationsSummary(params: {
     // ── Build queries ────────────────────────────────────────
     let checkinsQuery = supabase
         .from('transactions')
-        .select('*', { count: 'exact', head: true })
+        .select('id', { count: 'exact', head: true })
         // COALESCE(checkin_at, created_at): wider filter for null checkin_at
         .or(`checkin_at.gte.${todayBoundaries.startISO},and(checkin_at.is.null,created_at.gte.${todayBoundaries.startISO})`);
     if (params.location) checkinsQuery = checkinsQuery.eq('apartment_location', params.location);
 
     let checkoutsQuery = supabase
         .from('transactions')
-        .select('*', { count: 'exact', head: true })
+        .select('id', { count: 'exact', head: true })
         .gte('checkout_at', todayBoundaries.startISO)
         .lt('checkout_at', todayBoundaries.endExclusiveISO);
     if (params.location) checkoutsQuery = checkoutsQuery.eq('apartment_location', params.location);

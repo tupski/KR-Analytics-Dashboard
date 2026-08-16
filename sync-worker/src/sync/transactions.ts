@@ -1,7 +1,7 @@
 import { Pool } from 'pg';
 import { SupabaseClient } from '@supabase/supabase-js';
 import { config } from '../config';
-import { getMetadata, updateMetadata } from './metadata';
+import { getMetadata, updateMetadata, isFullRescanDue } from './metadata';
 import { startSyncLog, completeSyncLog } from './logger';
 
 const UPSERT_COLUMNS = [
@@ -211,10 +211,11 @@ async function syncNewTransactions(
 // --- 6c. Recent updates re-scan ---
 async function syncRecentTransactions(
     pool: Pool,
-    supabase: SupabaseClient
+    supabase: SupabaseClient,
+    windowDays: number
 ): Promise<number> {
     const cutoff = new Date();
-    cutoff.setDate(cutoff.getDate() - config.syncLookbackDays);
+    cutoff.setDate(cutoff.getDate() - windowDays);
     const cutoffISO = cutoff.toISOString();
 
     let allData: TransactionRow[] = [];
@@ -259,10 +260,11 @@ async function syncRecentTransactions(
 // --- 6d. Soft delete detection ---
 async function detectDeletedTransactions(
     pool: Pool,
-    supabase: SupabaseClient
+    supabase: SupabaseClient,
+    windowDays: number
 ): Promise<number> {
     const cutoff = new Date();
-    cutoff.setDate(cutoff.getDate() - config.syncLookbackDays);
+    cutoff.setDate(cutoff.getDate() - windowDays);
     const cutoffISO = cutoff.toISOString();
 
     // Get local active IDs
@@ -342,10 +344,22 @@ export async function syncTransactions(
             rowsSynced = await backfillTransactions(pool, supabase);
         } else {
             // Incremental sync
+            // Narrow window per cycle; widens to full lookback on the daily
+            // backstop. No updated_at column on production transactions yet,
+            // so edits/deletes to older rows are caught by the full re-scan.
+            // ponytail: switch to updated_at watermark once the column exists.
+            const fullRescan = isFullRescanDue(metadata);
+            const windowDays = fullRescan ? config.syncLookbackDays : config.syncRecentWindowDays;
             const newCount = await syncNewTransactions(pool, supabase);
-            const recentCount = await syncRecentTransactions(pool, supabase);
+            const recentCount = await syncRecentTransactions(pool, supabase, windowDays);
             rowsSynced = newCount + recentCount;
-            rowsDeleted = await detectDeletedTransactions(pool, supabase);
+            rowsDeleted = await detectDeletedTransactions(pool, supabase, windowDays);
+
+            // Persist backstop timestamp AFTER the widened cycle completes so
+            // a crash mid-scan retries it on the next cycle.
+            if (fullRescan) {
+                await updateMetadata(pool, 'transactions', { last_full_rescan_at: new Date() });
+            }
         }
 
         // Update metadata

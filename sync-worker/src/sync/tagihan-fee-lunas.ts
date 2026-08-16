@@ -1,10 +1,8 @@
 import { Pool } from 'pg';
 import { SupabaseClient } from '@supabase/supabase-js';
 import { config } from '../config';
-import { getMetadata, updateMetadata } from './metadata';
+import { getMetadata, updateMetadata, isFullRescanDue } from './metadata';
 import { startSyncLog, completeSyncLog } from './logger';
-
-const RECENT_WINDOW_DAYS = 14;
 
 // ─── Parent: tagihan_fee_lunas ───
 
@@ -250,9 +248,10 @@ async function syncNewParent(
 
 async function syncRecentParent(
     pool: Pool,
-    supabase: SupabaseClient
+    supabase: SupabaseClient,
+    windowDays: number
 ): Promise<number> {
-    const cutoffISO = getWibTimestampCutoff(RECENT_WINDOW_DAYS);
+    const cutoffISO = getWibTimestampCutoff(windowDays);
 
     let allData: TagihanFeeLunasRow[] = [];
     let page = 0;
@@ -294,9 +293,10 @@ async function syncRecentParent(
 
 async function detectDeletedParent(
     pool: Pool,
-    supabase: SupabaseClient
+    supabase: SupabaseClient,
+    windowDays: number
 ): Promise<number> {
-    const cutoffDate = getWibCutoff(RECENT_WINDOW_DAYS);
+    const cutoffDate = getWibCutoff(windowDays);
 
     // Use paid_at as temporal anchor (closest to "last modified")
     const localResult = await pool.query<{ id: number }>(
@@ -458,9 +458,10 @@ async function syncNewItems(
 
 async function syncRecentItems(
     pool: Pool,
-    supabase: SupabaseClient
+    supabase: SupabaseClient,
+    windowDays: number
 ): Promise<number> {
-    const cutoffISO = getWibTimestampCutoff(RECENT_WINDOW_DAYS);
+    const cutoffISO = getWibTimestampCutoff(windowDays);
 
     let allData: TagihanFeeLunasItemsRow[] = [];
     let page = 0;
@@ -502,9 +503,10 @@ async function syncRecentItems(
 
 async function detectDeletedItems(
     pool: Pool,
-    supabase: SupabaseClient
+    supabase: SupabaseClient,
+    windowDays: number
 ): Promise<number> {
-    const cutoffISO = getWibTimestampCutoff(RECENT_WINDOW_DAYS);
+    const cutoffISO = getWibTimestampCutoff(windowDays);
 
     // Items have no updated_at; use created_at for temporal anchor
     const localResult = await pool.query<{ id: number }>(
@@ -582,10 +584,19 @@ export async function syncTagihanFeeLunas(
         if (!metadata || !metadata.backfill_done) {
             rowsSynced = await backfillParent(pool, supabase);
         } else {
+            // Narrow window per cycle; daily backstop widens to full lookback
+            // (no updated_at on production tagihan_fee_lunas yet).
+            // ponytail: switch to updated_at watermark once the column exists.
+            const fullRescan = isFullRescanDue(metadata);
+            const windowDays = fullRescan ? config.syncLookbackDays : config.syncRecentWindowDays;
             const newCount = await syncNewParent(pool, supabase);
-            const recentCount = await syncRecentParent(pool, supabase);
+            const recentCount = await syncRecentParent(pool, supabase, windowDays);
             rowsSynced = newCount + recentCount;
-            rowsDeleted = await detectDeletedParent(pool, supabase);
+            rowsDeleted = await detectDeletedParent(pool, supabase, windowDays);
+
+            if (fullRescan) {
+                await updateMetadata(pool, 'tagihan_fee_lunas', { last_full_rescan_at: new Date() });
+            }
         }
 
         const countResult = await pool.query('SELECT COUNT(*) as cnt FROM tagihan_fee_lunas');
@@ -633,13 +644,22 @@ export async function syncTagihanFeeLunasItems(
         if (!metadata || !metadata.backfill_done) {
             rowsSynced = await backfillItems(pool, supabase);
         } else {
+            // Narrow window per cycle; daily backstop widens to full lookback
+            // (no updated_at on production tagihan_fee_lunas_items yet).
+            // ponytail: switch to updated_at watermark once the column exists.
+            const fullRescan = isFullRescanDue(metadata);
+            const windowDays = fullRescan ? config.syncLookbackDays : config.syncRecentWindowDays;
             const newCount = await syncNewItems(pool, supabase);
-            const recentCount = await syncRecentItems(pool, supabase);
+            const recentCount = await syncRecentItems(pool, supabase, windowDays);
             rowsSynced = newCount + recentCount;
             // Items are append-only per UNIQUE(transaction_id).
             // Delete detection via created_at window produces false positives
             // because items created_at is a single timestamp, not updated.
             // Items lifecycle follows parent transactions — skip delete-detect.
+
+            if (fullRescan) {
+                await updateMetadata(pool, 'tagihan_fee_lunas_items', { last_full_rescan_at: new Date() });
+            }
         }
 
         const countResult = await pool.query('SELECT COUNT(*) as cnt FROM tagihan_fee_lunas_items');

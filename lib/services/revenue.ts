@@ -7,6 +7,8 @@ import { effectiveDate } from '@/lib/dashboard/transaction-source';
 import { format } from 'date-fns';
 import { toZonedTime } from 'date-fns-tz';
 import type { ReportPeriodRange } from '@/lib/shared/report-period';
+import { withEgressCache, egressCacheKey } from '@/lib/egress-cache';
+import { CACHE_TTL } from '@/lib/config/constants';
 
 // ============================================================
 // lib/services/revenue.ts
@@ -95,6 +97,21 @@ function normalizeDate(d: unknown): string {
 // given period.
 // ============================================================
 export async function getRevenueSummary(period: ReportPeriodRange): Promise<RevenueSummary> {
+    // M1 egress: cached per period — 5m for current/short windows, 30m for
+    // historical aggregates. Service-role output, RLS-identical across users.
+    const now = new Date();
+    const days = Math.max(1, Math.round((new Date(period.endISO).getTime() - new Date(period.startISO).getTime()) / 86_400_000));
+    const ttl = new Date(period.endISO).getTime() < now.getTime() || days > 3
+        ? CACHE_TTL.DASHBOARD_MONTH
+        : CACHE_TTL.DASHBOARD_TODAY;
+    return withEgressCache(
+        egressCacheKey('transactions', 'revenue-summary', period.startDate, period.endExclusiveDate),
+        ttl,
+        async () => getRevenueSummaryInner(period),
+    );
+}
+
+async function getRevenueSummaryInner(period: ReportPeriodRange): Promise<RevenueSummary> {
     const startStr = period.startDate;
     const endExclusive = period.endExclusiveDate;
 
@@ -204,6 +221,20 @@ async function getRevenueSummaryLegacy(period: ReportPeriodRange): Promise<Reven
 // Mirrors fetchRevenueData() in dashboard/actions.ts:466-514
 // ============================================================
 export async function getRevenueTrend(
+    period: ReportPeriodRange,
+    location?: string | null
+): Promise<RevenueTrendPoint[]> {
+    // M1 egress: cached 5m per period+location — service-role output,
+    // RLS-identical across users. Historical aggregate; short TTL keeps the
+    // chart fresh while deduping repeated trend fetches.
+    return withEgressCache(
+        egressCacheKey('transactions', 'revenue-trend', period.startDate, period.endExclusiveDate, location ?? 'all'),
+        CACHE_TTL.DASHBOARD_TODAY,
+        async () => getRevenueTrendInner(period, location),
+    );
+}
+
+async function getRevenueTrendInner(
     period: ReportPeriodRange,
     location?: string | null
 ): Promise<RevenueTrendPoint[]> {

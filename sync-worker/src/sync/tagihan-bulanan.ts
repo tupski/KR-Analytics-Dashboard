@@ -1,10 +1,8 @@
 import { Pool } from 'pg';
 import { SupabaseClient } from '@supabase/supabase-js';
 import { config } from '../config';
-import { getMetadata, updateMetadata } from './metadata';
+import { getMetadata, updateMetadata, isFullRescanDue } from './metadata';
 import { startSyncLog, completeSyncLog } from './logger';
-
-const RECENT_WINDOW_DAYS = 14;
 
 const UPSERT_COLUMNS = [
     'id', 'apartment_location', 'room_number', 'amount', 'due_date',
@@ -199,9 +197,10 @@ async function syncNewTagihanBulanan(
 // --- Recent re-scan (by created_at — no updated_at in production) ---
 async function syncRecentTagihanBulanan(
     pool: Pool,
-    supabase: SupabaseClient
+    supabase: SupabaseClient,
+    windowDays: number
 ): Promise<number> {
-    const cutoffISO = getWibTimestampCutoff(RECENT_WINDOW_DAYS);
+    const cutoffISO = getWibTimestampCutoff(windowDays);
 
     let allData: TagihanBulananRow[] = [];
     let page = 0;
@@ -244,9 +243,10 @@ async function syncRecentTagihanBulanan(
 // --- Delete detection ---
 async function detectDeletedTagihanBulanan(
     pool: Pool,
-    supabase: SupabaseClient
+    supabase: SupabaseClient,
+    windowDays: number
 ): Promise<number> {
-    const cutoffDate = getWibCutoff(RECENT_WINDOW_DAYS);
+    const cutoffDate = getWibCutoff(windowDays);
 
     // Get local active IDs within re-scan window (using due_date as the temporal anchor)
     const localResult = await pool.query<{ id: number }>(
@@ -325,10 +325,19 @@ export async function syncTagihanBulanan(
             rowsSynced = await backfillTagihanBulanan(pool, supabase);
         } else {
             // Incremental + re-scan + delete detection
+            // Narrow window per cycle; daily backstop widens to full lookback
+            // (no updated_at on production tagihan_bulanan yet).
+            // ponytail: switch to updated_at watermark once the column exists.
+            const fullRescan = isFullRescanDue(metadata);
+            const windowDays = fullRescan ? config.syncLookbackDays : config.syncRecentWindowDays;
             const newCount = await syncNewTagihanBulanan(pool, supabase);
-            const recentCount = await syncRecentTagihanBulanan(pool, supabase);
+            const recentCount = await syncRecentTagihanBulanan(pool, supabase, windowDays);
             rowsSynced = newCount + recentCount;
-            rowsDeleted = await detectDeletedTagihanBulanan(pool, supabase);
+            rowsDeleted = await detectDeletedTagihanBulanan(pool, supabase, windowDays);
+
+            if (fullRescan) {
+                await updateMetadata(pool, 'tagihan_bulanan', { last_full_rescan_at: new Date() });
+            }
         }
 
         // Update row count metadata

@@ -2,12 +2,15 @@
 
 import { createServerClient } from '@/lib/supabase/server';
 import { format, addDays, subDays, startOfMonth, endOfMonth, parseISO } from 'date-fns';
+import { toZonedTime } from 'date-fns-tz';
 import { getDateRange, getPreviousDateRange, computeDateRange, computeComparisonRange, isMonthAligned, type DateFilter } from '@/lib/services/date-range';
 import type { DateFilterParams } from '@/lib/services/date-range';
 import { getReportPeriodSetting } from '@/lib/get-report-period-setting';
 import { getRevenueSummary } from '@/lib/services/revenue';
 import { getExpenseSummary } from '@/lib/services/expense';
 import { getMonthlySummaries } from '@/lib/analytics/monthly';
+import { queryAnalytics, parseNumeric } from '@/lib/analytics/db';
+import { isAnalyticsTableFresh } from '@/lib/analytics/sync-freshness';
 import type { ReportPeriodRange } from '@/lib/shared/report-period';
 import { withEgressCache, egressCacheKey } from '@/lib/egress-cache';
 import { CACHE_TTL } from '@/lib/config/constants';
@@ -151,6 +154,27 @@ function laporanTtlFor(startISO: string, endISO: string): number {
  */
 async function fetchTagihanReport(supabase: ServerSupabaseClient): Promise<TagihanReport> {
     return withEgressCache(egressCacheKey('tagihan_bulanan', 'paid-unpaid'), CACHE_TTL.DASHBOARD_MONTH, async () => {
+        // Analytics-first: all-time paid/unpaid from the local mirror
+        if (process.env.ANALYTICS_DATABASE_URL) {
+            try {
+                const rows = await queryAnalytics<{ status: string; amount: string | number | null }>(
+                    `SELECT status, amount FROM tagihan_bulanan WHERE is_deleted = FALSE`
+                );
+                if (rows.length > 0) {
+                    const paid = rows.filter(r => r.status === 'paid');
+                    const unpaid = rows.filter(r => r.status === 'unpaid');
+                    return {
+                        paid: paid.reduce((s, r) => s + parseNumeric(r.amount), 0),
+                        unpaid: unpaid.reduce((s, r) => s + parseNumeric(r.amount), 0),
+                        paidCount: paid.length,
+                        unpaidCount: unpaid.length,
+                    };
+                }
+            } catch (e) {
+                console.warn('[Laporan] tagihan_bulanan mirror read failed, using Supabase:', e);
+            }
+        }
+
         const { data: tagihanPaid } = await supabase
             .from('tagihan_bulanan')
             .select('amount')
@@ -176,6 +200,23 @@ async function fetchTagihanReport(supabase: ServerSupabaseClient): Promise<Tagih
  */
 async function fetchFeePaidAggregate(supabase: ServerSupabaseClient): Promise<{ totalPaid: number; paidCount: number }> {
     return withEgressCache(egressCacheKey('tagihan_fee_lunas_items', 'paid-aggregate'), CACHE_TTL.DASHBOARD_MONTH, async () => {
+        // Analytics-first: all-time paid fees from the local mirror
+        if (process.env.ANALYTICS_DATABASE_URL) {
+            try {
+                const rows = await queryAnalytics<{ fee_amount: string | number | null }>(
+                    `SELECT fee_amount FROM tagihan_fee_lunas_items WHERE is_deleted = FALSE`
+                );
+                if (rows.length > 0) {
+                    return {
+                        totalPaid: rows.reduce((s, r) => s + parseNumeric(r.fee_amount), 0),
+                        paidCount: rows.length,
+                    };
+                }
+            } catch (e) {
+                console.warn('[Laporan] tagihan_fee_lunas_items mirror read failed, using Supabase:', e);
+            }
+        }
+
         const { data: feePaid } = await supabase
             .from('tagihan_fee_lunas_items')
             .select('fee_amount');
@@ -184,6 +225,99 @@ async function fetchFeePaidAggregate(supabase: ServerSupabaseClient): Promise<{ 
             paidCount: feePaid?.length || 0,
         };
     });
+}
+
+interface LocalTxRow {
+    checkin_at: string | null;
+    created_at: string | null;
+    cash_amount: number;
+    transfer_amount: number;
+    apartment_location: string | null;
+    room_number: string | null;
+    marketing_fee: number;
+}
+
+/**
+ * Read the local transactions mirror for a period (analytics-first).
+ * Returns null when the mirror is unavailable / stale for a current period /
+ * empty — the caller then falls back to Supabase. Mirror NUMERIC values are
+ * normalized to numbers to match PostgREST row shapes.
+ * ponytail: per-table freshness thresholds via sync_metadata config columns;
+ * switch to an updated_at watermark once production transactions has one.
+ */
+async function readTransactionsLocal(period: ReportPeriodRange, isCurrent: boolean): Promise<LocalTxRow[] | null> {
+    if (!process.env.ANALYTICS_DATABASE_URL) return null;
+    if (isCurrent && !(await isAnalyticsTableFresh('transactions'))) {
+        console.debug('[Laporan] transactions mirror stale, using Supabase for current period');
+        return null;
+    }
+    try {
+        const rows = await queryAnalytics<{
+            checkin_at: string | null;
+            created_at: string | null;
+            cash_amount: string | number | null;
+            transfer_amount: string | number | null;
+            apartment_location: string | null;
+            room_number: string | null;
+            marketing_fee: string | number | null;
+        }>(
+            `SELECT checkin_at, created_at, cash_amount, transfer_amount,
+                    apartment_location, room_number, marketing_fee
+             FROM transactions
+             WHERE is_deleted = FALSE
+               AND (checkin_at >= $1 OR (checkin_at IS NULL AND created_at >= $1))`,
+            [period.startISO]
+        );
+        if (rows.length === 0) return null; // empty mirror → fallback (empty is NOT truth)
+        return rows.map(r => ({
+            checkin_at: r.checkin_at,
+            created_at: r.created_at,
+            cash_amount: parseNumeric(r.cash_amount),
+            transfer_amount: parseNumeric(r.transfer_amount),
+            apartment_location: r.apartment_location,
+            room_number: r.room_number,
+            marketing_fee: parseNumeric(r.marketing_fee),
+        }));
+    } catch (err) {
+        console.warn('[Laporan] transactions mirror read failed, using Supabase:', err);
+        return null;
+    }
+}
+
+/**
+ * Read the local pengeluaran mirror for a date range (analytics-first).
+ * Returns null → Supabase fallback. Same empty/stale rules as transactions.
+ */
+async function readExpensesLocal(
+    startDate: string,
+    endDate: string,
+    isCurrent: boolean,
+): Promise<{ category: string | null; jumlah: number; apartment_location: string | null; room_number: string | null }[] | null> {
+    if (!process.env.ANALYTICS_DATABASE_URL) return null;
+    if (isCurrent && !(await isAnalyticsTableFresh('pengeluaran'))) return null;
+    try {
+        const rows = await queryAnalytics<{
+            category: string | null;
+            jumlah: string | number | null;
+            apartment_location: string | null;
+            room_number: string | null;
+        }>(
+            `SELECT category, jumlah, apartment_location, room_number
+             FROM pengeluaran
+             WHERE is_deleted = FALSE AND tanggal >= $1 AND tanggal <= $2`,
+            [startDate, endDate]
+        );
+        if (rows.length === 0) return null;
+        return rows.map(r => ({
+            category: r.category,
+            jumlah: parseNumeric(r.jumlah),
+            apartment_location: r.apartment_location,
+            room_number: r.room_number,
+        }));
+    } catch (err) {
+        console.warn('[Laporan] pengeluaran mirror read failed, using Supabase:', err);
+        return null;
+    }
 }
 
 export async function fetchLaporanData(
@@ -201,25 +335,30 @@ export async function fetchLaporanData(
     const startDateStr = start.split('T')[0];
     const endDateStr = end.split('T')[0];
 
-    // Fetch transactions in range using COALESCE(checkin_at, created_at).
-    // Egress P1: cached per exact (start, end, mode) — two different ranges can
-    // never collide. Cache MISS still runs the RLS-scoped query; service-role
-    // output here has no per-user filter, so rows are identical for all users.
+    // Analytics-first: serve the period scan from the local transactions mirror
+    // (sync-worker), falling back to Supabase when the mirror is unavailable,
+    // stale for a current period, or empty. Egress P1: cached per exact
+    // (start, end, mode) — the cache stores whichever source won.
+    const period = buildPeriodFromISO(start, end);
+    const todayWIB = format(toZonedTime(new Date(), 'Asia/Jakarta'), 'yyyy-MM-dd');
+    const isCurrent = period.endExclusiveDate > todayWIB;
+
     const txList = await withEgressCache(
         egressCacheKey('transactions', 'laporan-scan', start, end, mode),
         laporanTtlFor(start, end),
         async () => {
+            const local = await readTransactionsLocal(period, isCurrent);
+            if (local) return local;
             const { data } = await supabase
                 .from('transactions')
-                .select('*')
+                .select('checkin_at, created_at, cash_amount, transfer_amount, apartment_location, room_number, marketing_fee')
                 .or(`checkin_at.gte.${start},and(checkin_at.is.null,created_at.gte.${start})`)
                 .order('checkin_at', { ascending: false });
             return data || [];
         },
     );
 
-    // ── REVENUE (computed from Supabase txList, analytics fallback) ──
-    const period = buildPeriodFromISO(start, end);
+    // ── REVENUE (computed from txList, analytics fallback) ──
 
     // Fetch analytics summary for fallback
     let revenueSummary: { totalRevenue: number; transactionCount: number } | null = null;
@@ -263,8 +402,25 @@ export async function fetchLaporanData(
         finalTotalTransactions: totalTransactions,
     });
 
-    // Get rooms per location
-    const { data: allRooms } = await supabase.from('nomor_kamar').select('name, lokasi');
+    // Get rooms per location — local mirror first (30m cache), Supabase fallback
+    const allRooms = await withEgressCache(
+        egressCacheKey('nomor_kamar', 'laporan-rooms'),
+        CACHE_TTL.DASHBOARD_MONTH,
+        async () => {
+            if (process.env.ANALYTICS_DATABASE_URL) {
+                try {
+                    const rows = await queryAnalytics<{ name: string; lokasi: string }>(
+                        `SELECT name, lokasi FROM nomor_kamar WHERE is_deleted = FALSE`
+                    );
+                    if (rows.length > 0) return rows;
+                } catch (err) {
+                    console.warn('[Laporan] nomor_kamar mirror read failed, using Supabase:', err);
+                }
+            }
+            const { data } = await supabase.from('nomor_kamar').select('name, lokasi');
+            return data || [];
+        },
+    );
     const roomsByLocation: Record<string, string[]> = {};
     allRooms?.forEach((r: any) => {
         if (!roomsByLocation[r.lokasi]) roomsByLocation[r.lokasi] = [];
@@ -331,6 +487,8 @@ export async function fetchLaporanData(
         egressCacheKey('pengeluaran', 'laporan-scan', startDateStr, endDateStr),
         laporanTtlFor(start, end),
         async () => {
+            const local = await readExpensesLocal(startDateStr, endDateStr, isCurrent);
+            if (local) return local;
             const { data } = await supabase
                 .from('pengeluaran')
                 .select('category, jumlah, apartment_location, room_number')
@@ -340,11 +498,14 @@ export async function fetchLaporanData(
         },
     );
 
-    // hotel_day: skip analytics aggregate to preserve ISO time boundaries
-    if (mode !== 'hotel_day') {
+    // hotel_day: skip analytics aggregate to preserve ISO time boundaries.
+    // Stale mirror or empty analytics for a current period → fall through to
+    // expenseRows (itself mirror-first with Supabase fallback).
+    if (mode !== 'hotel_day' && process.env.ANALYTICS_DATABASE_URL) {
         try {
-            if (process.env.ANALYTICS_DATABASE_URL) {
-                const expSummary = await getExpenseSummary(undefined, undefined, period);
+            const freshEnough = !isCurrent || (await isAnalyticsTableFresh('pengeluaran'));
+            const expSummary = freshEnough ? await getExpenseSummary(undefined, undefined, period) : null;
+            if (expSummary && (expSummary.totalAmount > 0 || expSummary.byCategory.length > 0)) {
                 totalExpenses = expSummary.totalAmount;
                 expenses = expSummary.byCategory
                     .map(c => ({ category: c.category, total: c.total_amount, count: c.expense_count }))
@@ -529,21 +690,31 @@ export async function fetchLaporanData(
     const prevPeriod = buildPeriodFromISO(prevRange.start, prevRange.end);
     let prevRevenue = 0, prevTransactions = 0, prevExpenses = 0;
 
-    // Compute comparison from local Supabase using exclusive-end COALESCE filter
+    // Compute comparison — mirror-first with exclusive-end COALESCE filter,
+    // Supabase fallback (same narrow columns as before).
     {
-        const [prevTxResult, prevExpResult] = await Promise.all([
-            supabase
-                .from('transactions')
-                .select('cash_amount, transfer_amount, checkin_at, created_at')
-                .or(`checkin_at.gte.${prevRange.start},and(checkin_at.is.null,created_at.gte.${prevRange.start})`),
-            supabase
-                .from('pengeluaran')
-                .select('jumlah')
-                .gte('tanggal', prevPeriod.startDate)
-                .lte('tanggal', prevPeriod.endDate),
+        const prevIsCurrent = prevPeriod.endExclusiveDate > todayWIB;
+        const [prevTxData, prevExpData] = await Promise.all([
+            readTransactionsLocal(prevPeriod, prevIsCurrent).then(async (rows) => {
+                if (rows) return rows;
+                const { data } = await supabase
+                    .from('transactions')
+                    .select('cash_amount, transfer_amount, checkin_at, created_at')
+                    .or(`checkin_at.gte.${prevRange.start},and(checkin_at.is.null,created_at.gte.${prevRange.start})`);
+                return data || [];
+            }),
+            readExpensesLocal(prevPeriod.startDate, prevPeriod.endDate, prevIsCurrent).then(async (rows) => {
+                if (rows) return rows;
+                const { data } = await supabase
+                    .from('pengeluaran')
+                    .select('jumlah')
+                    .gte('tanggal', prevPeriod.startDate)
+                    .lte('tanggal', prevPeriod.endDate);
+                return data || [];
+            }),
         ]);
 
-        const prevFiltered = (prevTxResult.data || []).filter((t: any) => {
+        const prevFiltered = (prevTxData as any[]).filter((t: any) => {
             const effDate = t.checkin_at ?? t.created_at;
             if (!effDate) return false;
             const eff = new Date(effDate).getTime();
@@ -553,7 +724,7 @@ export async function fetchLaporanData(
         });
         prevRevenue = prevFiltered.reduce((s: number, t: any) => s + (t.cash_amount || 0) + (t.transfer_amount || 0), 0) || 0;
         prevTransactions = prevFiltered.length;
-        prevExpenses = prevExpResult.data?.reduce((s, e: any) => s + (e.jumlah || 0), 0) || 0;
+        prevExpenses = (prevExpData as any[]).reduce((s, e: any) => s + (e.jumlah || 0), 0) || 0;
     }
 
     const comparison: LaporanData['comparison'] = {

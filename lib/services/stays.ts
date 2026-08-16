@@ -5,6 +5,8 @@
 import { createServerClient, type ServerSupabaseClient } from '@/lib/supabase/server'
 import { getNowWIB } from '@/lib/utils/format'
 import { getReportPeriodRange } from '@/lib/shared/report-period'
+import { withEgressCache, egressCacheKey } from '@/lib/egress-cache'
+import { CACHE_TTL } from '@/lib/config/constants'
 
 // ============================================================
 // Types
@@ -156,21 +158,30 @@ export async function getLiveActiveStays(
     const nowISO = now.toISOString()
 
     // Catch ALL candidates: checkin_at recent, created_at recent, checkout_at null (still open), checkout_at future
-    const { data, error } = await supabase
-        .from('transactions')
-        .select('id, created_at, checkin_at, checkout_at, rental_duration, apartment_location, room_number, customer_name')
-        .or(
-            `checkin_at.gte.${lookbackISO},` +
-            `created_at.gte.${lookbackISO},` +
-            `checkout_at.is.null,` +
-            `checkout_at.gte.${nowISO}`
-        )
-        .order('created_at', { ascending: false })
+    // M1 egress: cached 30s (live tier). Service-role output, RLS-identical across
+    // users — keyed by the 7-day lookback window so the window rollover re-fetches.
+    const data = await withEgressCache(
+        egressCacheKey('transactions', 'active-stays', lookbackISO.split('T')[0]),
+        CACHE_TTL.LIVE_TIER,
+        async () => {
+            const res = await supabase
+                .from('transactions')
+                .select('id, created_at, checkin_at, checkout_at, rental_duration, apartment_location, room_number, customer_name')
+                .or(
+                    `checkin_at.gte.${lookbackISO},` +
+                    `created_at.gte.${lookbackISO},` +
+                    `checkout_at.is.null,` +
+                    `checkout_at.gte.${nowISO}`
+                )
+                .order('created_at', { ascending: false })
 
-    if (error) {
-        console.error('[stays] getLiveActiveStays error:', error)
-        return []
-    }
+            if (res.error) {
+                console.error('[stays] getLiveActiveStays error:', res.error)
+                return []
+            }
+            return res.data || []
+        }
+    )
 
     if (process.env.NODE_ENV === 'development') {
         console.debug('[Unit Runtime Debug]', {
@@ -261,21 +272,29 @@ export async function getTodayCheckins(
     const startISO = range.startISO
     const endExclusiveISO = range.endExclusiveISO
 
-    const { data, error } = await supabase
-        .from('transactions')
-        .select('id, created_at, checkin_at, checkout_at, rental_duration, apartment_location, room_number, customer_name')
-        // Include transactions whose checkin_at is today, OR
-        // whose created_at is today (for transactions without checkin_at)
-        .or(
-            `checkin_at.gte.${startISO},and(checkin_at.is.null,created_at.gte.${startISO})`
-        )
+    // M1 egress: cached 5m — service-role output, RLS-identical across users.
+    const data = await withEgressCache(
+        egressCacheKey('transactions', 'today-checkins', startISO.split('T')[0]),
+        CACHE_TTL.DASHBOARD_TODAY,
+        async () => {
+            const res = await supabase
+                .from('transactions')
+                .select('id, created_at, checkin_at, checkout_at, rental_duration, apartment_location, room_number, customer_name')
+                // Include transactions whose checkin_at is today, OR
+                // whose created_at is today (for transactions without checkin_at)
+                .or(
+                    `checkin_at.gte.${startISO},and(checkin_at.is.null,created_at.gte.${startISO})`
+                )
 
-    if (error) {
-        console.error('[stays] getTodayCheckins error:', error)
-        return []
-    }
+            if (res.error) {
+                console.error('[stays] getTodayCheckins error:', res.error)
+                return []
+            }
+            return res.data || []
+        }
+    )
 
-    const items = (data ?? []) as StayTransaction[]
+    const items = data as StayTransaction[]
 
     // Filter by effective start date within today
     const todayStart = new Date(startISO)
@@ -311,21 +330,29 @@ export async function getTodayCheckouts(
     const startISO = range.startISO
     const endExclusiveISO = range.endExclusiveISO
 
-    // Wide filter: checkout_at >= startISO OR potential checkout today (active stays)
-    const { data, error } = await supabase
-        .from('transactions')
-        .select('id, created_at, checkin_at, checkout_at, rental_duration, apartment_location, room_number, customer_name')
-        .or(
-            `checkout_at.gte.${startISO},` +
-            `and(checkout_at.is.null,checkin_at.gte.${startISO})`
-        )
+    // M1 egress: cached 5m — service-role output, RLS-identical across users.
+    const data = await withEgressCache(
+        egressCacheKey('transactions', 'today-checkouts', startISO.split('T')[0]),
+        CACHE_TTL.DASHBOARD_TODAY,
+        async () => {
+            // Wide filter: checkout_at >= startISO OR potential checkout today (active stays)
+            const res = await supabase
+                .from('transactions')
+                .select('id, created_at, checkin_at, checkout_at, rental_duration, apartment_location, room_number, customer_name')
+                .or(
+                    `checkout_at.gte.${startISO},` +
+                    `and(checkout_at.is.null,checkin_at.gte.${startISO})`
+                )
 
-    if (error) {
-        console.error('[stays] getTodayCheckouts error:', error)
-        return []
-    }
+            if (res.error) {
+                console.error('[stays] getTodayCheckouts error:', res.error)
+                return []
+            }
+            return res.data || []
+        }
+    )
 
-    const items = (data ?? []) as StayTransaction[]
+    const items = data as StayTransaction[]
     const todayStart = new Date(startISO)
     const todayEnd = new Date(endExclusiveISO)
 
@@ -348,6 +375,13 @@ export async function getTodayCheckouts(
 /**
  * Fetch active stays that will check out in the future, sorted by
  * estimated checkout time ascending (nearest first).
+ *
+ * L4 egress: instead of fetching ALL active stays then slicing, the candidate
+ * window is bounded DB-side. The same wide OR filter as getLiveActiveStays is
+ * used, plus a `.limit()` — candidates are the most recent transactions, and
+ * upcoming checkouts are by construction recent bookings, so the nearest-N
+ * checkouts survive the window. The canonical isStayActiveNow filter still
+ * runs in JS for correctness.
  */
 export async function getUpcomingCheckouts(
     options?: {
@@ -356,25 +390,60 @@ export async function getUpcomingCheckouts(
         limit?: number
     }
 ): Promise<ActiveStay[]> {
-    const active = await getLiveActiveStays({
-        supabase: options?.supabase,
-        now: options?.now,
-    })
-
+    const supabase = options?.supabase ?? createServerClient()
     const now = options?.now ?? new Date()
 
-    // Filter: stay is active now AND estimated end is in the future
-    const upcoming = active.filter((stay) => {
-        const end = new Date(stay.estimatedCheckoutAt)
-        return end > now
-    })
+    // Bounded candidate window: enough headroom for the nearest-N checkouts.
+    const requestedLimit = options?.limit ?? 10
+    const candidateLimit = Math.min(requestedLimit * 5, 100)
+
+    const lookback = new Date(now)
+    lookback.setDate(lookback.getDate() - 7)
+    const lookbackISO = lookback.toISOString()
+    const nowISO = now.toISOString()
+
+    const { data, error } = await supabase
+        .from('transactions')
+        .select('id, created_at, checkin_at, checkout_at, rental_duration, apartment_location, room_number, customer_name')
+        .or(
+            `checkin_at.gte.${lookbackISO},` +
+            `created_at.gte.${lookbackISO},` +
+            `checkout_at.is.null,` +
+            `checkout_at.gte.${nowISO}`
+        )
+        .order('created_at', { ascending: false })
+        .limit(candidateLimit)
+
+    if (error) {
+        console.error('[stays] getUpcomingCheckouts error:', error)
+        return []
+    }
+
+    const upcoming: ActiveStay[] = []
+
+    for (const tx of (data ?? []) as StayTransaction[]) {
+        if (!isStayActiveNow(tx, now)) continue
+        const end = getEstimatedEnd(tx)
+        if (end.getTime() <= now.getTime()) continue
+        const start = getEffectiveStart(tx)
+        upcoming.push({
+            transactionId: tx.id,
+            location: tx.apartment_location,
+            roomNumber: tx.room_number,
+            customerName: tx.customer_name,
+            checkinAt: tx.checkin_at ?? tx.created_at,
+            effectiveCheckinAt: start.toISOString(),
+            estimatedCheckoutAt: end.toISOString(),
+            rentalDuration: tx.rental_duration,
+        })
+    }
 
     // Sort by estimatedCheckoutAt ascending (nearest first)
     upcoming.sort(
         (a, b) => new Date(a.estimatedCheckoutAt).getTime() - new Date(b.estimatedCheckoutAt).getTime()
     )
 
-    return options?.limit ? upcoming.slice(0, options.limit) : upcoming
+    return upcoming.slice(0, requestedLimit)
 }
 
 // ============================================================

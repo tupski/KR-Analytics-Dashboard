@@ -10,6 +10,14 @@ import { getReportPeriodRange } from '@/lib/reporting-period';
 import { computeDateRange, computeComparisonRange } from '@/lib/services/date-range';
 import type { DateFilterParams } from '@/lib/services/date-range';
 import type { ReportPeriodRange } from '@/lib/shared/report-period';
+import { withEgressCache, egressCacheKey } from '@/lib/egress-cache';
+import { CACHE_TTL } from '@/lib/config/constants';
+
+/** Columns consumed by BookingTable + export mapping — blob columns (ktp_image_url, transfer_proof_url) dropped. */
+const BOOKING_SELECT_COLUMNS = 'id, customer_name, apartment_location, room_number, checkin_at, checkout_at, rental_duration, cash_amount, transfer_amount, marketing_name, shift, input_by, created_at';
+
+/** Max rows for a booking export. */
+const BOOKING_EXPORT_MAX_ROWS = 20000;
 
 export interface BookingItem {
     id: number;
@@ -63,7 +71,7 @@ export async function fetchBookings(filters: BookingFilters = {}): Promise<Booki
     try {
         let query = supabase
             .from('transactions')
-            .select('*', { count: 'exact' });
+            .select(BOOKING_SELECT_COLUMNS, { count: 'exact' });
 
         // Apply search filter
         if (filters.search) {
@@ -200,11 +208,19 @@ export async function fetchBookingStats(dateParams?: DateFilterParams) {
         ? computeDateRange(dateParams.rangePreset, dateParams.startDate, dateParams.endDate, mode)
         : await getTodayReportRange();
 
-    // Main period stats — use COALESCE pattern
-    const { count: bookingCount } = await supabase
-        .from('transactions')
-        .select('id', { count: 'exact', head: true })
-        .or(`checkin_at.gte.${range.start},and(checkin_at.is.null,created_at.gte.${range.start})`);
+    // Main period stats — use COALESCE pattern.
+    // M1 egress: head-count cached 5m — RLS output identical for all users (service-role, no per-user filter).
+    const bookingCount = await withEgressCache(
+        egressCacheKey('transactions', 'booking-stats-count', range.start),
+        CACHE_TTL.DASHBOARD_TODAY,
+        async () => {
+            const { count } = await supabase
+                .from('transactions')
+                .select('id', { count: 'exact', head: true })
+                .or(`checkin_at.gte.${range.start},and(checkin_at.is.null,created_at.gte.${range.start})`);
+            return count || 0;
+        },
+    );
 
     const mainPeriod = buildPeriodFromISO(range.start, range.end);
     const revenueData = await getServiceRevenueSummary(mainPeriod);
@@ -233,10 +249,18 @@ export async function fetchBookingStats(dateParams?: DateFilterParams) {
             mode,
         );
         if (cr) {
-            const { count: prevCount } = await supabase
-                .from('transactions')
-                .select('id', { count: 'exact', head: true })
-                .or(`checkin_at.gte.${cr.start},and(checkin_at.is.null,created_at.gte.${cr.start})`);
+            // M1 egress: head-count cached 5m — RLS-identical across users.
+            const prevCount = await withEgressCache(
+                egressCacheKey('transactions', 'booking-stats-prev-count', cr.start),
+                CACHE_TTL.DASHBOARD_TODAY,
+                async () => {
+                    const { count } = await supabase
+                        .from('transactions')
+                        .select('id', { count: 'exact', head: true })
+                        .or(`checkin_at.gte.${cr.start},and(checkin_at.is.null,created_at.gte.${cr.start})`);
+                    return count || 0;
+                },
+            );
 
             const prevPeriod = buildPeriodFromISO(cr.start, cr.end);
             const prevRevData = await getServiceRevenueSummary(prevPeriod);
@@ -269,9 +293,16 @@ export async function fetchBookingsForExport(filters: BookingFilters = {}) {
     const timezone = 'Asia/Jakarta';
 
     try {
+        // M3: require a date range — unbounded exports are rejected.
+        const hasRange = !!(filters.rangePreset || filters.dateFrom);
+        if (!hasRange) {
+            throw new Error('Rentang tanggal wajib diisi untuk export booking.');
+        }
+
         let query = supabase
             .from('transactions')
-            .select('*');
+            .select(BOOKING_SELECT_COLUMNS)
+            .limit(BOOKING_EXPORT_MAX_ROWS);
 
         if (filters.search) {
             query = query.or(`customer_name.ilike.%${filters.search}%,room_number.ilike.%${filters.search}%`);
