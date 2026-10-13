@@ -86,3 +86,7 @@ sync-worker/dist/
 scripts/*.md
 scripts/*.ps1
 scripts/*.bat
+
+# Local tool artifacts (leftover/empty folders, not part of the project)
+.freebuff/
+/-p/
