@@ -82,7 +82,8 @@ sync-worker/node_modules/
 sync-worker/dist/
 
 # Test Files
-**/__tests__/
+# NOTE: test directories (*/__tests__/, *.test.*, *.spec.*) are intentionally
+# tracked so CI can run them. Do not re-add an ignore rule for them.
 scripts/*.md
 scripts/*.ps1
 scripts/*.bat

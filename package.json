@@ -8,8 +8,10 @@
         "start": "next start -p 3031",
         "lint": "next lint",
         "type-check": "tsc --noEmit",
-        "test": "jest",
-        "test:watch": "jest --watch",
+        "test": "vitest run",
+        "test:watch": "vitest",
+        "test:unit": "vitest run --project unit",
+        "test:component": "vitest run --project component",
         "db:migrate": "node db/migrate.cjs",
         "db:start": "node db/start.cjs"
     },
