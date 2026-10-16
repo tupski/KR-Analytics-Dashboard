@@ -186,9 +186,9 @@ export default function TabContent({
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
                 <ClickableKpiCard
                     icon={<Calendar className="w-5 h-5" />}
-                    title={getCardTitle('Booking', filterRangePreset)}
+                    title={getCardTitle('Transaksi', filterRangePreset)}
                     value={kpiData.bookingToday}
-                    subtitle="Check-in tercatat hari ini"
+                    subtitle="Check-in tercatat"
                     semanticType="booking"
                     onClick={() => setModalVariant('booking')}
                 />
@@ -378,7 +378,7 @@ export default function TabContent({
             {/* ══════════════════════════════════════════════════ */}
             <KpiDetailModal
                 variant="booking"
-                title={getCardTitle('Booking', filterRangePreset)}
+                title={getCardTitle('Transaksi', filterRangePreset)}
                 isOpen={modalVariant === 'booking'}
                 onClose={() => setModalVariant(null)}
                 data={bookingModalData}

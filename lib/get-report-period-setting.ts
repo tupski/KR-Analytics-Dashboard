@@ -1,6 +1,7 @@
 import { createServerClient } from '@/lib/supabase/server';
-import { DEFAULT_REPORT_PERIOD, getReportPeriodRange } from '@/lib/reporting-period';
+import { DEFAULT_REPORT_PERIOD } from '@/lib/reporting-period';
 import type { ReportPeriodMode } from '@/lib/reporting-period';
+import { getReportPeriodRange } from '@/lib/shared/report-period';
 import { withEgressCache } from '@/lib/egress-cache';
 import { CACHE_TTL } from '@/lib/config/constants';
 
@@ -49,12 +50,15 @@ export async function getReportPeriodSetting(): Promise<ReportPeriodMode> {
  * Get today's report period range using the DB setting.
  * Convenience wrapper used in dashboard/actions.ts to replace getHotelDayRange().
  *
+ * Delegates to the shared single source of truth (lib/shared/report-period),
+ * which computes all boundaries — including the exclusive end — timezone-safely
+ * via formatInTimeZone. (The previous implementation relabeled a UTC timestamp
+ * as +07:00, truncating "today" by 7 hours: 17:00 instead of next midnight.)
+ *
  * Returns start (inclusive), end (inclusive), and endExclusiveISO for `<` DB queries.
  */
 export async function getTodayReportRange(): Promise<{ start: string; end: string; endExclusiveISO: string }> {
     const mode = await getReportPeriodSetting();
-    const range = getReportPeriodRange(new Date(), mode);
-    // Compute exclusive end from the inclusive end by adding 1 ms
-    const endExclusiveISO = new Date(new Date(range.end).getTime() + 1).toISOString().replace('.000Z', '.000+07:00');
-    return { start: range.start, end: range.end, endExclusiveISO };
+    const range = getReportPeriodRange({ preset: 'today', mode });
+    return { start: range.startISO, end: range.endISO, endExclusiveISO: range.endExclusiveISO };
 }

@@ -111,7 +111,7 @@ function BookingDetail({ data }: { data: BookingDetailData }) {
     return (
         <div className="space-y-4">
             <div className="text-center py-4">
-                <p className="text-sm text-gray-500 mb-1">Total Booking</p>
+                <p className="text-sm text-gray-500 mb-1">Total Transaksi</p>
                 <p className="text-3xl font-bold text-gray-900">{data.bookingCount}</p>
             </div>
 
