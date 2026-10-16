@@ -396,6 +396,9 @@ function normalizeDataSummaryLabels(data: Record<string, any>): Record<string, a
         bookingPrev: 'bookingPembanding',
         bookingComparison: 'bookingPembanding',
         bookingChangePct: 'perubahanBookingPersen',
+        transactionCount: 'transaksi',
+        transactionChange: 'perubahanTransaksiPersen',
+        transactionPrev: 'transaksiPembanding',
         occupancyRate: 'okupansi',
         avgOccupancy: 'okupansi',
         occupancyPrev: 'okupansiPembanding',
@@ -529,7 +532,7 @@ ATURAN TAMBAHAN:
 
 ## PANDUAN KONTEN PER HALAMAN
 
-**Dashboard**: Analisis KPI utama (pendapatan, booking, okupansi). Tren vs periode sebelumnya. Performa lokasi. Aktivitas operasional hari ini. HANYA gunakan data dari halaman Dashboard.
+**Dashboard**: Analisis KPI utama (pendapatan, transaksi, okupansi). Tren vs periode sebelumnya. Performa lokasi. Aktivitas operasional hari ini. HANYA gunakan data dari halaman Dashboard.
 
 **Booking**: Volume booking dan tren. Perbandingan periode. Sumber/channel booking. Pola hari. Analisis durasi menginap. HANYA gunakan data dari halaman Booking.
 

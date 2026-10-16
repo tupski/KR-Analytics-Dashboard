@@ -563,7 +563,7 @@ async function streamInsight(
             revenue: 0,
             revenueToday: 0,
             revenueChange: 0,
-            bookingCount: 0,
+            transactionCount: 0,
             occupancyRate: 0,
             availableUnits: 0,
             totalUnits: 0,

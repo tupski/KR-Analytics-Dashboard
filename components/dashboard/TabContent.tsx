@@ -158,11 +158,11 @@ export default function TabContent({
         totalRevenue: kpiData.revenueToday,
         cashAmount: kpiData.cashAmount ?? 0,
         transferAmount: kpiData.transferAmount ?? 0,
-        transactionCount: kpiData.transactionCount ?? 0,
+        transactionCount: kpiData.transactionCount,
     };
 
     const bookingModalData: BookingDetailData = {
-        transactionCount: kpiData.transactionCount ?? 0,
+        transactionCount: kpiData.transactionCount,
         checkinToday: checkinsData.length,
         checkoutToday: checkoutsData.length,
     };
@@ -187,7 +187,7 @@ export default function TabContent({
                 <ClickableKpiCard
                     icon={<Calendar className="w-5 h-5" />}
                     title={getCardTitle('Transaksi', filterRangePreset)}
-                    value={kpiData.transactionCount ?? 0}
+                    value={kpiData.transactionCount}
                     subtitle="Total transaksi tercatat"
                     semanticType="booking"
                     onClick={() => setModalVariant('booking')}
@@ -196,7 +196,7 @@ export default function TabContent({
                     icon={<DollarSign className="w-5 h-5" />}
                     title={getCardTitle('Pendapatan', filterRangePreset)}
                     value={formatCurrencyCompactIDR(kpiData.revenueToday)}
-                    subtitle={kpiData.transactionCount != null ? `${kpiData.transactionCount} transaksi` : undefined}
+                    subtitle={`${kpiData.transactionCount} transaksi`}
                     semanticType="revenue"
                     onClick={() => setModalVariant('revenue')}
                 />

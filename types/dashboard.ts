@@ -7,7 +7,7 @@
 export type KPICompareMode = 'yesterday' | 'lastweek' | 'lastmonth' | 'lastyear';
 
 export interface KPIChange {
-  bookingChangePct: number | null;
+  transactionChangePct: number | null;
   revenueChangePct: number | null;
   occupancyChangePct: number | null;
   availableChangePct: number | null;
@@ -21,16 +21,15 @@ export interface KpiLocationBreakdown {
 }
 
 export interface KPIData {
-  bookingToday: number;
   revenueToday: number;
   avgOccupancy: number;
   availableUnits: number;
+  /** Total transaction count for the period (primary KPI metric) */
+  transactionCount: number;
   /** Cash amount breakdown for revenue detail modal */
   cashAmount?: number;
   /** Transfer amount breakdown for revenue detail modal */
   transferAmount?: number;
-  /** Total transaction count for revenue detail */
-  transactionCount?: number;
   /** Total units for occupancy context */
   totalUnits?: number;
   /** Occupied units count */
@@ -38,7 +37,7 @@ export interface KPIData {
   /** Location breakdown for occupancy detail modal */
   locationBreakdown?: KpiLocationBreakdown[];
   prev?: {
-    booking: number;
+    transactionCount: number;
     revenue: number;
     avgOccupancy: number;
     availableUnits: number;

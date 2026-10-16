@@ -172,9 +172,10 @@ async function main(): Promise<void> {
     },
   );
 
-  // ── Q6. fetchKPIData booking count (head count today) ──
+  // ── Q6. Head-count pattern (checkin window) — kept for regression baseline;
+  //        no longer run by fetchKPIData since transactionCount comes from the service.
   await measure(
-    'fetchKPIData bookingCount (head count today)',
+    'transactions head count (checkin window)',
     'transactions',
     async (c) => {
       const { count } = await c.from('transactions').select('*', { count: 'exact', head: true }).or(periodOr(todayStartISO, todayEndExclISO));

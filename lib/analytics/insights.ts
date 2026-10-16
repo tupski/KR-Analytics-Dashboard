@@ -29,8 +29,8 @@ function generateDashboardFallback(data?: InsightData): string {
 
     const rev = fmtCurrency(data.revenue);
     const revChange = data.revenueChange != null ? fmtPercent(data.revenueChange) : null;
-    const book = data.bookingCount ?? 0;
-    const bookChange = data.bookingChange != null ? fmtPercent(data.bookingChange) : null;
+    const txCount = data.transactionCount ?? 0;
+    const txChange = data.transactionChange != null ? fmtPercent(data.transactionChange) : null;
     const occ = data.occupancyRate ?? 0;
     const avail = data.availableUnits ?? 0;
     const checkin = data.checkinCount ?? 0;
@@ -62,7 +62,7 @@ function generateDashboardFallback(data?: InsightData): string {
         rekomendasi = '**Rekomendasi:** Pertahankan performa baik. Pantau tren okupansi harian.';
     }
 
-    return `**Ringkasan:** ${revSection}. ${book} booking tercatat${bookChange ? ` (${bookChange})` : ''}.\n\n**Analisis:** ${occSection} ${activitySection}\n\n${rekomendasi}`;
+    return `**Ringkasan:** ${revSection}. ${txCount} transaksi tercatat${txChange ? ` (${txChange})` : ''}.\n\n**Analisis:** ${occSection} ${activitySection}\n\n${rekomendasi}`;
 }
 
 // ─── Booking ─────────────────────────────────────────────────

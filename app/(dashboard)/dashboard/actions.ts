@@ -294,7 +294,9 @@ function pctChange(curr: number, prev: number): number | null {
 /**
  * Fetch KPI data for dashboard cards
  *
- * Fetches: booking count, revenue, average occupancy, available units.
+ * Fetches: transaction count, revenue, average occupancy, available units.
+ * Transaction count comes from the revenue service (same source as revenue)
+ * so count and revenue always describe the same period consistently.
  * Uses Asia/Jakarta timezone for date calculations.
  *
  * Accepts compareMode (legacy single-day) OR dateParams (new unified date filter params).
@@ -326,23 +328,6 @@ export async function fetchKPIData(
         const todayFallback = range ? null : await getTodayReportRange();
         const actualDayStart = range?.start || todayFallback!.start;
         const actualDayEnd = range?.end || todayFallback!.end;
-        const actualDayExclusEnd = range?.endExclusiveISO || todayFallback!.endExclusiveISO;
-
-        // M1 egress: head-counts cached 5m — service-role output, RLS-identical.
-        const bookingCount = await withEgressCache(
-            egressCacheKey('transactions', 'kpi-booking-count', actualDayStart, actualDayExclusEnd),
-            CACHE_TTL.DASHBOARD_TODAY,
-            async () => {
-                const { count } = await supabase
-                    .from('transactions')
-                    .select('id', { count: 'exact', head: true })
-                    .or(
-                        `and(checkin_at.gte.${actualDayStart},checkin_at.lt.${actualDayExclusEnd}),` +
-                        `and(checkin_at.is.null,created_at.gte.${actualDayStart},created_at.lt.${actualDayExclusEnd})`
-                    );
-                return count || 0;
-            },
-        );
 
         // Build ReportPeriodRange for the main period to pass to the service
         const mainPeriod = buildPeriodFromISO(actualDayStart, actualDayEnd);
@@ -383,6 +368,9 @@ export async function fetchKPIData(
                     }
                     if (fallbackRevenue > 0) {
                         periodRevenue = fallbackRevenue;
+                        // Keep the count aligned with the overridden revenue —
+                        // both now come from the same raw-transaction scan.
+                        periodTransactionCount = fallbackCount;
                         console.debug('[Dashboard fetchKPIData] Used today fallback:', { fallbackRevenue, fallbackCount });
                     }
                 }
@@ -399,13 +387,12 @@ export async function fetchKPIData(
         const availableUnits = liveOccupancy.tersedia;
 
         const result: KPIData = {
-            bookingToday: bookingCount || 0,
             revenueToday: periodRevenue,
             avgOccupancy,
             availableUnits,
             cashAmount: periodCashAmount ?? 0,
             transferAmount: periodTransferAmount ?? 0,
-            transactionCount: periodTransactionCount ?? 0,
+            transactionCount: periodTransactionCount,
             totalUnits: liveOccupancy.totalRooms,
             occupiedUnits: liveOccupancy.ditempati,
             locationBreakdown: liveOccupancy.locationBreakdown.map(loc => ({
@@ -436,28 +423,13 @@ export async function fetchKPIData(
         }
 
         if (compRange) {
-            const compExclusEnd = compRange.endExclusiveISO ?? (() => { throw new Error('endExclusiveISO missing from comparison range'); })();
-            const prevBookingCount = await withEgressCache(
-                egressCacheKey('transactions', 'kpi-prev-booking-count', compRange.start, compExclusEnd),
-                CACHE_TTL.DASHBOARD_TODAY,
-                async () => {
-                    const { count } = await supabase
-                        .from('transactions')
-                        .select('id', { count: 'exact', head: true })
-                        .or(
-                            `and(checkin_at.gte.${compRange.start},checkin_at.lt.${compExclusEnd}),` +
-                            `and(checkin_at.is.null,created_at.gte.${compRange.start},created_at.lt.${compExclusEnd})`
-                        );
-                    return count || 0;
-                },
-            );
-
             const prevPeriod = buildPeriodFromISO(compRange.start, compRange.end);
             const prevRevenueData = await getServiceRevenueSummary(prevPeriod);
             const prevRevenue = prevRevenueData.totalRevenue;
+            const prevTransactionCount = prevRevenueData.transactionCount;
 
             result.prev = {
-                booking: prevBookingCount || 0,
+                transactionCount: prevTransactionCount,
                 revenue: prevRevenue,
                 avgOccupancy: 0,
                 availableUnits: 0,
@@ -465,7 +437,7 @@ export async function fetchKPIData(
                 mode: compareMode || 'yesterday',
             };
             result.change = {
-                bookingChangePct: pctChange(result.bookingToday, prevBookingCount || 0),
+                transactionChangePct: pctChange(result.transactionCount, prevTransactionCount),
                 revenueChangePct: pctChange(result.revenueToday, prevRevenue),
                 occupancyChangePct: null,
                 availableChangePct: null,

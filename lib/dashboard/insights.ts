@@ -87,46 +87,46 @@ export function generateInsights(input: InsightInput): DashboardInsight[] {
         });
     }
 
-    // ── 2. Booking insight ──────────────────────────────────
-    const book = kpiData.bookingToday;
-    const prevBook = kpiData.prev?.booking;
-    const bookPct = kpiData.change?.bookingChangePct;
+    // ── 2. Transaction insight ──────────────────────────────
+    const tx = kpiData.transactionCount;
+    const prevTx = kpiData.prev?.transactionCount;
+    const txPct = kpiData.change?.transactionChangePct;
 
-    if (prevBook !== undefined && prevBook > 0 && bookPct !== null && bookPct !== undefined) {
-        if (bookPct >= 0) {
+    if (prevTx !== undefined && prevTx > 0 && txPct !== null && txPct !== undefined) {
+        if (txPct >= 0) {
             insights.push({
                 id: nextId(),
-                title: 'Booking Meningkat',
-                description: `Jumlah booking hari ini naik ${bookPct.toFixed(1)}% dibandingkan ${kpiData.prev!.label.toLowerCase()} (${book} booking vs ${prevBook}).`,
+                title: 'Transaksi Meningkat',
+                description: `Jumlah transaksi hari ini naik ${txPct.toFixed(1)}% dibandingkan ${kpiData.prev!.label.toLowerCase()} (${tx} transaksi vs ${prevTx}).`,
                 severity: 'good',
-                metric: 'booking',
+                metric: 'transaction',
                 trend: 'up',
             });
         } else {
             insights.push({
                 id: nextId(),
-                title: 'Booking Menurun',
-                description: `Jumlah booking hari ini turun ${Math.abs(bookPct).toFixed(1)}% dibandingkan ${kpiData.prev!.label.toLowerCase()} (${book} booking vs ${prevBook}).`,
+                title: 'Transaksi Menurun',
+                description: `Jumlah transaksi hari ini turun ${Math.abs(txPct).toFixed(1)}% dibandingkan ${kpiData.prev!.label.toLowerCase()} (${tx} transaksi vs ${prevTx}).`,
                 severity: 'warning',
-                metric: 'booking',
+                metric: 'transaction',
                 trend: 'down',
             });
         }
-    } else if (book > 0) {
+    } else if (tx > 0) {
         insights.push({
             id: nextId(),
-            title: 'Booking Hari Ini',
-            description: `Ada ${book} booking hari ini. Aktifkan mode bandingkan untuk melihat perubahan.`,
+            title: 'Transaksi Hari Ini',
+            description: `Ada ${tx} transaksi hari ini. Aktifkan mode bandingkan untuk melihat perubahan.`,
             severity: 'info',
-            metric: 'booking',
+            metric: 'transaction',
         });
     } else {
         insights.push({
             id: nextId(),
-            title: 'Booking Hari Ini',
-            description: 'Belum ada data booking untuk periode ini.',
+            title: 'Transaksi Hari Ini',
+            description: 'Belum ada data transaksi untuk periode ini.',
             severity: 'info',
-            metric: 'booking',
+            metric: 'transaction',
         });
     }
 
@@ -212,7 +212,7 @@ export function generateInsights(input: InsightInput): DashboardInsight[] {
 
 /**
  * Sort insights by severity priority: critical → warning → info → good.
- * Within same severity, revenue/booking insights come first.
+ * Within same severity, revenue/transaction insights come first.
  */
 function sortInsights(insights: DashboardInsight[]): DashboardInsight[] {
     const severityRank: Record<string, number> = {
@@ -224,7 +224,7 @@ function sortInsights(insights: DashboardInsight[]): DashboardInsight[] {
 
     const metricRank: Record<string, number> = {
         revenue: 0,
-        booking: 1,
+        transaction: 1,
         occupancy: 2,
         availability: 3,
         'guest-activity': 4,
