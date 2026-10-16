@@ -162,7 +162,7 @@ export default function TabContent({
     };
 
     const bookingModalData: BookingDetailData = {
-        bookingCount: kpiData.bookingToday,
+        transactionCount: kpiData.transactionCount ?? 0,
         checkinToday: checkinsData.length,
         checkoutToday: checkoutsData.length,
     };
@@ -187,8 +187,8 @@ export default function TabContent({
                 <ClickableKpiCard
                     icon={<Calendar className="w-5 h-5" />}
                     title={getCardTitle('Transaksi', filterRangePreset)}
-                    value={kpiData.bookingToday}
-                    subtitle="Check-in tercatat"
+                    value={kpiData.transactionCount ?? 0}
+                    subtitle="Total transaksi tercatat"
                     semanticType="booking"
                     onClick={() => setModalVariant('booking')}
                 />
